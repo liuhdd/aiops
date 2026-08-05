@@ -1,2 +1,10 @@
 
 .worktrees/
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+dist/
+.env
+backend/bin/
+
