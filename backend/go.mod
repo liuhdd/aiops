@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/cloudwego/eino v0.9.13
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+	github.com/gorilla/websocket v1.5.3
 	modernc.org/sqlite v1.46.0
 )
 
