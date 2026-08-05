@@ -40,6 +40,64 @@ func TestEngineRunsStagesInOrder(t *testing.T) {
 	}
 }
 
+func TestEngineBacktrackRerunsOnlyEvidenceAndRCA(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	stages := []Stage{
+		fakeStage{id: "normalize", name: "规范化", run: func(st *State) error {
+			st.RawAlerts["normalize"] = "ok"
+			return nil
+		}},
+		fakeStage{id: "triage", name: "分诊", run: func(st *State) error {
+			st.Triage = &model.TriageResult{Proceed: true}
+			return nil
+		}},
+		fakeStage{id: "context", name: "上下文", run: func(st *State) error {
+			st.Context = &model.Context{}
+			return nil
+		}},
+		fakeStage{id: "evidence", name: "证据收集", run: func(st *State) error {
+			if st.Iteration == 0 {
+				st.Evidence = &model.Evidence{Gaps: []string{"missing log window"}}
+			} else {
+				st.Evidence = &model.Evidence{Gaps: []string{}}
+			}
+			return nil
+		}},
+		fakeStage{id: "rca", name: "根因分析", run: func(st *State) error {
+			st.RCA = &model.RCA{Gaps: st.Evidence.Gaps, Confidence: 0.9}
+			return nil
+		}},
+		fakeStage{id: "recommend", name: "建议", run: func(st *State) error {
+			st.Recommendation = &model.Recommendation{}
+			return nil
+		}},
+	}
+	e := NewEngine(s, stages)
+	alert := model.Alert{ID: "alarm-3", Device: "gpu-01", Metric: "gpu_util"}
+	if err := e.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	results, _ := s.ListStages("run-" + alert.ID)
+	counts := map[string]map[int]int{}
+	for _, r := range results {
+		if counts[r.StageID] == nil {
+			counts[r.StageID] = map[int]int{}
+		}
+		counts[r.StageID][r.Iteration]++
+	}
+	for _, id := range []string{"normalize", "triage", "context"} {
+		if counts[id][0] != 1 || counts[id][1] != 0 {
+			t.Fatalf("stage %q rows = %v, want only iteration 0 once", id, counts[id])
+		}
+	}
+	for _, id := range []string{"evidence", "rca"} {
+		if counts[id][0] != 1 || counts[id][1] != 1 {
+			t.Fatalf("stage %q rows = %v, want one row per iteration 0 and 1", id, counts[id])
+		}
+	}
+}
+
 func TestEngineBacktracksOnGaps(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
