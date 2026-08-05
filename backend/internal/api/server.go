@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -74,7 +75,7 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
-		_ = s.eng.Run(r.Context(), al, nil)
+		_ = s.eng.Run(context.Background(), al, nil)
 	}()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "started", "alert_id": id})
 }
