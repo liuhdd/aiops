@@ -67,17 +67,25 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 	degraded := false
 	skipRest := false
 
+	evidenceIndex := -1
+	for i, stage := range e.stages {
+		if stage.StageID() == "evidence" {
+			evidenceIndex = i
+			break
+		}
+	}
+
 	// 外层循环 = 回溯次数。首轮重跑全部阶段，
-	// 回溯轮仅重跑 evidence 与 rca，
+	// 回溯轮重跑 evidence 起的所有阶段（evidence/rca/recommend），
 	// RCA 若仍有 gaps 且还有额度则进入下一轮（回溯），否则结束。
 	for iteration := 0; iteration <= run.MaxIteration; iteration++ {
 		st.Iteration = iteration
 		backtrack := false
-		for _, stage := range e.stages {
+		for stageIdx, stage := range e.stages {
 			if skipRest {
 				break
 			}
-			if iteration > 0 && stage.StageID() != "evidence" && stage.StageID() != "rca" {
+			if iteration > 0 && stageIdx < evidenceIndex {
 				continue
 			}
 			res := model.StageResult{

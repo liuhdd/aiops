@@ -96,6 +96,18 @@ func TestEngineBacktrackRerunsOnlyEvidenceAndRCA(t *testing.T) {
 			t.Fatalf("stage %q rows = %v, want one row per iteration 0 and 1", id, counts[id])
 		}
 	}
+	if counts["recommend"][0] != 0 || counts["recommend"][1] != 1 {
+		t.Fatalf("stage %q rows = %v, want only iteration 1 once", "recommend", counts["recommend"])
+	}
+	var recommendStatus string
+	for _, r := range results {
+		if r.StageID == "recommend" {
+			recommendStatus = r.Status
+		}
+	}
+	if recommendStatus != model.StageCompleted {
+		t.Fatalf("recommend status = %q, want %q", recommendStatus, model.StageCompleted)
+	}
 }
 
 func TestEngineBacktracksOnGaps(t *testing.T) {
