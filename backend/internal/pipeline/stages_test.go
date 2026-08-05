@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/store"
 )
@@ -54,5 +55,34 @@ func TestTriagePriorityMapping(t *testing.T) {
 	}
 	if !st.Triage.Proceed || st.Triage.Priority != "P1" {
 		t.Fatalf("triage = %+v", st.Triage)
+	}
+}
+
+func TestContextStageFillsDevice(t *testing.T) {
+	st := &State{Alert: model.Alert{ID: "a1", Device: "compute-01", Metric: "cpu_usage"}}
+	if err := (ContextStage{}).Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Context == nil || st.Context.DeviceInfo.Name != "compute-01" {
+		t.Fatalf("context = %+v", st.Context)
+	}
+	if len(st.Context.Neighbors) != 1 || st.Context.Neighbors[0].Name != "switch-core-01" {
+		t.Fatalf("neighbors = %+v", st.Context.Neighbors)
+	}
+}
+
+func TestEvidenceStageCollects(t *testing.T) {
+	mockdata.GenerateAll(42)
+	st := &State{Alert: model.Alert{ID: "a2", Device: "db-01", Metric: "disk_usage",
+		FiredAt: time.Now().Add(-1 * time.Hour)}}
+	st.SuggestLogs = []string{"no space"}
+	if err := (EvidenceStage{}).Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Evidence == nil || len(st.Evidence.Metrics) == 0 {
+		t.Fatalf("evidence = %+v", st.Evidence)
+	}
+	if len(st.Evidence.Logs) == 0 {
+		t.Fatalf("expected logs, got %+v", st.Evidence.Logs)
 	}
 }
