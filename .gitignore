@@ -5,6 +5,7 @@
 *.db-wal
 node_modules/
 dist/
+*.tsbuildinfo
 .env
 backend/bin/
 
