@@ -86,3 +86,39 @@ func TestEvidenceStageCollects(t *testing.T) {
 		t.Fatalf("expected logs, got %+v", st.Evidence.Logs)
 	}
 }
+
+func TestRuleRCAReturnsRootCause(t *testing.T) {
+	st := &State{Alert: model.Alert{ID: "a1", Device: "db-01", Metric: "disk_usage"}}
+	st.Evidence = &model.Evidence{Logs: []model.LogEntry{{Content: "no space left"}}}
+	rc := ruleRCA(st)
+	if rc.RootCause == "" || rc.Confidence <= 0 {
+		t.Fatalf("ruleRCA = %+v", rc)
+	}
+	if len(rc.EvidenceChain) == 0 {
+		t.Fatalf("evidence chain empty")
+	}
+}
+
+func TestRecommendStageRunbook(t *testing.T) {
+	st := &State{Alert: model.Alert{ID: "a1", Device: "compute-02", Metric: "gpu_util"}}
+	rc := NewRecommendStage(nil)
+	if err := rc.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Recommendation == nil || len(st.Recommendation.Actions) == 0 {
+		t.Fatalf("recommendation = %+v", st.Recommendation)
+	}
+	if st.Recommendation.RunbookRef != "gpu_util" {
+		t.Fatalf("runbook ref = %q", st.Recommendation.RunbookRef)
+	}
+}
+
+func TestRCAParsesJSON(t *testing.T) {
+	rc, err := ParseRCAJSON(`{"root_cause":"OOM","evidence_chain":["e1"],"confidence":0.8,"gaps":[]}`)
+	if err != nil {
+		t.Fatalf("ParseRCAJSON: %v", err)
+	}
+	if rc.RootCause != "OOM" || rc.Confidence != 0.8 {
+		t.Fatalf("parsed = %+v", rc)
+	}
+}

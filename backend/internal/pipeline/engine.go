@@ -21,6 +21,13 @@ type State struct {
 	SuggestLogs    []string
 }
 
+func (st *State) EvidenceGaps() []string {
+	if st.Evidence == nil {
+		return nil
+	}
+	return st.Evidence.Gaps
+}
+
 type Stage interface {
 	StageID() string
 	Name() string
