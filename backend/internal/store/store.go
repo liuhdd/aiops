@@ -115,7 +115,11 @@ func (s *Store) UpdateRunStatus(runID, status string) error {
 
 func (s *Store) SaveStage(st model.StageResult) error {
 	_, err := s.db.Exec(`INSERT INTO stage_results (id, run_id, stage_id, stage_name, status, iteration, output, error, started_at, ended_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(id) DO UPDATE SET
+			run_id=excluded.run_id, stage_id=excluded.stage_id, stage_name=excluded.stage_name,
+			status=excluded.status, iteration=excluded.iteration, output=excluded.output,
+			error=excluded.error, started_at=excluded.started_at, ended_at=excluded.ended_at`,
 		st.ID, st.RunID, st.StageID, st.StageName, st.Status, st.Iteration, st.Output, st.Error, st.StartedAt, st.EndedAt)
 	return err
 }
