@@ -4,7 +4,9 @@ import (
 	"context"
 	"time"
 
+	"aiops/internal/coordinator"
 	"aiops/internal/model"
+	"aiops/internal/scope"
 	"aiops/internal/store"
 )
 
@@ -19,6 +21,9 @@ type State struct {
 	Iteration      int
 	RawAlerts      map[string]string
 	SuggestLogs    []string
+	Scope          *scope.Scope  // 本任务的嵌套作用域
+	Store          *store.ScopedStore
+	DeviceContext  *model.DeviceContext
 }
 
 func (st *State) EvidenceGaps() []string {
@@ -38,11 +43,14 @@ type Engine struct {
 	store   *store.Store
 	stages  []Stage
 	Publish func(eventType string, data any)
+	coord   *coordinator.Coordinator
 }
 
 func NewEngine(s *store.Store, stages []Stage) *Engine {
 	return &Engine{store: s, stages: stages}
 }
+
+func (e *Engine) SetCoordinator(c *coordinator.Coordinator) { e.coord = c }
 
 func (e *Engine) Stages() []Stage { return e.stages }
 
@@ -64,11 +72,28 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 		return err
 	}
 
+	if e.coord != nil {
+		const lockTimeout = 30 * time.Second
+		release, ok := e.coord.TryAcquire(alert.Device, lockTimeout)
+		if !ok {
+			_ = e.store.UpdateRunStatus(run.ID, model.StatusDegraded)
+			run.Status = model.StatusDegraded
+			if e.Publish != nil {
+				e.Publish("run", run)
+			}
+			return nil
+		}
+		defer release()
+	}
+
+	taskScope := scope.Task(run.ID, alert.Device)
 	st := &State{
 		Run:       run,
 		Alert:     alert,
 		Iteration: 0,
 		RawAlerts: input,
+		Scope:     &taskScope,
+		Store:     store.NewScoped(e.store, taskScope),
 	}
 	st.SuggestLogs = suggestLogs(alert.Metric)
 
@@ -105,7 +130,7 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 				Iteration: iteration,
 				StartedAt: time.Now(),
 			}
-			if err := e.store.SaveStage(res); err != nil {
+			if err := st.Store.SaveStage(res); err != nil {
 				return err
 			}
 			stageErr := stage.Run(ctx, st)
@@ -118,7 +143,7 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 				res.Status = model.StageCompleted
 				res.Output = stageOutput(st, stage.StageID())
 			}
-			if err := e.store.SaveStage(res); err != nil {
+			if err := st.Store.SaveStage(res); err != nil {
 				return err
 			}
 			if e.Publish != nil {
@@ -150,7 +175,7 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 	} else if degraded {
 		status = model.StatusDegraded
 	}
-	if err := e.store.UpdateRunStatus(run.ID, status); err != nil {
+	if err := st.Store.UpdateRunStatus(run.ID, status); err != nil {
 		return err
 	}
 	run.Status = status

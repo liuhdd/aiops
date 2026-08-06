@@ -2,10 +2,15 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
+	"aiops/internal/coordinator"
 	"aiops/internal/model"
+	"aiops/internal/scope"
 	"aiops/internal/store"
 )
 
@@ -141,5 +146,93 @@ func TestEngineBacktracksOnGaps(t *testing.T) {
 	}
 	if rcaCalls != 2 {
 		t.Fatalf("rcaCalls = %d, want 2", rcaCalls)
+	}
+}
+
+func TestEngineInjectsTaskScopedStore(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	stages := []Stage{
+		fakeStage{id: "x", name: "X", run: func(st *State) error {
+			if st.Store == nil {
+				t.Fatalf("State.Store not injected")
+			}
+			if st.Scope == nil || st.Scope.Level != scope.LevelTask || st.Scope.TaskID != "run-"+st.Alert.ID {
+				t.Fatalf("scope = %+v", st.Scope)
+			}
+			// 越权写其它 run 应被拒绝
+			if err := st.Store.SaveStage(model.StageResult{ID: "bad", RunID: "run-other", StageID: "rca",
+				StageName: "x", Status: model.StageCompleted}); !errors.Is(err, scope.ErrScopeDenied) {
+				t.Fatalf("cross-run write err = %v, want ErrScopeDenied", err)
+			}
+			return nil
+		}},
+	}
+	e := NewEngine(s, stages)
+	alert := model.Alert{ID: "alarm-1", Device: "compute-01", Metric: "cpu_usage"}
+	if err := e.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestEngineDeviceLockTimeoutDegrades(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	coord := coordinator.New()
+	rel := coord.Acquire("compute-01") // 先占住设备锁
+	defer rel()
+
+	stages := []Stage{
+		fakeStage{id: "x", name: "X", run: func(st *State) error { return nil }},
+	}
+	e := NewEngine(s, stages)
+	e.SetCoordinator(coord)
+	alert := model.Alert{ID: "alarm-1", Device: "compute-01", Metric: "cpu_usage"}
+	if err := e.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	run, _ := s.GetRun("run-" + alert.ID)
+	if run.Status != model.StatusDegraded {
+		t.Fatalf("run status = %q, want degraded (device busy)", run.Status)
+	}
+}
+
+func TestEngineDeviceLockSerializes(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	coord := coordinator.New()
+	var enterMu sync.Mutex
+	inside := map[string]bool{}
+	var maxInside int
+	var wg sync.WaitGroup
+
+	mkStage := func(name string) Stage {
+		return fakeStage{id: name, name: name, run: func(st *State) error {
+			enterMu.Lock()
+			inside[st.Alert.ID] = true
+			if len(inside) > maxInside {
+				maxInside = len(inside)
+			}
+			enterMu.Unlock()
+			time.Sleep(20 * time.Millisecond)
+			enterMu.Lock()
+			delete(inside, st.Alert.ID)
+			enterMu.Unlock()
+			return nil
+		}}
+	}
+	e := NewEngine(s, []Stage{mkStage("x")})
+	e.SetCoordinator(coord)
+
+	for _, id := range []string{"alarm-1", "alarm-2"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			_ = e.Run(context.Background(), model.Alert{ID: id, Device: "compute-01", Metric: "cpu_usage"}, nil)
+		}(id)
+	}
+	wg.Wait()
+	if maxInside != 1 {
+		t.Fatalf("maxInside = %d, want 1 (same device serialized)", maxInside)
 	}
 }
