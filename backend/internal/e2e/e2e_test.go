@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"aiops/internal/coordinator"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
@@ -17,7 +18,7 @@ func TestEndToEndDiskUsage(t *testing.T) {
 	mockdata.GenerateAll(1)
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
-	eng := pipeline.Build(s, nil)
+	eng := pipeline.Build(s, nil, coordinator.New())
 	now := time.Now()
 	alert := model.Alert{ID: "alarm-e2e", Device: "db-01", Metric: "disk_usage",
 		Severity: "critical", Message: "磁盘使用率超过95%", FiredAt: now, CreatedAt: now}

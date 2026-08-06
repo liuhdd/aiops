@@ -4,13 +4,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"aiops/internal/coordinator"
 	"aiops/internal/store"
 )
 
 func TestBuildHasSixStages(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
-	e := Build(s, nil)
+	e := Build(s, nil, coordinator.New())
 	if len(e.Stages()) != 6 {
 		t.Fatalf("stages = %d, want 6", len(e.Stages()))
 	}

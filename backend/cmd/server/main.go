@@ -8,6 +8,7 @@ import (
 	"aiops/internal/agent"
 	"aiops/internal/api"
 	"aiops/internal/config"
+	"aiops/internal/coordinator"
 	"aiops/internal/hub"
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
@@ -34,7 +35,7 @@ func main() {
 	defer st.Close()
 
 	h := hub.New()
-	eng := pipeline.Build(st, lc)
+	eng := pipeline.Build(st, lc, coordinator.New())
 	eng.Publish = h.Publish
 
 	ag := agent.New(st, lc, eng)
