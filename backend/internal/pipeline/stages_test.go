@@ -130,21 +130,35 @@ func TestTriageUsesScopedStore(t *testing.T) {
 	now := time.Now()
 	_ = s.SaveAlert(model.Alert{ID: "alarm-1", Device: "compute-01", Metric: "cpu_usage",
 		Severity: "warning", Status: "active", FiredAt: now, CreatedAt: now})
-	_ = s.SaveAlert(model.Alert{ID: "alarm-2", Device: "db-01", Metric: "disk_usage",
-		Severity: "critical", Status: "active", FiredAt: now, CreatedAt: now})
+	_ = s.SaveRun(model.PipelineRun{ID: "run-alarm-1", AlertID: "alarm-1", Status: model.StatusCompleted,
+		Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
 
 	ts := NewTriageStage(s)
-	// 任务作用域绑定 compute-01，只应看到 compute-01 的告警 -> 新告警 proceed
-	st := &State{
-		Alert: model.Alert{ID: "alarm-3", Device: "compute-01", Metric: "gpu_util",
-			Severity: "critical", FiredAt: now, CreatedAt: now},
-		Store: store.NewScoped(s, scope.Task("run-alarm-3", "compute-01")),
+
+	// 同设备任务作用域（compute-01）：读到宿主设备的已完成 run -> 去重
+	sameDev := &State{
+		Alert: model.Alert{ID: "alarm-new", Device: "compute-01", Metric: "cpu_usage",
+			Severity: "warning", FiredAt: now, CreatedAt: now},
+		Store: store.NewScoped(s, scope.Task("run-alarm-new", "compute-01")),
 	}
-	if err := ts.Run(context.Background(), st); err != nil {
+	if err := ts.Run(context.Background(), sameDev); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !st.Triage.Proceed {
-		t.Fatalf("expected proceed for new alert, got %+v", st.Triage)
+	if !sameDev.Triage.Deduped || sameDev.Triage.Proceed {
+		t.Fatalf("same-device task should dedup: %+v", sameDev.Triage)
+	}
+
+	// 他设备任务作用域（db-01）：即使告警与 alarm-1 类型相同，也看不到 compute-01 的 run -> 新告警 proceed
+	otherDev := &State{
+		Alert: model.Alert{ID: "alarm-new-2", Device: "compute-01", Metric: "cpu_usage",
+			Severity: "critical", FiredAt: now, CreatedAt: now},
+		Store: store.NewScoped(s, scope.Task("run-alarm-new-2", "db-01")),
+	}
+	if err := ts.Run(context.Background(), otherDev); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if otherDev.Triage.Deduped || !otherDev.Triage.Proceed {
+		t.Fatalf("other-device task should proceed: %+v", otherDev.Triage)
 	}
 }
 
