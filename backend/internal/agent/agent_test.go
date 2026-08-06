@@ -29,6 +29,23 @@ func TestParseIntent(t *testing.T) {
 	}
 }
 
+func TestExtractAlertIDHex(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"alarm-1859f1a2b什么原因", "alarm-1859f1a2b"},
+		{"ALARM-1859F1A2B怎么处理", "alarm-1859F1A2B"},
+	}
+	for _, c := range cases {
+		if got := extractAlertID(c.text, s); got != c.want {
+			t.Fatalf("extractAlertID(%q) = %q, want %q", c.text, got, c.want)
+		}
+	}
+}
+
 func TestAgentInspectAlertTriggersRun(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()

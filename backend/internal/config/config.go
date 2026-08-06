@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -35,12 +36,18 @@ func LoadFromEnv(lookup func(string) string) Config {
 	if db == "" {
 		db = "aiops.db"
 	}
+	interval := 20
+	if v := lookup("SIM_INTERVAL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			interval = n
+		}
+	}
 	return Config{
 		LLMAPIKey:   lookup("LLM_API_KEY"),
 		LLMBaseURL:  base,
 		LLMModel:    model,
 		DBPath:      db,
-		SimInterval: 20 * time.Second,
+		SimInterval: time.Duration(interval) * time.Second,
 		Port:        port,
 	}
 }

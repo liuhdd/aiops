@@ -84,11 +84,11 @@ func extractAlertID(text string, s *store.Store) string {
 		rest = strings.TrimPrefix(rest, "-")
 		digits := ""
 		for _, r := range rest {
-			if r >= '0' && r <= '9' {
-				digits += string(r)
-			} else {
+			isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+			if !isHex {
 				break
 			}
+			digits += string(r)
 		}
 		if digits != "" {
 			return "alarm-" + digits

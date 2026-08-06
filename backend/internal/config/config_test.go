@@ -29,6 +29,14 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvSimInterval(t *testing.T) {
+	env := map[string]string{"SIM_INTERVAL_SECONDS": "7"}
+	cfg := LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.SimInterval != 7*time.Second {
+		t.Fatalf("SimInterval = %v, want 7s", cfg.SimInterval)
+	}
+}
+
 func TestLoad(t *testing.T) {
 	os.Setenv("LLM_API_KEY", "sk-test")
 	defer os.Unsetenv("LLM_API_KEY")

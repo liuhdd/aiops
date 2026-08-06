@@ -33,11 +33,13 @@ func main() {
 	}
 	defer st.Close()
 
-	eng := pipeline.Build(st, lc)
 	h := hub.New()
+	eng := pipeline.Build(st, lc)
+	eng.Publish = h.Publish
 
 	ag := agent.New(st, lc, eng)
 	sim := simulator.New(st, func(a model.Alert) {
+		h.Publish("alert", a)
 		go func() {
 			_ = eng.Run(context.Background(), a, nil)
 		}()

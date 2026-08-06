@@ -35,8 +35,9 @@ type Stage interface {
 }
 
 type Engine struct {
-	store  *store.Store
-	stages []Stage
+	store   *store.Store
+	stages  []Stage
+	Publish func(eventType string, data any)
 }
 
 func NewEngine(s *store.Store, stages []Stage) *Engine {
@@ -120,6 +121,9 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 			if err := e.store.SaveStage(res); err != nil {
 				return err
 			}
+			if e.Publish != nil {
+				e.Publish("stage", res)
+			}
 			// 分诊阶段 decide skip
 			if stage.StageID() == "triage" && st.Triage != nil && !st.Triage.Proceed {
 				skipRest = true
@@ -148,6 +152,10 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 	}
 	if err := e.store.UpdateRunStatus(run.ID, status); err != nil {
 		return err
+	}
+	run.Status = status
+	if e.Publish != nil {
+		e.Publish("run", run)
 	}
 	return nil
 }
