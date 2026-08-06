@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
+	"aiops/internal/scope"
 	"aiops/internal/store"
 )
 
@@ -49,5 +51,51 @@ func TestEndToEndDiskUsage(t *testing.T) {
 	var rc model.RCA
 	if err := json.Unmarshal([]byte(rca.Output), &rc); err != nil || rc.RootCause == "" {
 		t.Fatalf("rca output = %s err=%v", rca.Output, err)
+	}
+}
+
+func TestEndToEndIsolationWritesDeviceContext(t *testing.T) {
+	mockdata.GenerateAll(2)
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	eng := pipeline.Build(s, nil, coordinator.New())
+	now := time.Now()
+	alert := model.Alert{ID: "alarm-iso", Device: "compute-01", Metric: "cpu_usage",
+		Severity: "warning", Message: "CPU高", FiredAt: now, CreatedAt: now}
+	if err := eng.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	run, _ := s.GetRun("run-" + alert.ID)
+	if run.Status != model.StatusCompleted {
+		t.Fatalf("run status = %q", run.Status)
+	}
+	stages, _ := s.ListStages(run.ID)
+	have := map[string]bool{}
+	for _, st := range stages {
+		have[st.StageID] = true
+		if st.Status == model.StageFailed {
+			t.Fatalf("stage %s failed: %s", st.StageID, st.Error)
+		}
+	}
+	for _, id := range []string{"normalize", "triage", "context", "evidence", "rca", "recommend"} {
+		if !have[id] {
+			t.Fatalf("missing stage %s", id)
+		}
+	}
+	dc, err := s.GetDeviceContext("compute-01")
+	if err != nil {
+		t.Fatalf("device context not written: %v", err)
+	}
+	if dc.UpdatedBy != "run-"+alert.ID || dc.StateJSON == "" {
+		t.Fatalf("device context = %+v", dc)
+	}
+
+	// 越权：任务作用域写其它 run 的 stage 应被拒
+	sc := scope.Task("run-other", "compute-01")
+	ss := store.NewScoped(s, sc)
+	err = ss.SaveStage(model.StageResult{ID: "st-bad", RunID: "run-x", StageID: "rca",
+		StageName: "x", Status: model.StageCompleted, StartedAt: now, EndedAt: now})
+	if !errors.Is(err, scope.ErrScopeDenied) {
+		t.Fatalf("cross-run write err = %v, want ErrScopeDenied", err)
 	}
 }
