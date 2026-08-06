@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"time"
 
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
@@ -23,6 +24,17 @@ func (ContextStage) Run(_ context.Context, st *State) error {
 	st.Context = &model.Context{
 		DeviceInfo: dev,
 		Neighbors:  mockdata.Neighbors(st.Alert.Device),
+	}
+	if st.Store != nil {
+		_ = st.Store.UpdateDeviceContext(model.DeviceContext{
+			DeviceID:  st.Alert.Device,
+			StateJSON: model.MustJSON(dev),
+			UpdatedBy: st.Run.ID,
+			UpdatedAt: time.Now(),
+		})
+		if dc, err := st.Store.GetDeviceContext(st.Alert.Device); err == nil {
+			st.DeviceContext = &dc
+		}
 	}
 	return nil
 }

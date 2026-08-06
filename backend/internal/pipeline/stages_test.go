@@ -8,6 +8,7 @@ import (
 
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
+	"aiops/internal/scope"
 	"aiops/internal/store"
 )
 
@@ -120,5 +121,53 @@ func TestRCAParsesJSON(t *testing.T) {
 	}
 	if rc.RootCause != "OOM" || rc.Confidence != 0.8 {
 		t.Fatalf("parsed = %+v", rc)
+	}
+}
+
+func TestTriageUsesScopedStore(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	now := time.Now()
+	_ = s.SaveAlert(model.Alert{ID: "alarm-1", Device: "compute-01", Metric: "cpu_usage",
+		Severity: "warning", Status: "active", FiredAt: now, CreatedAt: now})
+	_ = s.SaveAlert(model.Alert{ID: "alarm-2", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", Status: "active", FiredAt: now, CreatedAt: now})
+
+	ts := NewTriageStage(s)
+	// 任务作用域绑定 compute-01，只应看到 compute-01 的告警 -> 新告警 proceed
+	st := &State{
+		Alert: model.Alert{ID: "alarm-3", Device: "compute-01", Metric: "gpu_util",
+			Severity: "critical", FiredAt: now, CreatedAt: now},
+		Store: store.NewScoped(s, scope.Task("run-alarm-3", "compute-01")),
+	}
+	if err := ts.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !st.Triage.Proceed {
+		t.Fatalf("expected proceed for new alert, got %+v", st.Triage)
+	}
+}
+
+func TestContextStageReadsAndWritesDeviceContext(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	mockdata.GenerateAll(42)
+	st := &State{
+		Run:   model.PipelineRun{ID: "run-1", AlertID: "alarm-1"},
+		Alert: model.Alert{ID: "alarm-1", Device: "compute-01", Metric: "cpu_usage"},
+		Store: store.NewScoped(s, scope.Task("run-1", "compute-01")),
+	}
+	if err := (ContextStage{}).Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	dc, err := s.GetDeviceContext("compute-01")
+	if err != nil {
+		t.Fatalf("GetDeviceContext: %v", err)
+	}
+	if dc.UpdatedBy != "run-1" || dc.StateJSON == "" {
+		t.Fatalf("device context not written: %+v", dc)
+	}
+	if st.DeviceContext == nil {
+		t.Fatalf("st.DeviceContext not populated")
 	}
 }
