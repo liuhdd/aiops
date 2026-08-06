@@ -20,6 +20,8 @@ func New(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// SQLite 单写者语义：默认连接池在并发写时返回 SQLITE_BUSY。
+	// 流水线在取设备锁之前会 SaveRun（见 plan Task 5），需在进程内串行化 DB 访问。
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {

@@ -79,7 +79,10 @@ func (ss *ScopedStore) GetRun(runID string) (model.PipelineRun, error) {
 		return r, err
 	}
 	a, err := ss.st.GetAlert(r.AlertID)
-	if err != nil || a.Device != ss.sc.DeviceID {
+	if err != nil {
+		return r, err // run's alert missing -> not-found (sql.ErrNoRows), not a scope denial
+	}
+	if a.Device != ss.sc.DeviceID {
 		return r, scope.ErrScopeDenied
 	}
 	return r, nil

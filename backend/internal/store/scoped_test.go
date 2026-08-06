@@ -88,6 +88,17 @@ func TestScopedGetRunReadUpward(t *testing.T) {
 	}
 }
 
+func TestScopedGetRunAlertMissingReturnsNotFound(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	_ = s.SaveRun(model.PipelineRun{ID: "run-orphan", AlertID: "alarm-gone", Status: model.StatusCompleted,
+		Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	ss := NewScoped(s, scope.Task("run-x", "compute-01"))
+	if _, err := ss.GetRun("run-orphan"); err == nil || errors.Is(err, scope.ErrScopeDenied) {
+		t.Fatalf("GetRun missing alert err = %v, want non-denial (not-found)", err)
+	}
+}
+
 func TestScopedDeviceContextPermission(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now()
