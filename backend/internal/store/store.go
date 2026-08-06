@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -51,13 +52,55 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	if err := ensureColumn(s.db, "alerts", "scope", "scope TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "pipeline_runs", "scope", "scope TEXT"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "stage_results", "scope", "scope TEXT"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS device_context (
+		device_id TEXT PRIMARY KEY,
+		state_json TEXT NOT NULL DEFAULT '{}',
+		updated_by TEXT,
+		updated_at DATETIME)`); err != nil {
+		return err
+	}
 	return nil
 }
 
+func ensureColumn(db *sql.DB, table, column, ddl string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, ddl))
+	return err
+}
+
 func (s *Store) SaveAlert(a model.Alert) error {
-	_, err := s.db.Exec(`INSERT INTO alerts (id, device, metric, severity, message, status, fired_at, created_at)
-		VALUES (?,?,?,?,?,?,?,?)`,
-		a.ID, a.Device, a.Metric, a.Severity, a.Message, a.Status, a.FiredAt, a.CreatedAt)
+	scopeVal := "device:" + a.Device
+	_, err := s.db.Exec(`INSERT INTO alerts (id, device, metric, severity, message, status, fired_at, created_at, scope)
+		VALUES (?,?,?,?,?,?,?,?,?)`,
+		a.ID, a.Device, a.Metric, a.Severity, a.Message, a.Status, a.FiredAt, a.CreatedAt, scopeVal)
 	return err
 }
 
@@ -87,10 +130,28 @@ func (s *Store) ListAlerts() ([]model.Alert, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) ListAlertsByDevice(device string) ([]model.Alert, error) {
+	rows, err := s.db.Query(`SELECT id, device, metric, severity, message, status, fired_at, created_at
+		FROM alerts WHERE device = ? ORDER BY created_at DESC`, device)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Alert
+	for rows.Next() {
+		var a model.Alert
+		if err := rows.Scan(&a.ID, &a.Device, &a.Metric, &a.Severity, &a.Message, &a.Status, &a.FiredAt, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) SaveRun(r model.PipelineRun) error {
-	_, err := s.db.Exec(`INSERT INTO pipeline_runs (id, alert_id, status, iteration, max_iteration, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?)`,
-		r.ID, r.AlertID, r.Status, r.Iteration, r.MaxIteration, r.CreatedAt, r.UpdatedAt)
+	_, err := s.db.Exec(`INSERT INTO pipeline_runs (id, alert_id, status, iteration, max_iteration, created_at, updated_at, scope)
+		VALUES (?,?,?,?,?,?,?,?)`,
+		r.ID, r.AlertID, r.Status, r.Iteration, r.MaxIteration, r.CreatedAt, r.UpdatedAt, "task:"+r.ID)
 	return err
 }
 
@@ -114,13 +175,14 @@ func (s *Store) UpdateRunStatus(runID, status string) error {
 }
 
 func (s *Store) SaveStage(st model.StageResult) error {
-	_, err := s.db.Exec(`INSERT INTO stage_results (id, run_id, stage_id, stage_name, status, iteration, output, error, started_at, ended_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+	_, err := s.db.Exec(`INSERT INTO stage_results (id, run_id, stage_id, stage_name, status, iteration, output, error, started_at, ended_at, scope)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			run_id=excluded.run_id, stage_id=excluded.stage_id, stage_name=excluded.stage_name,
 			status=excluded.status, iteration=excluded.iteration, output=excluded.output,
-			error=excluded.error, started_at=excluded.started_at, ended_at=excluded.ended_at`,
-		st.ID, st.RunID, st.StageID, st.StageName, st.Status, st.Iteration, st.Output, st.Error, st.StartedAt, st.EndedAt)
+			error=excluded.error, started_at=excluded.started_at, ended_at=excluded.ended_at,
+			scope=excluded.scope`,
+		st.ID, st.RunID, st.StageID, st.StageName, st.Status, st.Iteration, st.Output, st.Error, st.StartedAt, st.EndedAt, "task:"+st.RunID)
 	return err
 }
 
@@ -155,6 +217,23 @@ func (s *Store) GetLatestStage(runID, stageID string) (model.StageResult, bool, 
 		return st, false, err
 	}
 	return st, true, nil
+}
+
+func (s *Store) SaveDeviceContext(dc model.DeviceContext) error {
+	_, err := s.db.Exec(`INSERT INTO device_context (device_id, state_json, updated_by, updated_at)
+		VALUES (?,?,?,?)
+		ON CONFLICT(device_id) DO UPDATE SET
+			state_json=excluded.state_json, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+		dc.DeviceID, dc.StateJSON, dc.UpdatedBy, dc.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetDeviceContext(deviceID string) (model.DeviceContext, error) {
+	var dc model.DeviceContext
+	err := s.db.QueryRow(`SELECT device_id, state_json, updated_by, updated_at
+		FROM device_context WHERE device_id = ?`, deviceID).
+		Scan(&dc.DeviceID, &dc.StateJSON, &dc.UpdatedBy, &dc.UpdatedAt)
+	return dc, err
 }
 
 func (s *Store) SaveMessage(m model.Message) error {

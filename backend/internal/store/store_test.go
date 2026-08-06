@@ -80,3 +80,86 @@ func TestMessages(t *testing.T) {
 		t.Fatalf("ListMessages: %v %+v", err, msgs)
 	}
 }
+
+func TestAlertScopeColumnWritten(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	a := model.Alert{ID: "alarm-s", Device: "compute-01", Metric: "cpu_usage",
+		Severity: "warning", Status: "active", FiredAt: now, CreatedAt: now}
+	if err := s.SaveAlert(a); err != nil {
+		t.Fatalf("SaveAlert: %v", err)
+	}
+	var scopeVal string
+	if err := s.db.QueryRow(`SELECT scope FROM alerts WHERE id = ?`, a.ID).Scan(&scopeVal); err != nil {
+		t.Fatalf("query scope: %v", err)
+	}
+	if scopeVal != "device:compute-01" {
+		t.Fatalf("scope = %q, want device:compute-01", scopeVal)
+	}
+}
+
+func TestRunAndStageScopeColumns(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	r := model.PipelineRun{ID: "run-s", AlertID: "alarm-s", Status: model.StatusRunning,
+		Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now}
+	if err := s.SaveRun(r); err != nil {
+		t.Fatalf("SaveRun: %v", err)
+	}
+	st := model.StageResult{ID: "st-s", RunID: "run-s", StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: "{}", StartedAt: now, EndedAt: now}
+	if err := s.SaveStage(st); err != nil {
+		t.Fatalf("SaveStage: %v", err)
+	}
+	var runScope, stageScope string
+	if err := s.db.QueryRow(`SELECT scope FROM pipeline_runs WHERE id = ?`, r.ID).Scan(&runScope); err != nil {
+		t.Fatalf("run scope: %v", err)
+	}
+	if err := s.db.QueryRow(`SELECT scope FROM stage_results WHERE id = ?`, st.ID).Scan(&stageScope); err != nil {
+		t.Fatalf("stage scope: %v", err)
+	}
+	if runScope != "task:run-s" || stageScope != "task:run-s" {
+		t.Fatalf("run=%q stage=%q, want task:run-s", runScope, stageScope)
+	}
+}
+
+func TestDeviceContextRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	dc := model.DeviceContext{DeviceID: "compute-01", StateJSON: `{"cpu":85}`,
+		UpdatedBy: "run-1", UpdatedAt: now}
+	if err := s.SaveDeviceContext(dc); err != nil {
+		t.Fatalf("SaveDeviceContext: %v", err)
+	}
+	got, err := s.GetDeviceContext("compute-01")
+	if err != nil {
+		t.Fatalf("GetDeviceContext: %v", err)
+	}
+	if got.DeviceID != "compute-01" || got.StateJSON != `{"cpu":85}` || got.UpdatedBy != "run-1" {
+		t.Fatalf("roundtrip = %+v", got)
+	}
+	// UPSERT updates state
+	dc2 := model.DeviceContext{DeviceID: "compute-01", StateJSON: `{"cpu":95}`, UpdatedBy: "run-2", UpdatedAt: now}
+	if err := s.SaveDeviceContext(dc2); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, _ = s.GetDeviceContext("compute-01")
+	if got.StateJSON != `{"cpu":95}` {
+		t.Fatalf("upsert state = %q", got.StateJSON)
+	}
+}
+
+func TestListAlertsByDevice(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	_ = s.SaveAlert(model.Alert{ID: "alarm-1", Device: "compute-01", Metric: "cpu_usage", Status: "active", FiredAt: now, CreatedAt: now})
+	_ = s.SaveAlert(model.Alert{ID: "alarm-2", Device: "db-01", Metric: "disk_usage", Status: "active", FiredAt: now, CreatedAt: now})
+	list, err := s.ListAlertsByDevice("compute-01")
+	if err != nil || len(list) != 1 || list[0].ID != "alarm-1" {
+		t.Fatalf("ListAlertsByDevice: %v %+v", err, list)
+	}
+	all, _ := s.ListAlerts()
+	if len(all) != 2 {
+		t.Fatalf("ListAlerts len = %d, want 2", len(all))
+	}
+}

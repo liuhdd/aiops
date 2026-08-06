@@ -98,6 +98,13 @@ const (
 	StageSkipped   = "skipped"
 )
 
+type DeviceContext struct {
+	DeviceID  string    `json:"device_id"`
+	StateJSON string    `json:"state_json"`
+	UpdatedBy string    `json:"updated_by"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func NewID(prefix string) string {
 	return fmt.Sprintf("%s-%x", prefix, time.Now().UnixNano())
 }
