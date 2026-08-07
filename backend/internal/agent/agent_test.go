@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/model"
 	"aiops/internal/store"
 )
@@ -65,5 +67,37 @@ func TestAgentInspectAlertTriggersRun(t *testing.T) {
 	msgs, _ := s.ListMessages()
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+}
+
+func TestAgentRuleAnswerIncludesLongTermMemory(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	now := time.Now()
+	_ = cs.AddLongTermMemory(model.LongTermMemory{ID: "m1", Device: "db-01", Metric: "disk_usage",
+		RootCause: "磁盘空间不足", Confidence: 0.8, ActionsJSON: `["清理日志"]`, RunID: "run-0", CreatedAt: now.Add(-time.Hour)})
+	a := model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now}
+	_ = s.SaveAlert(a)
+	_ = s.SaveRun(model.PipelineRun{ID: "run-" + a.ID, AlertID: a.ID, Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-" + a.ID, StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	ag := NewWithContext(s, nil, nil, cs, 3)
+	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "上次") {
+		t.Fatalf("reply missing long-term memory: %q", msg.Content)
+	}
+}
+
+func TestExtractQuery(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	dev, met := extractQuery("排查一下db-01的disk_usage", s)
+	if dev != "db-01" || met != "disk_usage" {
+		t.Fatalf("extractQuery = %q %q", dev, met)
 	}
 }

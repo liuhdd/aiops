@@ -6,20 +6,54 @@ import (
 	"strings"
 	"time"
 
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/llm"
+	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
 	"aiops/internal/store"
 )
 
 type Agent struct {
-	store *store.Store
-	llm   *llm.Client
-	eng   *pipeline.Engine
+	store    *store.Store
+	llm      *llm.Client
+	eng      *pipeline.Engine
+	ctxStore *ctxpkg.Store
+	topK     int
 }
 
 func New(s *store.Store, lc *llm.Client, eng *pipeline.Engine) *Agent {
-	return &Agent{store: s, llm: lc, eng: eng}
+	return NewWithContext(s, lc, eng, nil, 3)
+}
+
+func NewWithContext(s *store.Store, lc *llm.Client, eng *pipeline.Engine, cs *ctxpkg.Store, topK int) *Agent {
+	return &Agent{store: s, llm: lc, eng: eng, ctxStore: cs, topK: topK}
+}
+
+func (a *Agent) buildAssembled(device, metric string) *ctxpkg.Assembled {
+	if a.ctxStore == nil || device == "" || metric == "" {
+		return nil
+	}
+	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
+	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat"}, false, nil)
+	if err != nil {
+		return nil
+	}
+	return as
+}
+
+func (a *Agent) memorySuffix(device, metric string) string {
+	as := a.buildAssembled(device, metric)
+	if as == nil || !strings.Contains(as.User, "【设备历史经验】") {
+		return ""
+	}
+	// 取长期记忆段落首行摘要
+	for _, line := range strings.Split(as.User, "\n") {
+		if strings.HasPrefix(line, "上次(") {
+			return "\n参考历史经验：" + line
+		}
+	}
+	return ""
 }
 
 func (a *Agent) Handle(ctx context.Context, userText string) (model.Message, error) {
@@ -119,16 +153,43 @@ func (a *Agent) answerFor(alertID string, intent Intent) string {
 	if st, ok, _ := a.store.GetLatestStage(run.ID, "recommend"); ok {
 		_ = llm.ParseJSON(st.Output, &rec)
 	}
+	reply := ""
 	switch intent {
 	case AskRecommendation:
 		if len(rec.Actions) > 0 {
-			return fmt.Sprintf("处置建议：\n%s", strings.Join(rec.Actions, "\n"))
+			reply = fmt.Sprintf("处置建议：\n%s", strings.Join(rec.Actions, "\n"))
 		}
 	case AskRootCause:
 		if rca.RootCause != "" {
-			return fmt.Sprintf("根因：%s\n置信度：%.0f%%\n证据链：%s",
+			reply = fmt.Sprintf("根因：%s\n置信度：%.0f%%\n证据链：%s",
 				rca.RootCause, rca.Confidence*100, strings.Join(rca.EvidenceChain, "；"))
 		}
 	}
-	return fmt.Sprintf("告警 %s：%s", alertID, rca.RootCause)
+	if reply == "" {
+		reply = fmt.Sprintf("告警 %s：%s", alertID, rca.RootCause)
+	}
+	// 长期记忆附加
+	alert, err := a.store.GetAlert(alertID)
+	if err == nil {
+		reply += a.memorySuffix(alert.Device, alert.Metric)
+	}
+	return reply
+}
+
+func extractQuery(text string, s *store.Store) (device, metric string) {
+	low := strings.ToLower(text)
+	knownMetrics := []string{"cpu_usage", "disk_usage", "gpu_util", "mem_usage", "net_in"}
+	for _, m := range knownMetrics {
+		if strings.Contains(low, m) {
+			metric = m
+			break
+		}
+	}
+	for _, d := range mockdata.Devices() {
+		if strings.Contains(low, strings.ToLower(d.Name)) {
+			device = d.Name
+			break
+		}
+	}
+	return device, metric
 }
