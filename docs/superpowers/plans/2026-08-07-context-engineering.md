@@ -2894,3 +2894,202 @@ git commit -m "feat: main装配上下文引擎并增强端到端验证"
 - **Spec 覆盖**：第 4 节数据模型 → Task 1/5/6；第 5 节 Selector → Task 4；第 6 节 Assembler → Task 9；第 7 节 Tools/ReAct → Task 7/8；第 8 节流水线 → Task 11/12/13/14；第 9 节聊天 → Task 15；第 10 节配置/错误/测试 → Task 2 + 各任务测试；知识语料 → Task 3。✅
 - **占位符**：无 TBD/TODO；Step 中代码均为完整实现。✅
 - **类型一致性**：`NewEngine(cs, reg, runID, device, metric, react, topK)` 在 Task 10/11/14 中一致；`NewRCAStage(lc context.Completer)` / `NewRecommendStage(lc context.Completer)` 在 Task 12/13 中与 build.go 的 `NewRCAStage(lc)` / `NewRecommendStage(lc)` 兼容（`*llm.Client` 满足接口）；`llm.ParseJSON` 用于 JSON 解析（Task 13）。Task 12 的 stages_test 直接设置 `e.ctxStore/e.tools/e.react/e.topK` 私有字段（同包 `pipeline` 可行）；e2e 用 `BuildWithContext`。✅
+
+---
+
+### Task 17: 聊天 Agent LLM 组装上下文回答（补齐 spec §9）
+
+> 评审补充任务：spec §9 要求"LLM 可用 → 用组装上下文回答"，原 Task 15 仅实现规则路径+长期记忆摘要。本任务补齐 LLM 聊天路径。
+
+**Files:**
+- Create: `backend/internal/context/completer.go`（导出 `IsNilCompleter`）
+- Create: `backend/internal/context/completer_test.go`
+- Modify: `backend/internal/pipeline/rca.go`（改用 `ctxpkg.IsNilCompleter`，删本地 `isNilCompleter`）
+- Modify: `backend/internal/pipeline/recommend.go`（改用 `ctxpkg.IsNilCompleter`）
+- Modify: `backend/internal/agent/agent.go`（`llm` 字段改 `ctxpkg.Completer`；新增 `answerWithLLM`；`Handle` 分发）
+- Modify: `backend/internal/agent/agent_test.go`
+
+**Interfaces:**
+- Produces: `context.IsNilCompleter(c Completer) bool`（typed-nil 兼容）；`agent.Agent.llm ctxpkg.Completer`；`agent.answerWithLLM(ctx, alertID, intent, userText) string`。
+
+- [ ] **Step 1: 导出 `context.IsNilCompleter`（TDD）**
+
+`context/completer_test.go`：
+
+```go
+package context
+
+import (
+	"testing"
+
+	"aiops/internal/llm"
+)
+
+func TestIsNilCompleter(t *testing.T) {
+	var c Completer
+	if !IsNilCompleter(c) {
+		t.Fatalf("nil interface should be nil")
+	}
+	var typedNil *llm.Client
+	if !IsNilCompleter(typedNil) {
+		t.Fatalf("typed-nil *llm.Client should be nil")
+	}
+	if IsNilCompleter(&scriptedCompleter{}) {
+		t.Fatalf("non-nil completer should not be nil")
+	}
+}
+```
+
+`context/completer.go`：
+
+```go
+package context
+
+import "reflect"
+
+// IsNilCompleter 兼容 typed-nil：*llm.Client(nil) 包进接口后接口非 nil，需反射判断底层指针。
+func IsNilCompleter(c Completer) bool {
+	if c == nil {
+		return true
+	}
+	v := reflect.ValueOf(c)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return v.IsNil()
+	}
+	return false
+}
+```
+
+Run: `go test ./internal/context/ -run TestIsNilCompleter -v` → RED（undefined）→ GREEN。
+
+- [ ] **Step 2: pipeline 改用导出 helper**
+
+`rca.go`：`if isNilCompleter(s.llm)` → `if ctxpkg.IsNilCompleter(s.llm)`；删除本地 `isNilCompleter` 函数与 `"reflect"` import（`ctxpkg` 已导入）。
+
+`recommend.go`：`if isNilCompleter(s.llm)` → `if ctxpkg.IsNilCompleter(s.llm)`（确认 recommend.go 当前用 isNilCompleter；如用了 `s.llm == nil` 则同样替换）。
+
+Run: `go test ./internal/pipeline/` → 全 PASS。
+
+- [ ] **Step 3: 聊天 Agent 接入 LLM（TDD）**
+
+`agent_test.go` 追加 fake completer（stdlib `context` 冲突，别名 `ctxpkg`；fake 用 stdlib context）：
+
+```go
+type fakeChatLLM struct {
+	raw string
+	err error
+}
+
+func (f *fakeChatLLM) Complete(_ context.Context, _, _ string) (string, error) {
+	return f.raw, f.err
+}
+```
+
+追加测试：
+
+```go
+func TestAgentLLMAnswerUsesAssembledContext(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	now := time.Now()
+	_ = cs.AddLongTermMemory(model.LongTermMemory{ID: "m1", Device: "db-01", Metric: "disk_usage",
+		RootCause: "磁盘空间不足", Confidence: 0.8, ActionsJSON: `["清理日志"]`, RunID: "run-0", CreatedAt: now.Add(-time.Hour)})
+	a := model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now}
+	_ = s.SaveAlert(a)
+	_ = s.SaveRun(model.PipelineRun{ID: "run-" + a.ID, AlertID: a.ID, Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-" + a.ID, StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	fake := &fakeChatLLM{raw: "LLM回答：磁盘空间不足，建议清理日志"}
+	ag := NewWithContext(s, fake, nil, cs, 3)
+	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "LLM回答") {
+		t.Fatalf("expected LLM answer, got %q", msg.Content)
+	}
+}
+
+func TestAgentLLMFallsBackToRule(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	now := time.Now()
+	a := model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now}
+	_ = s.SaveAlert(a)
+	_ = s.SaveRun(model.PipelineRun{ID: "run-" + a.ID, AlertID: a.ID, Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-" + a.ID, StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	fake := &fakeChatLLM{err: errors.New("llm down")}
+	cs := ctxpkg.NewStore(s)
+	ag := NewWithContext(s, fake, nil, cs, 3)
+	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "根因：") {
+		t.Fatalf("expected rule fallback, got %q", msg.Content)
+	}
+}
+```
+
+`agent.go` 修改：
+- `llm` 字段类型：`*llm.Client` → `ctxpkg.Completer`（import 别名 `ctxpkg`；`llm` import 保留给 `llm.ParseJSON`）。
+- 新增 `answerWithLLM`：
+
+```go
+func (a *Agent) answerWithLLM(ctx context.Context, alertID string, intent Intent, userText string) string {
+	alert, err := a.store.GetAlert(alertID)
+	if err != nil {
+		return a.answerFor(alertID, intent)
+	}
+	var rca model.RCA
+	var rec model.Recommendation
+	if run, rerr := a.store.GetRun("run-" + alertID); rerr == nil {
+		if st, ok, _ := a.store.GetLatestStage(run.ID, "rca"); ok {
+			_ = llm.ParseJSON(st.Output, &rca)
+		}
+		if st, ok, _ := a.store.GetLatestStage(run.ID, "recommend"); ok {
+			_ = llm.ParseJSON(st.Output, &rec)
+		}
+	}
+	ctxStr := ""
+	if as := a.buildAssembled(alert.Device, alert.Metric); as != nil {
+		ctxStr = as.User
+	}
+	system := "你是算力中心硬件运维助手。结合给定上下文与已有排查结论，用中文简明回答用户的根因或处置问题。"
+	user := fmt.Sprintf("告警 %s：设备=%s 指标=%s\n已有根因：%s\n已有处置：%s\n\n【相关上下文】\n%s\n\n用户问题：%s",
+		alertID, alert.Device, alert.Metric, rca.RootCause, strings.Join(rec.Actions, "；"), ctxStr, userText)
+	raw, cerr := a.llm.Complete(ctx, system, user)
+	if cerr != nil || strings.TrimSpace(raw) == "" {
+		return a.answerFor(alertID, intent)
+	}
+	return raw
+}
+```
+
+- `Handle` 两处 `reply = a.answerFor(alertID, ParseIntent(userText))`（eng!=nil 分支与 eng==nil 分支）替换为：
+
+```go
+if !ctxpkg.IsNilCompleter(a.llm) {
+	reply = a.answerWithLLM(ctx, alertID, ParseIntent(userText), userText)
+} else {
+	reply = a.answerFor(alertID, ParseIntent(userText))
+}
+```
+
+- 确认 `buildAssembled` 中 `ctxpkg.NewAssembler(a.ctxStore, a.topK)` 与 `ctxpkg.Query{...}` 已用别名。
+
+Run: `go test ./internal/agent/` → 全 PASS；`go test ./...` → 全 PASS。
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add backend/internal/context/completer.go backend/internal/context/completer_test.go backend/internal/pipeline/rca.go backend/internal/pipeline/recommend.go backend/internal/agent/agent.go backend/internal/agent/agent_test.go
+git commit -m "feat: 聊天Agent接入LLM组装上下文回答"
+```
+
+- [ ] **Step 5: 更新 ledger 记录 spec §9 补齐**
