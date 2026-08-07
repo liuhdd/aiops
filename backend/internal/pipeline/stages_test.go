@@ -196,6 +196,27 @@ func TestContextStageReadsAndWritesDeviceContext(t *testing.T) {
 	}
 }
 
+func TestRecommendInjectsAssembledContext(t *testing.T) {
+	mockdata.GenerateAll(42)
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	st := &State{
+		Run:   model.PipelineRun{ID: "run-1", AlertID: "alarm-1"},
+		Alert: model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage", Severity: "critical"},
+		RCA:   &model.RCA{RootCause: "磁盘空间不足"},
+	}
+	_ = cs.AddLongTermMemory(model.LongTermMemory{ID: "m1", Device: "db-01", Metric: "disk_usage",
+		RootCause: "磁盘空间不足", Confidence: 0.8, ActionsJSON: `["清理"]`, RunID: "run-0", CreatedAt: time.Now()})
+	rec := NewRecommendStage(&fakeCompleter{raw: `{"actions":["清理日志"],"runbook_ref":"disk_usage","risk":"低"}`})
+	if err := rec.Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if st.Recommendation == nil || len(st.Recommendation.Actions) == 0 {
+		t.Fatalf("recommendation = %+v", st.Recommendation)
+	}
+}
+
 func TestRCAReactFallsBackOnError(t *testing.T) {
 	mockdata.GenerateAll(42)
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
