@@ -163,3 +163,16 @@ func TestListAlertsByDevice(t *testing.T) {
 		t.Fatalf("ListAlerts len = %d, want 2", len(all))
 	}
 }
+
+func TestMigrateCreatesContextTables(t *testing.T) {
+	s, _ := New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('scratchpad_entries','tool_events','long_term_memory')`).Scan(&n)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("context tables = %d, want 3", n)
+	}
+}

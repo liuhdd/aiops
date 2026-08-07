@@ -33,3 +33,14 @@ func TestStageStatusConstants(t *testing.T) {
 		t.Fatalf("stage constants wrong")
 	}
 }
+
+func TestContextTypesJSON(t *testing.T) {
+	te := ToolEvent{ID: "e1", RunID: "run-1", ToolName: "query_metric",
+		ArgsJSON: "{}", ResultJSON: "[]", Status: ToolStatusOK}
+	if te.Status != ToolStatusOK {
+		t.Fatalf("status = %q", te.Status)
+	}
+	if got := MustJSON(te); got == "{}" {
+		t.Fatalf("MustJSON empty")
+	}
+}

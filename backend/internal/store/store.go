@@ -49,6 +49,20 @@ func (s *Store) migrate() error {
 			id TEXT PRIMARY KEY, role TEXT, content TEXT, alert_id TEXT,
 			created_at DATETIME)`,
 		`CREATE INDEX IF NOT EXISTS idx_stage_run ON stage_results(run_id, stage_id, iteration)`,
+		`CREATE TABLE IF NOT EXISTS scratchpad_entries (
+			id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step TEXT NOT NULL,
+			content TEXT NOT NULL, tool_name TEXT, created_at DATETIME)`,
+		`CREATE TABLE IF NOT EXISTS tool_events (
+			id TEXT PRIMARY KEY, run_id TEXT NOT NULL, tool_name TEXT NOT NULL,
+			args_json TEXT NOT NULL, result_json TEXT NOT NULL, status TEXT NOT NULL,
+			duration_ms INTEGER, created_at DATETIME)`,
+		`CREATE TABLE IF NOT EXISTS long_term_memory (
+			id TEXT PRIMARY KEY, device TEXT NOT NULL, metric TEXT NOT NULL,
+			root_cause TEXT NOT NULL, confidence REAL, actions_json TEXT,
+			run_id TEXT NOT NULL, created_at DATETIME)`,
+		`CREATE INDEX IF NOT EXISTS idx_scratch_run ON scratchpad_entries(run_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_run ON tool_events(run_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_ltm_dev_metric ON long_term_memory(device, metric, created_at)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
