@@ -85,7 +85,8 @@ CREATE INDEX IF NOT EXISTS idx_ltm_dev_metric ON long_term_memory(device, metric
 
 **作用域对齐现有模型**：
 
-- `scratchpad_entries` / `tool_events`：任务级，`ContextStore` 写时校验 `run_id == task scope`，越权返回 `scope.ErrScopeDenied`（复用 `scope.go` 编解码）。
+- `ContextStore` 持有原始 `*store.Store`（与 chat/simulator 同级的全局能力），写入方法显式携带 run_id 并在内部自行校验：`scratchpad_entries` / `tool_events` 写时校验 `run_id == task scope`，越权返回 `scope.ErrScopeDenied`（复用 `scope.go` 编解码）；`long_term_memory` 为全局写。
+- engine 已持有原始 store（`e.store`），故 run 结束时能直接经 ContextStore 沉淀长期记忆，无需绕过作用域。
 - `long_term_memory`：全局写（run 完成时由 engine 落），全局读。
 - 短期记忆：读 `messages` 最近 N 条（全局）。
 
