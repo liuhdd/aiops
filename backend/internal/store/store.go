@@ -275,3 +275,96 @@ func (s *Store) ListMessages() ([]model.Message, error) {
 	}
 	return out, rows.Err()
 }
+
+// ---- 上下文工程持久化 ----
+
+func (s *Store) InsertScratchpad(e model.ScratchpadEntry) error {
+	_, err := s.db.Exec(`INSERT INTO scratchpad_entries (id, run_id, step, content, tool_name, created_at) VALUES (?,?,?,?,?,?)`,
+		e.ID, e.RunID, e.Step, e.Content, e.ToolName, e.CreatedAt)
+	return err
+}
+
+func (s *Store) ListScratchpad(runID string) ([]model.ScratchpadEntry, error) {
+	rows, err := s.db.Query(`SELECT id, run_id, step, content, tool_name, created_at FROM scratchpad_entries WHERE run_id = ? ORDER BY created_at ASC`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.ScratchpadEntry
+	for rows.Next() {
+		var e model.ScratchpadEntry
+		if err := rows.Scan(&e.ID, &e.RunID, &e.Step, &e.Content, &e.ToolName, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) InsertToolEvent(ev model.ToolEvent) error {
+	_, err := s.db.Exec(`INSERT INTO tool_events (id, run_id, tool_name, args_json, result_json, status, duration_ms, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		ev.ID, ev.RunID, ev.ToolName, ev.ArgsJSON, ev.ResultJSON, ev.Status, ev.DurationMS, ev.CreatedAt)
+	return err
+}
+
+func (s *Store) ListToolEvents(runID string) ([]model.ToolEvent, error) {
+	rows, err := s.db.Query(`SELECT id, run_id, tool_name, args_json, result_json, status, duration_ms, created_at FROM tool_events WHERE run_id = ? ORDER BY created_at ASC`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.ToolEvent
+	for rows.Next() {
+		var ev model.ToolEvent
+		if err := rows.Scan(&ev.ID, &ev.RunID, &ev.ToolName, &ev.ArgsJSON, &ev.ResultJSON, &ev.Status, &ev.DurationMS, &ev.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddLongTermMemory(m model.LongTermMemory) error {
+	_, err := s.db.Exec(`INSERT INTO long_term_memory (id, device, metric, root_cause, confidence, actions_json, run_id, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		m.ID, m.Device, m.Metric, m.RootCause, m.Confidence, m.ActionsJSON, m.RunID, m.CreatedAt)
+	return err
+}
+
+func (s *Store) ListLongTermMemory(device, metric string) ([]model.LongTermMemory, error) {
+	rows, err := s.db.Query(`SELECT id, device, metric, root_cause, confidence, actions_json, run_id, created_at FROM long_term_memory WHERE device = ? AND metric = ? ORDER BY created_at DESC`, device, metric)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.LongTermMemory
+	for rows.Next() {
+		var m model.LongTermMemory
+		if err := rows.Scan(&m.ID, &m.Device, &m.Metric, &m.RootCause, &m.Confidence, &m.ActionsJSON, &m.RunID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RecentMessages(n int) ([]model.Message, error) {
+	rows, err := s.db.Query(`SELECT id, role, content, alert_id, created_at FROM messages ORDER BY created_at DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var desc []model.Message
+	for rows.Next() {
+		var m model.Message
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &m.AlertID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		desc = append(desc, m)
+	}
+	// 反转回时间升序
+	out := make([]model.Message, 0, len(desc))
+	for i := len(desc) - 1; i >= 0; i-- {
+		out = append(out, desc[i])
+	}
+	return out, rows.Err()
+}
