@@ -261,3 +261,32 @@ func TestEngineInjectsContextAndWritesNotes(t *testing.T) {
 		t.Fatalf("long term memory = %+v", ltm)
 	}
 }
+
+func TestEngineSkipsScratchpadForFailedStage(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	reg := ctxpkg.NewRegistry()
+	for _, tt := range ctxpkg.DefaultTools() {
+		reg.Register(tt)
+	}
+	stages := []Stage{
+		fakeStage{id: "ok", name: "正常", run: func(st *State) error { return nil }},
+		fakeStage{id: "bad", name: "失败", run: func(st *State) error { return errors.New("boom") }},
+	}
+	e := NewEngine(s, stages)
+	e.ctxStore = cs
+	e.tools = reg
+	alert := model.Alert{ID: "alarm-fail", Device: "db-01", Metric: "disk_usage"}
+	if err := e.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	run, _ := s.GetRun("run-" + alert.ID)
+	if run.Status != model.StatusDegraded {
+		t.Fatalf("run status = %q, want degraded", run.Status)
+	}
+	sp, _ := cs.ListScratchpad("run-" + alert.ID)
+	if len(sp) != 1 || sp[0].Step != "ok" {
+		t.Fatalf("scratchpad notes = %+v, want only the completed stage %q", sp, "ok")
+	}
+}

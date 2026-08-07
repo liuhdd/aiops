@@ -152,9 +152,9 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 			} else {
 				res.Status = model.StageCompleted
 				res.Output = stageOutput(st, stage.StageID())
-			}
-			if st.Ctx != nil {
-				_ = st.Ctx.AddScratchpad(stage.StageID(), stageSummary(st, stage.StageID()), "")
+				if st.Ctx != nil {
+					_ = st.Ctx.AddScratchpad(stage.StageID(), stageSummary(st, stage.StageID()), "")
+				}
 			}
 			if err := st.Store.SaveStage(res); err != nil {
 				return err
