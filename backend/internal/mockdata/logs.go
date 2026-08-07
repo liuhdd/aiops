@@ -56,6 +56,20 @@ func generateLogs(now time.Time) {
 	}
 }
 
+type LogEntryView struct {
+	Time    string `json:"time"`
+	Level   string `json:"level"`
+	Content string `json:"content"`
+}
+
+func ToLogViews(logs []model.LogEntry) []LogEntryView {
+	out := make([]LogEntryView, 0, len(logs))
+	for _, e := range logs {
+		out = append(out, LogEntryView{Time: e.Time.Format("15:04"), Level: e.Level, Content: e.Content})
+	}
+	return out
+}
+
 func SearchLogs(device string, keywords []string, from, to time.Time) ([]model.LogEntry, error) {
 	mu.RLock()
 	defer mu.RUnlock()

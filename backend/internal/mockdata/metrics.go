@@ -91,6 +91,19 @@ func GenerateAll(seed int64) {
 	generateLogs(now)
 }
 
+type MetricPointView struct {
+	Time  string  `json:"time"`
+	Value float64 `json:"value"`
+}
+
+func ToMetricViews(pts []model.MetricPoint) []MetricPointView {
+	out := make([]MetricPointView, 0, len(pts))
+	for _, p := range pts {
+		out = append(out, MetricPointView{Time: p.Time.Format("15:04"), Value: p.Value})
+	}
+	return out
+}
+
 func QueryMetric(device, metric string, from, to time.Time) ([]model.MetricPoint, error) {
 	mu.RLock()
 	defer mu.RUnlock()
