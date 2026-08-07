@@ -1,9 +1,13 @@
 package context
 
 import (
+	"time"
+
 	"aiops/internal/model"
 	"aiops/internal/store"
 )
+
+var nowFunc = func() time.Time { return time.Now() }
 
 type Store struct {
 	st *store.Store
