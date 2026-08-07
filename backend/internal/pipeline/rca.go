@@ -2,29 +2,85 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/llm"
 	"aiops/internal/model"
 )
 
 type RCAStage struct {
-	llm *llm.Client
+	llm ctxpkg.Completer
 }
 
-func NewRCAStage(lc *llm.Client) *RCAStage { return &RCAStage{llm: lc} }
+func NewRCAStage(lc ctxpkg.Completer) *RCAStage { return &RCAStage{llm: lc} }
 
 func (RCAStage) StageID() string { return "rca" }
 func (RCAStage) Name() string    { return "根因分析" }
 
 func (s *RCAStage) Run(ctx context.Context, st *State) error {
-	if s.llm == nil {
+	if isNilCompleter(s.llm) {
 		st.RCA = ruleRCA(st)
 		return nil
 	}
+	if st.Ctx != nil && st.Ctx.ReactEnabled() {
+		return s.react(ctx, st)
+	}
+	return s.singleCall(ctx, st)
+}
+
+// isNilCompleter 兼容 typed-nil：*llm.Client(nil) 包进接口后接口非 nil，需反射判断底层指针
+func isNilCompleter(c ctxpkg.Completer) bool {
+	if c == nil {
+		return true
+	}
+	v := reflect.ValueOf(c)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return v.IsNil()
+	}
+	return false
+}
+
+func (s *RCAStage) react(ctx context.Context, st *State) error {
+	q := ctxpkg.Query{
+		Device: st.Alert.Device, Metric: st.Alert.Metric, Severity: st.Alert.Severity,
+		Stage: "rca", RunID: st.Run.ID, Keywords: []string{st.Alert.Message},
+	}
+	as, err := st.Ctx.Assemble(q, true)
+	if err != nil {
+		st.RCA = ruleRCA(st)
+		return nil
+	}
+	system := "你是算力中心硬件运维专家。基于上下文，若证据不足可调用工具补充，推理记录写入write_scratchpad。最终输出JSON: {\"final_answer\":{\"root_cause\":string,\"evidence_chain\":[string],\"confidence\":0~1,\"gaps\":[string]}}。除final_answer或tool_call外不输出其它内容。"
+	res, err := st.Ctx.RunReact(ctx, s.llm, system, q, as.User)
+	if err != nil || res.Final == nil {
+		st.RCA = ruleRCA(st)
+		return nil
+	}
+	var rc model.RCA
+	if err := json.Unmarshal(res.Final, &rc); err != nil {
+		st.RCA = ruleRCA(st)
+		return nil
+	}
+	st.RCA = &rc
+	return nil
+}
+
+func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
 	system := "你是算力中心硬件运维专家。基于给定证据输出JSON：{\"root_cause\":string,\"evidence_chain\":[string],\"confidence\":0~1,\"gaps\":[string]}。只输出JSON。"
-	user := fmt.Sprintf("设备:%s 指标:%s\n证据:%s\n%s",
+	user := ""
+	if st.Ctx != nil {
+		if as, err := st.Ctx.Assemble(ctxpkg.Query{
+			Device: st.Alert.Device, Metric: st.Alert.Metric, Severity: st.Alert.Severity,
+			Stage: "rca", RunID: st.Run.ID, Keywords: []string{st.Alert.Message}}, false); err == nil {
+			user = as.User + "\n"
+		}
+	}
+	user += fmt.Sprintf("设备:%s 指标:%s\n证据:%s\n%s",
 		st.Alert.Device, st.Alert.Metric,
 		model.MustJSON(st.Evidence),
 		extraGapHint(st))

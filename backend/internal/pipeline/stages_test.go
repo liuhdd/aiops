@@ -6,11 +6,21 @@ import (
 	"testing"
 	"time"
 
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/scope"
 	"aiops/internal/store"
 )
+
+type fakeCompleter struct {
+	raw string
+	err error
+}
+
+func (f *fakeCompleter) Complete(_ context.Context, _, _ string) (string, error) {
+	return f.raw, f.err
+}
 
 func TestNormalizeStageFillsTimestamps(t *testing.T) {
 	st := &State{Alert: model.Alert{ID: "alarm-x", Device: "d", Metric: "m"}}
@@ -183,5 +193,36 @@ func TestContextStageReadsAndWritesDeviceContext(t *testing.T) {
 	}
 	if st.DeviceContext == nil {
 		t.Fatalf("st.DeviceContext not populated")
+	}
+}
+
+func TestRCAReactFallsBackOnError(t *testing.T) {
+	mockdata.GenerateAll(42)
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	reg := ctxpkg.NewRegistry()
+	for _, tt := range ctxpkg.DefaultTools() {
+		reg.Register(tt)
+	}
+	// 假模型永远只回 tool_call，无 final_answer → ReAct 到 max_steps 后落规则兜底
+	fake := &fakeCompleter{raw: `{"thought":"调工具","tool_call":{"name":"search_runbook","args":{"metric":"disk_usage"}}}`}
+	e := NewEngine(s, []Stage{NewRCAStage(fake)})
+	e.ctxStore = cs
+	e.tools = reg
+	e.react = true
+	e.topK = 3
+	alert := model.Alert{ID: "alarm-rca", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: time.Now(), CreatedAt: time.Now()}
+	if err := e.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	run, _ := s.GetRun("run-" + alert.ID)
+	if run.Status != model.StatusCompleted {
+		t.Fatalf("status = %q, want completed (rule fallback)", run.Status)
+	}
+	evs, _ := cs.ListToolEvents("run-" + alert.ID)
+	if len(evs) != 5 { // max_steps 轮工具调用
+		t.Fatalf("tool events = %d, want 5", len(evs))
 	}
 }
