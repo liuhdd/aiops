@@ -68,7 +68,7 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 		}
 		for _, e := range sp {
 			out = append(out, Chunk{Source: SourceScratchpad,
-				Content: "step=" + e.Step + ": " + e.Content,
+				Content:  "step=" + e.Step + ": " + e.Content,
 				Metadata: map[string]string{"created_at": e.CreatedAt.Format(time.RFC3339)}})
 		}
 	}
@@ -79,7 +79,7 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 		}
 		for _, m := range ltm {
 			out = append(out, Chunk{Source: SourceLongTerm,
-				Content: "上次(" + m.CreatedAt.Format("2006-01-02") + ") 根因=" + m.RootCause + " 置信度=" + strconv.Itoa(int(m.Confidence*100)) + "% 处置=" + m.ActionsJSON,
+				Content:  "上次(" + m.CreatedAt.Format("2006-01-02") + ") 根因=" + m.RootCause + " 置信度=" + strconv.Itoa(int(m.Confidence*100)) + "% 处置=" + m.ActionsJSON,
 				Metadata: map[string]string{"device": m.Device, "metric": m.Metric, "created_at": m.CreatedAt.Format(time.RFC3339)}})
 		}
 	}
@@ -89,12 +89,12 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 	}
 	for _, m := range msgs {
 		out = append(out, Chunk{Source: SourceShortTerm,
-			Content: m.Role + ": " + m.Content,
+			Content:  m.Role + ": " + m.Content,
 			Metadata: map[string]string{"created_at": m.CreatedAt.Format(time.RFC3339)}})
 	}
 	for _, d := range mockdata.Docs() {
 		out = append(out, Chunk{Source: SourceKnowledge,
-			Content: d.Title + ": " + d.Body,
+			Content:  d.Title + ": " + d.Body,
 			Metadata: map[string]string{"metrics": strings.Join(d.Metrics, ","), "device_types": strings.Join(d.DeviceTypes, ",")}})
 	}
 	for i := range out {
