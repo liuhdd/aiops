@@ -51,6 +51,24 @@ func TestSelectTopKPerSource(t *testing.T) {
 	}
 }
 
+func TestScoreRecencyDecay(t *testing.T) {
+	sel := Selector{}
+	now := time.Now()
+	q := Query{Metric: "disk_usage"}
+	// 关键词/标签完全一致，仅 created_at 不同：新的应严格高于旧的
+	fresh := chunk(SourceScratchpad, "disk_usage 磁盘 记录", map[string]string{
+		"metrics":    "disk_usage",
+		"created_at": now.Format(time.RFC3339),
+	})
+	stale := chunk(SourceScratchpad, "disk_usage 磁盘 记录", map[string]string{
+		"metrics":    "disk_usage",
+		"created_at": now.Add(-2 * time.Hour).Format(time.RFC3339),
+	})
+	if sel.Score(fresh, q, now) <= sel.Score(stale, q, now) {
+		t.Fatalf("fresh(%f) should beat stale(%f)", sel.Score(fresh, q, now), sel.Score(stale, q, now))
+	}
+}
+
 func TestSelectFiltersBelowThreshold(t *testing.T) {
 	sel := Selector{}
 	// 无关键词重叠、无标签、无时间戳 → 低分
