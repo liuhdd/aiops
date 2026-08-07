@@ -25,7 +25,7 @@ func (s *RecommendStage) Run(ctx context.Context, st *State) error {
 		steps = []string{"联系人工介入排查"}
 	}
 	actions := steps
-	if !isNilCompleter(s.llm) {
+	if !ctxpkg.IsNilCompleter(s.llm) {
 		system := "你是算力中心运维助手。基于根因和预案，给出简明的处置建议步骤列表。只输出JSON：{\"actions\":[string],\"runbook_ref\":string,\"risk\":string}"
 		root := ""
 		if st.RCA != nil {

@@ -16,17 +16,17 @@ import (
 
 type Agent struct {
 	store    *store.Store
-	llm      *llm.Client
+	llm      ctxpkg.Completer
 	eng      *pipeline.Engine
 	ctxStore *ctxpkg.Store
 	topK     int
 }
 
-func New(s *store.Store, lc *llm.Client, eng *pipeline.Engine) *Agent {
+func New(s *store.Store, lc ctxpkg.Completer, eng *pipeline.Engine) *Agent {
 	return NewWithContext(s, lc, eng, nil, 3)
 }
 
-func NewWithContext(s *store.Store, lc *llm.Client, eng *pipeline.Engine, cs *ctxpkg.Store, topK int) *Agent {
+func NewWithContext(s *store.Store, lc ctxpkg.Completer, eng *pipeline.Engine, cs *ctxpkg.Store, topK int) *Agent {
 	return &Agent{store: s, llm: lc, eng: eng, ctxStore: cs, topK: topK}
 }
 
@@ -91,10 +91,18 @@ func (a *Agent) Handle(ctx context.Context, userText string) (model.Message, err
 					_ = a.eng.Run(ctx, alert, nil)
 				}
 				time.Sleep(50 * time.Millisecond)
-				reply = a.answerFor(alertID, ParseIntent(userText))
+				if !ctxpkg.IsNilCompleter(a.llm) {
+					reply = a.answerWithLLM(ctx, alertID, ParseIntent(userText), userText)
+				} else {
+					reply = a.answerFor(alertID, ParseIntent(userText))
+				}
 			}
 		} else {
-			reply = a.answerFor(alertID, ParseIntent(userText))
+			if !ctxpkg.IsNilCompleter(a.llm) {
+				reply = a.answerWithLLM(ctx, alertID, ParseIntent(userText), userText)
+			} else {
+				reply = a.answerFor(alertID, ParseIntent(userText))
+			}
 		}
 	case AskStatus:
 		reply = "告警状态可在左侧列表查看，点击告警查看排查时间线。"
@@ -174,6 +182,35 @@ func (a *Agent) answerFor(alertID string, intent Intent) string {
 		reply += a.memorySuffix(alert.Device, alert.Metric)
 	}
 	return reply
+}
+
+func (a *Agent) answerWithLLM(ctx context.Context, alertID string, intent Intent, userText string) string {
+	alert, err := a.store.GetAlert(alertID)
+	if err != nil {
+		return a.answerFor(alertID, intent)
+	}
+	var rca model.RCA
+	var rec model.Recommendation
+	if run, rerr := a.store.GetRun("run-" + alertID); rerr == nil {
+		if st, ok, _ := a.store.GetLatestStage(run.ID, "rca"); ok {
+			_ = llm.ParseJSON(st.Output, &rca)
+		}
+		if st, ok, _ := a.store.GetLatestStage(run.ID, "recommend"); ok {
+			_ = llm.ParseJSON(st.Output, &rec)
+		}
+	}
+	ctxStr := ""
+	if as := a.buildAssembled(alert.Device, alert.Metric); as != nil {
+		ctxStr = as.User
+	}
+	system := "你是算力中心硬件运维助手。结合给定上下文与已有排查结论，用中文简明回答用户的根因或处置问题。"
+	user := fmt.Sprintf("告警 %s：设备=%s 指标=%s\n已有根因：%s\n已有处置：%s\n\n【相关上下文】\n%s\n\n用户问题：%s",
+		alertID, alert.Device, alert.Metric, rca.RootCause, strings.Join(rec.Actions, "；"), ctxStr, userText)
+	raw, cerr := a.llm.Complete(ctx, system, user)
+	if cerr != nil || strings.TrimSpace(raw) == "" {
+		return a.answerFor(alertID, intent)
+	}
+	return raw
 }
 
 func extractQuery(text string, s *store.Store) (device, metric string) {

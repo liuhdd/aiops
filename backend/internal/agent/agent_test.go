@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -90,6 +91,61 @@ func TestAgentRuleAnswerIncludesLongTermMemory(t *testing.T) {
 	}
 	if !strings.Contains(msg.Content, "上次") {
 		t.Fatalf("reply missing long-term memory: %q", msg.Content)
+	}
+}
+
+type fakeChatLLM struct {
+	raw string
+	err error
+}
+
+func (f *fakeChatLLM) Complete(_ context.Context, _, _ string) (string, error) {
+	return f.raw, f.err
+}
+
+func TestAgentLLMAnswerUsesAssembledContext(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	now := time.Now()
+	_ = cs.AddLongTermMemory(model.LongTermMemory{ID: "m1", Device: "db-01", Metric: "disk_usage",
+		RootCause: "磁盘空间不足", Confidence: 0.8, ActionsJSON: `["清理日志"]`, RunID: "run-0", CreatedAt: now.Add(-time.Hour)})
+	a := model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now}
+	_ = s.SaveAlert(a)
+	_ = s.SaveRun(model.PipelineRun{ID: "run-" + a.ID, AlertID: a.ID, Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-" + a.ID, StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	fake := &fakeChatLLM{raw: "LLM回答：磁盘空间不足，建议清理日志"}
+	ag := NewWithContext(s, fake, nil, cs, 3)
+	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "LLM回答") {
+		t.Fatalf("expected LLM answer, got %q", msg.Content)
+	}
+}
+
+func TestAgentLLMFallsBackToRule(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	now := time.Now()
+	a := model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now}
+	_ = s.SaveAlert(a)
+	_ = s.SaveRun(model.PipelineRun{ID: "run-" + a.ID, AlertID: a.ID, Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-" + a.ID, StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	fake := &fakeChatLLM{err: errors.New("llm down")}
+	cs := ctxpkg.NewStore(s)
+	ag := NewWithContext(s, fake, nil, cs, 3)
+	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "根因：") {
+		t.Fatalf("expected rule fallback, got %q", msg.Content)
 	}
 }
 

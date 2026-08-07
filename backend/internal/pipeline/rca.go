@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 
 	ctxpkg "aiops/internal/context"
@@ -22,7 +21,7 @@ func (RCAStage) StageID() string { return "rca" }
 func (RCAStage) Name() string    { return "根因分析" }
 
 func (s *RCAStage) Run(ctx context.Context, st *State) error {
-	if isNilCompleter(s.llm) {
+	if ctxpkg.IsNilCompleter(s.llm) {
 		st.RCA = ruleRCA(st)
 		return nil
 	}
@@ -30,19 +29,6 @@ func (s *RCAStage) Run(ctx context.Context, st *State) error {
 		return s.react(ctx, st)
 	}
 	return s.singleCall(ctx, st)
-}
-
-// isNilCompleter 兼容 typed-nil：*llm.Client(nil) 包进接口后接口非 nil，需反射判断底层指针
-func isNilCompleter(c ctxpkg.Completer) bool {
-	if c == nil {
-		return true
-	}
-	v := reflect.ValueOf(c)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-		return v.IsNil()
-	}
-	return false
 }
 
 func (s *RCAStage) react(ctx context.Context, st *State) error {
