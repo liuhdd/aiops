@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
 	"aiops/internal/model"
 	"aiops/internal/scope"
@@ -234,5 +235,29 @@ func TestEngineDeviceLockSerializes(t *testing.T) {
 	wg.Wait()
 	if maxInside != 1 {
 		t.Fatalf("maxInside = %d, want 1 (same device serialized)", maxInside)
+	}
+}
+
+func TestEngineInjectsContextAndWritesNotes(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	reg := ctxpkg.NewRegistry()
+	for _, tt := range ctxpkg.DefaultTools() {
+		reg.Register(tt)
+	}
+	e := BuildWithContext(s, nil, coordinator.New(), cs, reg, false, 3)
+	alert := model.Alert{ID: "alarm-ctx", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: time.Now(), CreatedAt: time.Now()}
+	if err := e.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sp, _ := cs.ListScratchpad("run-" + alert.ID)
+	if len(sp) == 0 {
+		t.Fatalf("no scratchpad notes written")
+	}
+	ltm, _ := cs.ListLongTermMemory("db-01", "disk_usage")
+	if len(ltm) != 1 || ltm[0].RunID != "run-"+alert.ID {
+		t.Fatalf("long term memory = %+v", ltm)
 	}
 }

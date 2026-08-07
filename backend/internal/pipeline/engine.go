@@ -2,8 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"strings"
 	"time"
 
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
 	"aiops/internal/model"
 	"aiops/internal/scope"
@@ -24,6 +26,7 @@ type State struct {
 	Scope          *scope.Scope  // 本任务的嵌套作用域
 	Store          *store.ScopedStore
 	DeviceContext  *model.DeviceContext
+	Ctx            *ctxpkg.Engine
 }
 
 func (st *State) EvidenceGaps() []string {
@@ -40,10 +43,14 @@ type Stage interface {
 }
 
 type Engine struct {
-	store   *store.Store
-	stages  []Stage
-	Publish func(eventType string, data any)
-	coord   *coordinator.Coordinator
+	store    *store.Store
+	stages   []Stage
+	Publish  func(eventType string, data any)
+	coord    *coordinator.Coordinator
+	ctxStore *ctxpkg.Store
+	tools    *ctxpkg.Registry
+	react    bool
+	topK     int
 }
 
 func NewEngine(s *store.Store, stages []Stage) *Engine {
@@ -95,6 +102,9 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 		Scope:     &taskScope,
 		Store:     store.NewScoped(e.store, taskScope),
 	}
+	if e.ctxStore != nil {
+		st.Ctx = ctxpkg.NewEngine(e.ctxStore, e.tools, run.ID, alert.Device, alert.Metric, e.react, e.topK)
+	}
 	st.SuggestLogs = suggestLogs(alert.Metric)
 
 	degraded := false
@@ -143,6 +153,9 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 				res.Status = model.StageCompleted
 				res.Output = stageOutput(st, stage.StageID())
 			}
+			if st.Ctx != nil {
+				_ = st.Ctx.AddScratchpad(stage.StageID(), stageSummary(st, stage.StageID()), "")
+			}
 			if err := st.Store.SaveStage(res); err != nil {
 				return err
 			}
@@ -182,6 +195,9 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 	if e.Publish != nil {
 		e.Publish("run", run)
 	}
+	if st.Ctx != nil && st.RCA != nil {
+		_ = st.Ctx.SaveLongTermMemory(st.RCA, st.Recommendation)
+	}
 	return nil
 }
 
@@ -217,4 +233,29 @@ func suggestLogs(metric string) []string {
 		return []string{"link", "down", "transceiver"}
 	}
 	return nil
+}
+
+func stageSummary(st *State, stageID string) string {
+	switch stageID {
+	case "triage":
+		if st.Triage != nil {
+			if st.Triage.Proceed {
+				return "优先级 " + st.Triage.Priority + "，进入排查"
+			}
+			return "已去重跳过: " + st.Triage.Reason
+		}
+	case "context":
+		if st.Context != nil && st.Context.DeviceInfo.Name != "" {
+			return "设备 " + st.Context.DeviceInfo.Name + " 快照已收集"
+		}
+	case "rca":
+		if st.RCA != nil {
+			return "根因: " + st.RCA.RootCause
+		}
+	case "recommend":
+		if st.Recommendation != nil {
+			return "处置: " + strings.Join(st.Recommendation.Actions, "；")
+		}
+	}
+	return "阶段完成"
 }
