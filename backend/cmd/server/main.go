@@ -8,6 +8,7 @@ import (
 	"aiops/internal/agent"
 	"aiops/internal/api"
 	"aiops/internal/config"
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
 	"aiops/internal/hub"
 	"aiops/internal/llm"
@@ -35,10 +36,16 @@ func main() {
 	defer st.Close()
 
 	h := hub.New()
-	eng := pipeline.Build(st, lc, coordinator.New())
+	cs := ctxpkg.NewStore(st)
+	reg := ctxpkg.NewRegistry()
+	for _, t := range ctxpkg.DefaultTools() {
+		reg.Register(t)
+	}
+
+	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
 	eng.Publish = h.Publish
 
-	ag := agent.New(st, lc, eng)
+	ag := agent.NewWithContext(st, lc, eng, cs, cfg.TopK)
 	sim := simulator.New(st, func(a model.Alert) {
 		h.Publish("alert", a)
 		go func() {

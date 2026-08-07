@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
@@ -97,5 +98,31 @@ func TestEndToEndIsolationWritesDeviceContext(t *testing.T) {
 		StageName: "x", Status: model.StageCompleted, StartedAt: now, EndedAt: now})
 	if !errors.Is(err, scope.ErrScopeDenied) {
 		t.Fatalf("cross-run write err = %v, want ErrScopeDenied", err)
+	}
+}
+
+func TestEndToEndContextWritesLongTermMemory(t *testing.T) {
+	mockdata.GenerateAll(3)
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	reg := ctxpkg.NewRegistry()
+	for _, tt := range ctxpkg.DefaultTools() {
+		reg.Register(tt)
+	}
+	// react=false，无 LLM → 规则兜底，仍应沉淀长期记忆
+	eng := pipeline.BuildWithContext(s, nil, coordinator.New(), cs, reg, false, 3)
+	now := time.Now()
+	alert := model.Alert{ID: "alarm-ctx", Device: "web-01", Metric: "mem_usage",
+		Severity: "warning", Message: "内存高", FiredAt: now, CreatedAt: now}
+	if err := eng.Run(context.Background(), alert, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	ltm, err := cs.ListLongTermMemory("web-01", "mem_usage")
+	if err != nil || len(ltm) == 0 {
+		t.Fatalf("long term memory = %+v err=%v", ltm, err)
+	}
+	if ltm[0].RunID != "run-"+alert.ID {
+		t.Fatalf("run id = %q", ltm[0].RunID)
 	}
 }
