@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"aiops/internal/mockdata"
@@ -35,6 +36,9 @@ func (ContextStage) Run(_ context.Context, st *State) error {
 		if dc, err := st.Store.GetDeviceContext(st.Alert.Device); err == nil {
 			st.DeviceContext = &dc
 		}
+	}
+	if st.Ctx != nil {
+		_ = st.Ctx.AddScratchpad("context", "设备 "+dev.Name+" 快照已收集，邻居 "+strconv.Itoa(len(st.Context.Neighbors))+" 个", "")
 	}
 	return nil
 }

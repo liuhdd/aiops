@@ -172,6 +172,26 @@ func TestTriageUsesScopedStore(t *testing.T) {
 	}
 }
 
+func TestEvidenceRecordsToolEvents(t *testing.T) {
+	mockdata.GenerateAll(42)
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	st := &State{
+		Run:   model.PipelineRun{ID: "run-1", AlertID: "alarm-1"},
+		Alert: model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage", FiredAt: time.Now().Add(-time.Hour)},
+	}
+	st.SuggestLogs = []string{"no space"}
+	st.Ctx = ctxpkg.NewEngine(cs, nil, "run-1", "db-01", "disk_usage", false, 3)
+	if err := (EvidenceStage{}).Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	evs, _ := cs.ListToolEvents("run-1")
+	if len(evs) != 2 { // query_metric + search_logs
+		t.Fatalf("tool events = %d, want 2", len(evs))
+	}
+}
+
 func TestContextStageReadsAndWritesDeviceContext(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()

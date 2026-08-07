@@ -27,5 +27,17 @@ func (EvidenceStage) Run(_ context.Context, st *State) error {
 		Logs:    logs,
 		Gaps:    gaps,
 	}
+	if st.Ctx != nil {
+		_ = st.Ctx.AddToolEvent(model.ToolEvent{
+			ID: model.NewID("evt"), RunID: st.Run.ID, ToolName: "query_metric",
+			ArgsJSON:   model.MustJSON(map[string]any{"device": st.Alert.Device, "metric": st.Alert.Metric, "window_minutes": 120}),
+			ResultJSON: model.MustJSON(metrics), Status: model.ToolStatusOK, CreatedAt: time.Now(),
+		})
+		_ = st.Ctx.AddToolEvent(model.ToolEvent{
+			ID: model.NewID("evt"), RunID: st.Run.ID, ToolName: "search_logs",
+			ArgsJSON:   model.MustJSON(map[string]any{"device": st.Alert.Device, "keywords": st.SuggestLogs, "window_minutes": 120}),
+			ResultJSON: model.MustJSON(logs), Status: model.ToolStatusOK, CreatedAt: time.Now(),
+		})
+	}
 	return nil
 }
