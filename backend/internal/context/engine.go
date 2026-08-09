@@ -58,6 +58,9 @@ func (e *Engine) Assemble(q Query, includeTools bool) (*Assembled, error) {
 }
 
 func (e *Engine) SaveLongTermMemory(rca *model.RCA, rec *model.Recommendation) error {
+	if rca == nil {
+		return nil
+	}
 	actions := "[]"
 	if rec != nil {
 		actions = model.MustJSON(rec.Actions)

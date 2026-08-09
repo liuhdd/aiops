@@ -23,10 +23,11 @@ type State struct {
 	Iteration      int
 	RawAlerts      map[string]string
 	SuggestLogs    []string
-	Scope          *scope.Scope  // 本任务的嵌套作用域
+	Scope          *scope.Scope // 本任务的嵌套作用域
 	Store          *store.ScopedStore
 	DeviceContext  *model.DeviceContext
 	Ctx            *ctxpkg.Engine
+	Degraded       bool
 }
 
 func (st *State) EvidenceGaps() []string {
@@ -162,13 +163,16 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 			if e.Publish != nil {
 				e.Publish("stage", res)
 			}
+			if st.Degraded {
+				degraded = true
+			}
 			// 分诊阶段 decide skip
 			if stage.StageID() == "triage" && st.Triage != nil && !st.Triage.Proceed {
 				skipRest = true
 				break
 			}
-			// 回溯判定：rca 有 gaps 且还有迭代额度
-			if stage.StageID() == "rca" && st.RCA != nil && len(st.RCA.Gaps) > 0 && iteration < run.MaxIteration {
+			// 回溯判定：rca 有 gaps 且还有迭代额度（已降级则不再回溯）
+			if stage.StageID() == "rca" && st.RCA != nil && len(st.RCA.Gaps) > 0 && !st.Degraded && iteration < run.MaxIteration {
 				backtrack = true
 				break
 			}

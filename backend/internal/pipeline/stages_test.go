@@ -246,7 +246,7 @@ func TestRCAReactFallsBackOnError(t *testing.T) {
 	for _, tt := range ctxpkg.DefaultTools() {
 		reg.Register(tt)
 	}
-	// 假模型永远只回 tool_call，无 final_answer → ReAct 到 max_steps 后落规则兜底
+	// 假模型永远只回 tool_call，无 final_answer → ReAct 到 max_steps 后落规则兜底并标记降级
 	fake := &fakeCompleter{raw: `{"thought":"调工具","tool_call":{"name":"search_runbook","args":{"metric":"disk_usage"}}}`}
 	e := NewEngine(s, []Stage{NewRCAStage(fake)})
 	e.ctxStore = cs
@@ -259,8 +259,8 @@ func TestRCAReactFallsBackOnError(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	run, _ := s.GetRun("run-" + alert.ID)
-	if run.Status != model.StatusCompleted {
-		t.Fatalf("status = %q, want completed (rule fallback)", run.Status)
+	if run.Status != model.StatusDegraded {
+		t.Fatalf("status = %q, want degraded (ReAct max-steps rule fallback)", run.Status)
 	}
 	evs, _ := cs.ListToolEvents("run-" + alert.ID)
 	if len(evs) != 5 { // max_steps 轮工具调用

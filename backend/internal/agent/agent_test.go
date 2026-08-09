@@ -95,11 +95,13 @@ func TestAgentRuleAnswerIncludesLongTermMemory(t *testing.T) {
 }
 
 type fakeChatLLM struct {
-	raw string
-	err error
+	raw      string
+	err      error
+	lastUser string
 }
 
-func (f *fakeChatLLM) Complete(_ context.Context, _, _ string) (string, error) {
+func (f *fakeChatLLM) Complete(_ context.Context, _, user string) (string, error) {
+	f.lastUser = user
 	return f.raw, f.err
 }
 
@@ -124,6 +126,9 @@ func TestAgentLLMAnswerUsesAssembledContext(t *testing.T) {
 	}
 	if !strings.Contains(msg.Content, "LLM回答") {
 		t.Fatalf("expected LLM answer, got %q", msg.Content)
+	}
+	if !strings.Contains(fake.lastUser, "【设备历史经验】") {
+		t.Fatalf("assembled context missing in LLM prompt: %q", fake.lastUser)
 	}
 }
 

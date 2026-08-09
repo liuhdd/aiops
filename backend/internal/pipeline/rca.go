@@ -43,8 +43,14 @@ func (s *RCAStage) react(ctx context.Context, st *State) error {
 	}
 	system := "你是算力中心硬件运维专家。基于上下文，若证据不足可调用工具补充，推理记录写入write_scratchpad。最终输出JSON: {\"final_answer\":{\"root_cause\":string,\"evidence_chain\":[string],\"confidence\":0~1,\"gaps\":[string]}}。除final_answer或tool_call外不输出其它内容。"
 	res, err := st.Ctx.RunReact(ctx, s.llm, system, q, as.User)
-	if err != nil || res.Final == nil {
+	if err != nil {
 		st.RCA = ruleRCA(st)
+		return nil
+	}
+	if res.Final == nil {
+		st.RCA = ruleRCA(st)
+		st.RCA.Gaps = append(st.RCA.Gaps, "ReAct达到最大步数，已使用规则兜底")
+		st.Degraded = true
 		return nil
 	}
 	var rc model.RCA

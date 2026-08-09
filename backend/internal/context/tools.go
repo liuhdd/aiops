@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"aiops/internal/mockdata"
@@ -30,6 +31,7 @@ func (r *Registry) List() []Tool {
 	for _, t := range r.tools {
 		out = append(out, t)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 func (r *Registry) Lookup(name string) (Tool, bool) {
