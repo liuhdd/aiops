@@ -139,6 +139,7 @@ func cmdCI(args []string) {
 			for trial := 1; trial <= n; trial++ {
 				res, err := eval.RunTask(context.Background(), t, c, lc, trial)
 				if err != nil {
+					fmt.Fprintf(os.Stderr, "[warn] %s/%s trial %d: %v\n", t.ID, c.Name, trial, err)
 					continue
 				}
 				scores := eval.Grade(t, c, res, lc)
@@ -157,36 +158,91 @@ func cmdCI(args []string) {
 	}
 }
 
-// export-samples / calibrate 为轻量实现：导出含 judge 判定的 trial 摘要，人工回填 verdict 后计算一致率
+// export-samples: 从评测报告导出含 {task, transcript, LLM 判定} 的样本供人工标注
 func cmdExport(args []string) {
 	fs := flag.NewFlagSet("export-samples", flag.ContinueOnError)
 	n := fs.Int("n", 20, "导出样本数")
-	reportIn := fs.String("report", "", "评测报告 JSON")
+	reportIn := fs.String("report", "", "评测报告 JSON（必填）")
 	out := fs.String("o", "samples.json", "输出路径")
 	fs.Parse(args)
-	samples := map[string]any{
-		"note":   "人工评审: 对每个样本填写 verdict: PASS|FAIL 并对照 LLM 判定",
-		"n":      *n,
-		"report": *reportIn,
+	if *reportIn == "" {
+		fmt.Fprintln(os.Stderr, "缺 --report 参数（评测报告 JSON）")
+		os.Exit(2)
 	}
-	b, _ := json.MarshalIndent(samples, "", "  ")
-	_ = os.WriteFile(*out, b, 0o644)
-	fmt.Printf("样本已导出到 %s\n", *out)
+	b, err := os.ReadFile(*reportIn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读报告失败: %v\n", err)
+		os.Exit(1)
+	}
+	var rep eval.Report
+	if err := json.Unmarshal(b, &rep); err != nil {
+		fmt.Fprintf(os.Stderr, "报告解析失败: %v\n", err)
+		os.Exit(1)
+	}
+	samples := eval.ExportSamples(rep, *n)
+	if len(samples) == 0 {
+		fmt.Fprintln(os.Stderr, "报告无 trial 可导出")
+		os.Exit(0)
+	}
+	sb, err := json.MarshalIndent(samples, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "样本序列化失败: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(*out, sb, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "写样本失败: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("已导出 %d 条样本到 %s\n", len(samples), *out)
 }
 
+// calibrate: 读取人工标注样本，计算人-LLM 一致率
 func cmdCalibrate(args []string) {
 	fs := flag.NewFlagSet("calibrate", flag.ContinueOnError)
 	samples := fs.String("samples", "samples.json", "人工标注样本")
 	out := fs.String("o", "calib.json", "校准结果输出")
 	fs.Parse(args)
-	// 本期轻量实现：读取样本文件，若无人-LLM 对比数据则输出空一致率报告
-	result := map[string]any{
-		"samples_file": *samples,
-		"agreement":    nil,
-		"note":         "完整人工校准流程待人工标注样本后运行",
+	b, err := os.ReadFile(*samples)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读样本失败: %v\n", err)
+		os.Exit(1)
 	}
-	b, _ := json.MarshalIndent(result, "", "  ")
-	_ = os.WriteFile(*out, b, 0o644)
+	var ss []eval.Sample
+	if err := json.Unmarshal(b, &ss); err != nil {
+		fmt.Fprintf(os.Stderr, "样本解析失败: %v\n", err)
+		os.Exit(1)
+	}
+	agreement, annotated, disagreements, err := eval.Calibrate(ss)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "校准失败: %v\n", err)
+		os.Exit(1)
+	}
+	if disagreements == nil {
+		disagreements = []eval.Sample{}
+	}
+	result := map[string]any{
+		"samples_file":  *samples,
+		"annotated":     annotated,
+		"agreement":     agreement,
+		"disagreements": disagreements,
+	}
+	if annotated > 0 && agreement < 0.8 {
+		result["warning"] = "人-LLM 一致率低于 0.8，建议调整 LLM 评委 rubric"
+	}
+	ob, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "校准结果序列化失败: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(*out, ob, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "写校准结果失败: %v\n", err)
+		os.Exit(1)
+	}
+	if annotated > 0 {
+		fmt.Printf("一致率: %.1f%% (%d 条已标注)\n", agreement*100, annotated)
+	} else {
+		fmt.Println("暂无已标注样本，未计算一致率")
+	}
 	fmt.Printf("校准结果已写入 %s\n", *out)
 }
 
