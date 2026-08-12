@@ -26,3 +26,17 @@ Go后端（Eino编排LLM）+ 流水线（接收规范化→过滤分诊→上下
 ## 测试
 后端：`cd backend && go test ./...`
 前端：`cd frontend && npx vitest run`
+
+## 评测（Agent Eval）
+
+离线基准评测体系，12 个声明式任务（pipeline/chat/context）+ 3 种配置对比 + 三层评分器 + pass@k 统计。
+
+```bash
+cd backend
+go run ./cmd/eval run --trials 3 --configs rule,llm-single,llm-react --report eval-report.json  # 完整评测
+go run ./cmd/eval ci --threshold 0.9                                                        # CI 门禁
+```
+
+- 任务集基于 mockdata 已知异常，ground-truth 对齐 scenario()/日志模板。
+- 无 `LLM_API_KEY` 时自动跳过 LLM 类配置，仍可跑 rule 路径。
+- 完整设计见 `docs/superpowers/specs/2026-08-12-agent-evaluation-design.md`。
