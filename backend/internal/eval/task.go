@@ -126,7 +126,7 @@ func DefaultTasks() []Task {
 		},
 		{
 			ID: "chat-recommend-gpu", Object: ObjectChat,
-			ChatInput: "怎么处理 GPU 掉卡？",
+			ChatInput: "compute-02 GPU掉卡怎么处理？",
 			Expected:  Expected{Intent: "AskRecommendation", RootCause: []string{"处置建议"}},
 		},
 		{
