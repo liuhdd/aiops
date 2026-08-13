@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"aiops/internal/config"
 	"aiops/internal/eval"
@@ -89,12 +90,17 @@ func cmdRun(args []string) {
 			}
 			key := t.ID + "|" + c.Name
 			for trial := 1; trial <= n; trial++ {
-				res, err := eval.RunTask(context.Background(), t, c, lc, trial)
+				// 每次 trial 独立超时：同一 ctx 覆盖整次 trial（流水线运行 + LLM 评委），
+				// 避免挂起的评委 LLM 无限阻塞评测。评分完成后才 cancel。
+				trialCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				res, err := eval.RunTask(trialCtx, t, c, lc, trial)
 				if err != nil && res == nil {
+					cancel()
 					fmt.Fprintf(os.Stderr, "[warn] %s/%s trial %d: %v\n", t.ID, c.Name, trial, err)
 					continue
 				}
-				scores := eval.Grade(context.Background(), t, c, res, lc)
+				scores := eval.Grade(trialCtx, t, c, res, lc)
+				cancel()
 				st := eval.ScoredTrial{TrialResult: res, Scores: scores}
 				if err != nil {
 					// trial 内部失败：记 pass=false、score=0，原因写入 ErrMsg，不中断整体
@@ -148,12 +154,17 @@ func cmdCI(args []string) {
 				n = 3
 			}
 			for trial := 1; trial <= n; trial++ {
-				res, err := eval.RunTask(context.Background(), t, c, lc, trial)
+				// 每次 trial 独立超时：同一 ctx 覆盖整次 trial（流水线运行 + LLM 评委），
+				// 避免挂起的评委 LLM 无限阻塞评测。评分完成后才 cancel。
+				trialCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				res, err := eval.RunTask(trialCtx, t, c, lc, trial)
 				if err != nil && res == nil {
+					cancel()
 					fmt.Fprintf(os.Stderr, "[warn] %s/%s trial %d: %v\n", t.ID, c.Name, trial, err)
 					continue
 				}
-				scores := eval.Grade(context.Background(), t, c, res, lc)
+				scores := eval.Grade(trialCtx, t, c, res, lc)
+				cancel()
 				st := eval.ScoredTrial{TrialResult: res, Scores: scores}
 				if err != nil {
 					// trial 内部失败：记 pass=false、score=0，原因写入 ErrMsg，不中断整体

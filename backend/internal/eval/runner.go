@@ -56,10 +56,8 @@ type TrialResult struct {
 }
 
 // RunTask 对单个任务跑一次 trial。lc 为 nil 时使用规则路径（LLM=false 配置强制 nil）。
-// 单次 trial 整体 60s 超时：覆盖流水线引擎与 chat agent 的 LLM 调用（评委另有超时见 Fix3）。
+// 超时由调用方负责：调用方创建带超时的 ctx 并同时传给 RunTask 与 Grade（覆盖流水线 + LLM 评委）。
 func RunTask(ctx context.Context, t Task, cfg Config, lc *llm.Client, trial int) (*TrialResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
 	dir, err := os.MkdirTemp("", "eval-")
 	if err != nil {
 		return nil, fmt.Errorf("MkdirTemp: %w", err)

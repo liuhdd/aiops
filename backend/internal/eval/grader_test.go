@@ -3,10 +3,42 @@ package eval
 import (
 	"context"
 	"testing"
+	"time"
 
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 )
+
+// ctxCaptureCompleter 记录评委收到的 ctx，用于验证超时是否传递到 LLM 评委
+type ctxCaptureCompleter struct {
+	captured context.Context
+}
+
+func (c *ctxCaptureCompleter) Complete(ctx context.Context, _, _ string) (string, error) {
+	c.captured = ctx
+	return `{"score":0.8,"verdict":"PASS"}`, nil
+}
+
+// 验证调用方传入的带超时 ctx 一路流到 judge.Complete（Fix3 round2：超时下沉到调用方）
+func TestGradeJudgeReceivesDeadline(t *testing.T) {
+	task := Task{ID: "disk-full-db-01", Object: ObjectPipeline,
+		Expected: Expected{RootCause: []string{"磁盘空间不足"}}}
+	cfg := Config{Name: ConfigLLMSingle}
+	res := &TrialResult{Outcome: RunOutcome{
+		RCA:      model.RCA{RootCause: "磁盘空间不足"},
+		Evidence: model.Evidence{Metrics: []model.MetricPoint{{Value: 95}}},
+	}}
+	judge := &ctxCaptureCompleter{}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	Grade(ctx, task, cfg, res, judge)
+	if judge.captured == nil {
+		t.Fatal("judge 未收到 ctx")
+	}
+	if _, ok := judge.captured.Deadline(); !ok {
+		t.Fatal("judge 收到的 ctx 无 deadline：超时未传递到 LLM 评委")
+	}
+}
 
 func TestGradePipelineRuleDiskFull(t *testing.T) {
 	mockdata.GenerateAll(42)
