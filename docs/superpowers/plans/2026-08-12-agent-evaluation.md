@@ -280,18 +280,6 @@ func DefaultTasks() []Task {
 	return tasks
 }
 
-// 默认所有配置
-func allConfigs() []string {
-	return []string{ConfigRule, ConfigLLMSingle, ConfigLLMReact}
-}
-
-func effectiveConfigs(t Task) []string {
-	if len(t.Configs) == 0 {
-		return allConfigs()
-	}
-	return t.Configs
-}
-
 // TaskByID 按 ID 查找任务
 func TaskByID(id string) (Task, bool) {
 	for _, t := range DefaultTasks() {
