@@ -38,7 +38,6 @@ type Task struct {
 
 type Expected struct {
     RootCause []string // 期望根因关键词（任一命中即通过）
-    Metrics   []string // 期望证据指标
     Logs      []string // 期望日志关键字
     NoGaps    bool     // 期望证据/根因无 gaps
     Runbook   string   // 期望 runbook_ref
@@ -59,7 +58,7 @@ type Expected struct {
 | `mem-oom-web-01` | web-01 mem_usage warning | 内存泄漏/OOM杀进程 | `OutOfMemory`, `oom` | mem_usage |
 | `net-down-switch` | switch-core-01 net_in critical | 网络链路中断 | `link down` | net_in |
 
-每个任务 `Expected.NoGaps=true`（这些场景证据充分，不应产生 gaps），`Expected.Metrics` 含对应指标。
+每个任务 `Expected.NoGaps=true`（这些场景证据充分，不应产生 gaps）。
 
 #### L2 边界任务（1 个，评测 LLM 超越规则的能力）
 
@@ -81,7 +80,7 @@ type Expected struct {
 
 | ID | 输入 | 期望行为 |
 |---|---|---|
-| `react-gpu-evidence` | compute-02 gpu_util critical | ReAct 路径调用工具（query_metric/search_logs），写 scratchpad，产出 RCA |
+| `react-gpu-evidence` | compute-02 gpu_util critical | 仅 `llm-react` 配置运行；ReAct 路径调用工具（query_metric/search_logs）并写 scratchpad（ToolName=write_scratchpad，作为 ReAct 专属判别器），产出 RCA |
 
 共 **12 个任务**：pipeline 6 个（L1+L2）× 3 配置，chat 5 个（L3），context 1 个（L4）。
 

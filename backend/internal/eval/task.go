@@ -33,7 +33,6 @@ type Task struct {
 // Expected ground-truth
 type Expected struct {
 	RootCause []string // 期望根因关键词（任一命中即通过）
-	Metrics   []string // 期望证据指标
 	Logs      []string // 期望日志关键字
 	NoGaps    bool     // 期望证据/根因无 gaps
 	Runbook   string   // 期望 runbook_ref
@@ -62,7 +61,6 @@ func DefaultTasks() []Task {
 			Alert: mkAlert("compute-01", "cpu_usage", "warning", "CPU使用率持续高于85%"),
 			Expected: Expected{
 				RootCause: []string{"CPU热点进程", "负载饱和"},
-				Metrics:   []string{"cpu_usage"},
 				Logs:      []string{"cpu"},
 				NoGaps:    true, Runbook: "cpu_usage",
 			},
@@ -72,7 +70,6 @@ func DefaultTasks() []Task {
 			Alert: mkAlert("db-01", "disk_usage", "critical", "磁盘使用率超过95%"),
 			Expected: Expected{
 				RootCause: []string{"磁盘空间不足"},
-				Metrics:   []string{"disk_usage"},
 				Logs:      []string{"no space"},
 				NoGaps:    true, Runbook: "disk_usage",
 			},
@@ -82,7 +79,6 @@ func DefaultTasks() []Task {
 			Alert: mkAlert("compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"),
 			Expected: Expected{
 				RootCause: []string{"GPU掉卡", "驱动异常"},
-				Metrics:   []string{"gpu_util"},
 				Logs:      []string{"Xid", "fallen off the bus"},
 				NoGaps:    true, Runbook: "gpu_util",
 			},
@@ -92,7 +88,6 @@ func DefaultTasks() []Task {
 			Alert: mkAlert("web-01", "mem_usage", "warning", "内存使用率持续高于90%"),
 			Expected: Expected{
 				RootCause: []string{"内存泄漏", "OOM"},
-				Metrics:   []string{"mem_usage"},
 				Logs:      []string{"OutOfMemory"},
 				NoGaps:    true, Runbook: "mem_usage",
 			},
@@ -102,7 +97,6 @@ func DefaultTasks() []Task {
 			Alert: mkAlert("switch-core-01", "net_in", "critical", "核心交换机入口流量中断"),
 			Expected: Expected{
 				RootCause: []string{"网络链路中断"},
-				Metrics:   []string{"net_in"},
 				Logs:      []string{"link down"},
 				NoGaps:    true, Runbook: "net_in",
 			},
@@ -113,7 +107,6 @@ func DefaultTasks() []Task {
 			Alert: mkAlert("compute-02", "gpu_temp", "critical", "GPU温度过高告警"),
 			Expected: Expected{
 				RootCause: []string{"温度过高", "散热", "过温"},
-				Metrics:   []string{"gpu_temp"},
 				Logs:      []string{"NVRM"},
 				NoGaps:    true,
 			},
@@ -144,28 +137,19 @@ func DefaultTasks() []Task {
 			ChatInput: "今天天气如何？",
 			Expected:  Expected{Intent: "Unknown"},
 		},
-		// ---- L4 Context/ReAct 任务（react=true 配置生效） ----
+		// ---- L4 Context/ReAct 任务（仅 llm-react 配置生效） ----
 		{
 			ID: "react-gpu-evidence", Object: ObjectContext,
 			Alert: mkAlert("compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"),
+			// write_scratchpad 仅 ReAct 循环调用（基础 evidence 阶段只发 query_metric/search_logs 事件），
+			// 用于判别 ReAct 是否真正运行，避免 rule/llm-single 也拿到满分。
 			Expected: Expected{
-				ToolUse: []string{"query_metric", "search_logs"},
+				ToolUse: []string{"write_scratchpad"},
 			},
+			Configs: []string{ConfigLLMReact},
 		},
 	}
 	return tasks
-}
-
-// 默认所有配置
-func allConfigs() []string {
-	return []string{ConfigRule, ConfigLLMSingle, ConfigLLMReact}
-}
-
-func effectiveConfigs(t Task) []string {
-	if len(t.Configs) == 0 {
-		return allConfigs()
-	}
-	return t.Configs
 }
 
 // TaskByID 按 ID 查找任务

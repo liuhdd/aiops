@@ -49,13 +49,17 @@ type TrialResult struct {
 	Trial     int
 	Config    string
 	RunStatus string
+	ErrMsg    string `json:"err_msg,omitempty"`
 	Intent    string
 	Reply     string
 	Outcome   RunOutcome
 }
 
 // RunTask 对单个任务跑一次 trial。lc 为 nil 时使用规则路径（LLM=false 配置强制 nil）。
+// 单次 trial 整体 60s 超时：覆盖流水线引擎与 chat agent 的 LLM 调用（评委另有超时见 Fix3）。
 func RunTask(ctx context.Context, t Task, cfg Config, lc *llm.Client, trial int) (*TrialResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
 	dir, err := os.MkdirTemp("", "eval-")
 	if err != nil {
 		return nil, fmt.Errorf("MkdirTemp: %w", err)
@@ -91,11 +95,14 @@ func RunTask(ctx context.Context, t Task, cfg Config, lc *llm.Client, trial int)
 func runPipeline(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task, res *TrialResult) (*TrialResult, error) {
 	if err := eng.Run(ctx, t.Alert, nil); err != nil {
 		res.RunStatus = model.StatusFailed
+		res.ErrMsg = err.Error()
 		return res, err
 	}
 	runID := "run-" + t.Alert.ID
 	run, err := st.GetRun(runID)
 	if err != nil {
+		res.RunStatus = model.StatusFailed
+		res.ErrMsg = err.Error()
 		return res, err
 	}
 	res.RunStatus = run.Status
@@ -123,12 +130,16 @@ func runPipeline(ctx context.Context, st *store.Store, eng *pipeline.Engine, t T
 func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task, res *TrialResult) (*TrialResult, error) {
 	// 需要 alert 供流水线触发；chat 任务若引用设备，预先写入一条告警
 	if _, err := ensureAlertForChat(st, t); err != nil {
+		res.RunStatus = "chat-failed"
+		res.ErrMsg = err.Error()
 		return res, err
 	}
 	// agent.New(s, lc, eng)：规则路径下 lc 传 nil，Handle 走 answerFor
 	ag := agent.New(st, nil, eng)
 	msg, err := ag.Handle(ctx, t.ChatInput)
 	if err != nil {
+		res.RunStatus = "chat-failed"
+		res.ErrMsg = err.Error()
 		return res, err
 	}
 	res.Reply = msg.Content

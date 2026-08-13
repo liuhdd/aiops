@@ -87,21 +87,63 @@ func BuildReport(tasks []Task, configs []Config, scored map[string][]ScoredTrial
 			pk, mean, sd := summarize(trs)
 			tr.Configs[c.Name] = ConfigStats{PassAtK: pk, MeanScore: mean, Stddev: sd, Trials: trs}
 			cfgSt := Stats{PassAtK: pk, MeanScore: mean, Stddev: sd, Saturated: pk > 0.85}
-			mergeStats(&rep.Summary.ByConfig, c.Name, cfgSt)
 			allStats = append(allStats, cfgSt)
-		}
-		// 对象维度：取该任务所有配置的 trials
-		var objTrials []ScoredTrial
-		for _, c := range configs {
-			objTrials = append(objTrials, scored[t.ID+"|"+c.Name]...)
-		}
-		if len(objTrials) > 0 {
-			pk, mean, sd := summarize(objTrials)
-			mergeStats(&rep.Summary.ByObject, t.Object, Stats{PassAtK: pk, MeanScore: mean, Stddev: sd})
 		}
 		taskReps = append(taskReps, tr)
 	}
 	rep.Tasks = taskReps
+	// 第二遍汇总：按配置/对象维度累加各任务的统计量后再求均值
+	// （"配置级 pass@k = 该配置下所有任务 pass@k 的均值"），避免旧 mergeStats 的顺序相关偏差且补齐 Saturated。
+	type statAccum struct {
+		sumPk, sumMean, sumSd float64
+		n                     int
+	}
+	cfgAcc := map[string]*statAccum{}
+	objAcc := map[string]*statAccum{}
+	for _, tr := range rep.Tasks {
+		for cfgName, cs := range tr.Configs {
+			a := cfgAcc[cfgName]
+			if a == nil {
+				a = &statAccum{}
+				cfgAcc[cfgName] = a
+			}
+			a.sumPk += cs.PassAtK
+			a.sumMean += cs.MeanScore
+			a.sumSd += cs.Stddev
+			a.n++
+		}
+		// 对象维度：取该任务所有配置的 trials
+		var objTrials []ScoredTrial
+		for _, c := range configs {
+			objTrials = append(objTrials, scored[tr.ID+"|"+c.Name]...)
+		}
+		if len(objTrials) > 0 {
+			pk, mean, sd := summarize(objTrials)
+			a := objAcc[tr.Object]
+			if a == nil {
+				a = &statAccum{}
+				objAcc[tr.Object] = a
+			}
+			a.sumPk += pk
+			a.sumMean += mean
+			a.sumSd += sd
+			a.n++
+		}
+	}
+	for name, a := range cfgAcc {
+		pk := a.sumPk / float64(a.n)
+		rep.Summary.ByConfig[name] = Stats{
+			PassAtK: pk, MeanScore: a.sumMean / float64(a.n),
+			Stddev: a.sumSd / float64(a.n), Saturated: pk > 0.85,
+		}
+	}
+	for name, a := range objAcc {
+		pk := a.sumPk / float64(a.n)
+		rep.Summary.ByObject[name] = Stats{
+			PassAtK: pk, MeanScore: a.sumMean / float64(a.n),
+			Stddev: a.sumSd / float64(a.n), Saturated: pk > 0.85,
+		}
+	}
 	// 全局
 	if len(allStats) > 0 {
 		rep.Summary.Overall = averageStats(allStats)
@@ -148,20 +190,6 @@ func meanStddev(xs []float64) (mean, stddev float64) {
 	return mean, stddev
 }
 
-func mergeStats(m *map[string]Stats, key string, s Stats) {
-	prev, ok := (*m)[key]
-	if !ok {
-		(*m)[key] = s
-		return
-	}
-	// 简化：取平均（实际 CLI 场景 config 相同 trials 数）
-	(*m)[key] = Stats{
-		PassAtK:   (prev.PassAtK + s.PassAtK) / 2,
-		MeanScore: (prev.MeanScore + s.MeanScore) / 2,
-		Stddev:    (prev.Stddev + s.Stddev) / 2,
-	}
-}
-
 func averageStats(ss []Stats) Stats {
 	if len(ss) == 0 {
 		return Stats{}
@@ -181,12 +209,11 @@ func averageStats(ss []Stats) Stats {
 }
 
 func trialsCount(scored map[string][]ScoredTrial) int {
+	n := 0
 	for _, trs := range scored {
-		if len(trs) > 0 {
-			return len(trs)
-		}
+		n += len(trs)
 	}
-	return 0
+	return n
 }
 
 // ToJSON 序列化报告

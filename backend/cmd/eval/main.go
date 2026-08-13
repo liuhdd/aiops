@@ -76,6 +76,9 @@ func cmdRun(args []string) {
 	tasks := eval.DefaultTasks()
 	for _, t := range tasks {
 		for _, c := range configsList {
+			if len(t.Configs) > 0 && !containsStr(t.Configs, c.Name) {
+				continue
+			}
 			if c.LLM && isNilClient(lc) {
 				fmt.Fprintf(os.Stderr, "[skip] %s 无 LLM_API_KEY，跳过配置 %s\n", t.ID, c.Name)
 				continue
@@ -87,14 +90,21 @@ func cmdRun(args []string) {
 			key := t.ID + "|" + c.Name
 			for trial := 1; trial <= n; trial++ {
 				res, err := eval.RunTask(context.Background(), t, c, lc, trial)
-				if err != nil {
+				if err != nil && res == nil {
 					fmt.Fprintf(os.Stderr, "[warn] %s/%s trial %d: %v\n", t.ID, c.Name, trial, err)
 					continue
 				}
-				scores := eval.Grade(t, c, res, lc)
+				scores := eval.Grade(context.Background(), t, c, res, lc)
 				st := eval.ScoredTrial{TrialResult: res, Scores: scores}
-				st.Score = eval.WeightedScore(scores)
-				st.Pass = st.Score >= 0.6
+				if err != nil {
+					// trial 内部失败：记 pass=false、score=0，原因写入 ErrMsg，不中断整体
+					fmt.Fprintf(os.Stderr, "[warn] %s/%s trial %d: %v\n", t.ID, c.Name, trial, err)
+					st.Score = 0
+					st.Pass = false
+				} else {
+					st.Score = eval.WeightedScore(scores)
+					st.Pass = st.Score >= 0.6
+				}
 				scored[key] = append(scored[key], st)
 			}
 		}
@@ -127,25 +137,33 @@ func cmdCI(args []string) {
 	scored := map[string][]eval.ScoredTrial{}
 	for _, t := range eval.DefaultTasks() {
 		for _, c := range configsList {
+			if len(t.Configs) > 0 && !containsStr(t.Configs, c.Name) {
+				continue
+			}
 			if c.LLM && isNilClient(lc) {
 				continue
 			}
 			n := 1
-			if c.Name == "rule" {
-				n = 1
-			} else {
+			if c.Name != "rule" {
 				n = 3
 			}
 			for trial := 1; trial <= n; trial++ {
 				res, err := eval.RunTask(context.Background(), t, c, lc, trial)
-				if err != nil {
+				if err != nil && res == nil {
 					fmt.Fprintf(os.Stderr, "[warn] %s/%s trial %d: %v\n", t.ID, c.Name, trial, err)
 					continue
 				}
-				scores := eval.Grade(t, c, res, lc)
+				scores := eval.Grade(context.Background(), t, c, res, lc)
 				st := eval.ScoredTrial{TrialResult: res, Scores: scores}
-				st.Score = eval.WeightedScore(scores)
-				st.Pass = st.Score >= 0.6
+				if err != nil {
+					// trial 内部失败：记 pass=false、score=0，原因写入 ErrMsg，不中断整体
+					fmt.Fprintf(os.Stderr, "[warn] %s/%s trial %d: %v\n", t.ID, c.Name, trial, err)
+					st.Score = 0
+					st.Pass = false
+				} else {
+					st.Score = eval.WeightedScore(scores)
+					st.Pass = st.Score >= 0.6
+				}
 				scored[t.ID+"|"+c.Name] = append(scored[t.ID+"|"+c.Name], st)
 			}
 		}
@@ -257,4 +275,13 @@ func mustClient(cfg config.Config) *llm.Client {
 
 func isNilClient(lc *llm.Client) bool {
 	return lc == nil
+}
+
+func containsStr(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

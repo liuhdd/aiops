@@ -55,3 +55,41 @@ func TestRunTaskChatRecommendRule(t *testing.T) {
 		t.Fatalf("reply 不含处置建议: %q", res.Reply)
 	}
 }
+
+// Fix2：未知 chat 任务 ID（未命中 scene 表）仍应返回非 nil 的部分结果，失败 trial 不丢失。
+func TestRunTaskChatUnknownIDReturnsPartial(t *testing.T) {
+	mockdata.GenerateAll(42)
+	task := Task{ID: "chat-unknown-scene", Object: ObjectChat, ChatInput: "为什么 db-01 磁盘满了？",
+		Expected: Expected{Intent: "AskRootCause"}}
+	res, err := RunTask(context.Background(), task, Config{Name: ConfigRule}, nil, 1)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	if res == nil {
+		t.Fatal("未知 chat 任务应返回非 nil 的部分结果")
+	}
+	if res.RunStatus != "chat" {
+		t.Fatalf("RunStatus = %q, want chat", res.RunStatus)
+	}
+}
+
+// Fix2：失败 trial 仍可被评分并记为失败。
+// runPipeline 出错时返回带 RunStatus=failed 的非 nil res；此处直接构造该状态，
+// 验证 Grade 产生 StageComplete=false（呼应用户决策：failed trial 出现在报告中而非消失）。
+func TestGradeFailedRunRecordedAsFail(t *testing.T) {
+	task, _ := TaskByID("disk-full-db-01")
+	cfg := Config{Name: ConfigRule}
+	res := &TrialResult{Trial: 1, Config: cfg.Name, RunStatus: "failed", ErrMsg: "模拟引擎错误"}
+	scores := Grade(context.Background(), task, cfg, res, nil)
+	st := ScoredTrial{TrialResult: res, Scores: scores}
+	st.Score = WeightedScore(scores)
+	st.Pass = st.Score >= 0.6
+	for _, s := range scores {
+		if s.Name == "StageComplete" && s.Pass {
+			t.Fatalf("failed trial 的 StageComplete 不应通过: %+v", s)
+		}
+	}
+	if st.Pass {
+		t.Fatalf("failed trial 不应标记为通过: score=%.2f", st.Score)
+	}
+}

@@ -28,7 +28,7 @@ type ScoredTrial struct {
 }
 
 // Grade 对一次 trial 应用全部评分器（judge 为 nil 或 typed-nil 时跳过 LLM 评委）
-func Grade(t Task, cfg Config, res *TrialResult, judge ctxpkg.Completer) []GraderResult {
+func Grade(ctx context.Context, t Task, cfg Config, res *TrialResult, judge ctxpkg.Completer) []GraderResult {
 	var out []GraderResult
 	switch t.Object {
 	case ObjectPipeline:
@@ -40,7 +40,7 @@ func Grade(t Task, cfg Config, res *TrialResult, judge ctxpkg.Completer) []Grade
 	}
 	// L2 Model-based：LLM 评委（可选）
 	if judge != nil && !ctxpkg.IsNilCompleter(judge) {
-		out = append(out, gradeWithJudge(t, res, judge)...)
+		out = append(out, gradeWithJudge(ctx, t, res, judge)...)
 	}
 	return out
 }
@@ -69,12 +69,15 @@ func stageComplete(t Task, res *TrialResult) GraderResult {
 
 func rootCauseMatch(t Task, res *TrialResult) GraderResult {
 	rc := res.Outcome.RCA.RootCause
-	ok := strings.Contains(rc, t.Expected.RootCause[0])
-	if !ok && len(t.Expected.RootCause) > 1 {
-		for _, kw := range t.Expected.RootCause[1:] {
-			if strings.Contains(rc, kw) {
-				ok = true
-				break
+	ok := false
+	if len(t.Expected.RootCause) > 0 {
+		ok = strings.Contains(rc, t.Expected.RootCause[0])
+		if !ok && len(t.Expected.RootCause) > 1 {
+			for _, kw := range t.Expected.RootCause[1:] {
+				if strings.Contains(rc, kw) {
+					ok = true
+					break
+				}
 			}
 		}
 	}
@@ -125,21 +128,23 @@ func recommendMatch(t Task, res *TrialResult) GraderResult {
 		Detail: "runbook=" + res.Outcome.Recommend.RunbookRef, Weight: 0.15}
 }
 
-// edgeRootCause gpu-temp 边界任务：规则路径判"未知根因"记低分，LLM 期望命中温度关键词
+// edgeRootCause gpu-temp 边界任务：规则路径判"未知根因"记低分，LLM 期望命中温度关键词。
+// 权重 0.2（高于其余三个子 grader 的平均权重）使根因维度对该任务起决定性作用：
+// 规则路径 0.25+0.2+0.15+0.2*0.1=0.564 < 0.6 失败，LLM 命中温度关键词则 >=0.6 通过。
 func edgeRootCause(t Task, res *TrialResult) GraderResult {
 	rc := res.Outcome.RCA.RootCause
 	if strings.Contains(rc, "未知根因") {
 		return GraderResult{Name: "EdgeRootCause", Pass: false, Score: 0.1,
-			Detail: "规则路径未知根因（边界任务允许低分）", Weight: 0.1}
+			Detail: "规则路径未知根因（边界任务允许低分）", Weight: 0.2}
 	}
 	for _, kw := range t.Expected.RootCause {
 		if strings.Contains(rc, kw) {
 			return GraderResult{Name: "EdgeRootCause", Pass: true, Score: 1,
-				Detail: "LLM 推理出根因: " + rc, Weight: 0.1}
+				Detail: "LLM 推理出根因: " + rc, Weight: 0.2}
 		}
 	}
 	return GraderResult{Name: "EdgeRootCause", Pass: false, Score: 0.2,
-		Detail: "根因不符: " + rc, Weight: 0.1}
+		Detail: "根因不符: " + rc, Weight: 0.2}
 }
 
 func gradeChat(t Task, res *TrialResult) []GraderResult {
@@ -173,6 +178,14 @@ func gradeContext(t Task, res *TrialResult) []GraderResult {
 	for _, ev := range res.Outcome.ToolEvents {
 		got = append(got, ev.ToolName)
 	}
+	// 基础 evidence 阶段只产生 query_metric/search_logs 工具事件与 stage 摘要 scratchpad；
+	// ReAct 循环调用 write_scratchpad 时写入 ToolName="write_scratchpad" 的 scratchpad 条目，
+	// 因此把它并入"已见工具"集合可作为 ReAct 专属判别器。
+	for _, sp := range res.Outcome.Scratchpad {
+		if sp.ToolName != "" {
+			got = append(got, sp.ToolName)
+		}
+	}
 	for _, want := range t.Expected.ToolUse {
 		if !contains(got, want) {
 			ok = false
@@ -188,7 +201,7 @@ func gradeContext(t Task, res *TrialResult) []GraderResult {
 }
 
 // gradeWithJudge L2 Model-based 评分器（LLM 评委，按维度拆分）
-func gradeWithJudge(t Task, res *TrialResult, judge ctxpkg.Completer) []GraderResult {
+func gradeWithJudge(ctx context.Context, t Task, res *TrialResult, judge ctxpkg.Completer) []GraderResult {
 	if t.Object != ObjectPipeline || res.Outcome.RCA.RootCause == "" {
 		return nil
 	}
@@ -201,7 +214,7 @@ func gradeWithJudge(t Task, res *TrialResult, judge ctxpkg.Completer) []GraderRe
 		system := "你是评测评委。只输出 JSON: {\"score\":0~1,\"verdict\":\"PASS|FAIL|INSUFFICIENT_INFO\"}。若信息不足判断必须返回 INSUFFICIENT_INFO，不要猜测。"
 		user := "评测任务: " + t.ID + "\n证据:" + mustJSON(res.Outcome.Evidence) +
 			"\nRCA:" + mustJSON(res.Outcome.RCA) + "\n评分维度: " + d.rubric
-		raw, err := judge.Complete(context.Background(), system, user)
+		raw, err := judge.Complete(ctx, system, user)
 		if err != nil || strings.TrimSpace(raw) == "" {
 			out = append(out, GraderResult{Name: d.name, NA: true, Weight: 0.2})
 			continue
@@ -260,8 +273,9 @@ func contains(ss []string, s string) bool {
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(r[:n]) + "..."
 }
