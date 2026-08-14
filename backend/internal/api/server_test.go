@@ -11,6 +11,7 @@ import (
 	"aiops/internal/agent"
 	"aiops/internal/config"
 	"aiops/internal/hub"
+	"aiops/internal/intent"
 	"aiops/internal/model"
 	"aiops/internal/store"
 )
@@ -22,7 +23,7 @@ func TestHealthzAndAlerts(t *testing.T) {
 		Severity: "warning", Message: "x", Status: "active"})
 	h := hub.New()
 	ag := agent.New(s, nil, nil)
-	srv := NewServer(config.Config{}, s, ag, nil, h, nil)
+	srv := NewServer(config.Config{}, s, ag, nil, h, nil, intent.NewService(s, intent.NewMemCache()))
 
 	req := httptest.NewRequest("GET", "/healthz", nil)
 	rr := httptest.NewRecorder()
@@ -51,7 +52,7 @@ func TestChatEndpoint(t *testing.T) {
 	defer s.Close()
 	h := hub.New()
 	ag := agent.New(s, nil, nil)
-	srv := NewServer(config.Config{}, s, ag, nil, h, nil)
+	srv := NewServer(config.Config{}, s, ag, nil, h, nil, intent.NewService(s, intent.NewMemCache()))
 
 	body := strings.NewReader(`{"text":"有哪些告警"}`)
 	req := httptest.NewRequest("POST", "/api/chat", body)

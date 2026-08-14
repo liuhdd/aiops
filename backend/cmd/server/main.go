@@ -11,6 +11,7 @@ import (
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
 	"aiops/internal/hub"
+	"aiops/internal/intent"
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
@@ -59,7 +60,7 @@ func main() {
 	})
 	sim.Start(context.Background(), cfg.SimInterval)
 
-	handler := api.NewServer(cfg, st, ag, eng, h, sim)
+	handler := api.NewServer(cfg, st, ag, eng, h, sim, intent.NewService(st, intent.NewMemCache()))
 	log.Printf("aiops backend listening on %s", cfg.Port)
 	if err := http.ListenAndServe(cfg.Port, handler); err != nil {
 		log.Fatal(err)
