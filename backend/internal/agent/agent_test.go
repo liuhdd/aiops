@@ -162,3 +162,100 @@ func TestExtractQuery(t *testing.T) {
 		t.Fatalf("extractQuery = %q %q", dev, met)
 	}
 }
+
+type scriptedLLM struct {
+	raw string
+	err error
+}
+
+func (s *scriptedLLM) Complete(_ context.Context, _, _ string) (string, error) {
+	return s.raw, s.err
+}
+
+func TestRewriteAndSplit(t *testing.T) {
+	c := &scriptedLLM{raw: `{"rewritten":"q1？q2？","sub_questions":["q1？","q2？"]}`}
+	rewritten, subs, err := RewriteAndSplit(context.Background(), "q1？q2？", c)
+	if err != nil {
+		t.Fatalf("RewriteAndSplit: %v", err)
+	}
+	if rewritten == "" || len(subs) != 2 {
+		t.Fatalf("rewritten=%q subs=%v", rewritten, subs)
+	}
+	// 非法 JSON → err
+	bad := &scriptedLLM{raw: "not json"}
+	if _, _, err := RewriteAndSplit(context.Background(), "x", bad); err == nil {
+		t.Fatal("非法 JSON 应返回 err")
+	}
+	// completer 出错 → err
+	fail := &scriptedLLM{err: errors.New("llm down")}
+	if _, _, err := RewriteAndSplit(context.Background(), "x", fail); err == nil {
+		t.Fatal("completer 出错应返回 err")
+	}
+}
+
+func TestClassifyWithLight(t *testing.T) {
+	c := &scriptedLLM{raw: `{"intent":"AskRootCause"}`}
+	if got := classifyWithLight(context.Background(), "为什么磁盘满了", c); got != AskRootCause {
+		t.Fatalf("classifyWithLight = %v, want AskRootCause", got)
+	}
+	// 非法意图名 → Unknown
+	bad := &scriptedLLM{raw: `{"intent":"Nope"}`}
+	if got := classifyWithLight(context.Background(), "x", bad); got != Unknown {
+		t.Fatalf("非法意图应为 Unknown, got %v", got)
+	}
+	// 解析失败 → Unknown
+	fail := &scriptedLLM{err: errors.New("boom")}
+	if got := classifyWithLight(context.Background(), "x", fail); got != Unknown {
+		t.Fatalf("LLM 出错应为 Unknown, got %v", got)
+	}
+}
+
+func TestParseIntentWithLight(t *testing.T) {
+	// 规则命中不调 LLM（fake 返回 Nope 也不影响）
+	c := &scriptedLLM{raw: `{"intent":"Nope"}`}
+	if got := ParseIntentWithLight(context.Background(), "alarm-1什么原因", c); got != AskRootCause {
+		t.Fatalf("规则命中应为 AskRootCause, got %v", got)
+	}
+	// 规则 Unknown → LLM 分类
+	if got := ParseIntentWithLight(context.Background(), "帮我看看今天天气", &scriptedLLM{raw: `{"intent":"ListAlerts"}`}); got != ListAlerts {
+		t.Fatalf("LLM 分类应为 ListAlerts, got %v", got)
+	}
+	// completer 为 nil → 回退规则结果（Unknown）
+	if got := ParseIntentWithLight(context.Background(), "今天天气如何", nil); got != Unknown {
+		t.Fatalf("nil completer 应回退 Unknown, got %v", got)
+	}
+}
+
+func TestParseIntentSet(t *testing.T) {
+	// LLM 拆分两个子问题：规则命中 AskRootCause + 规则命中 ListAlerts
+	c := &scriptedLLM{raw: `{"rewritten":"有哪些告警？alarm-1什么原因？","sub_questions":["有哪些告警","alarm-1什么原因"]}`}
+	got := ParseIntentSet(context.Background(), "有哪些告警？alarm-1什么原因？", c, 3)
+	if len(got) != 2 || got[0] != ListAlerts || got[1] != AskRootCause {
+		t.Fatalf("ParseIntentSet = %v, want [ListAlerts AskRootCause]", got)
+	}
+	// 超过 maxSplit 截断
+	got2 := ParseIntentSet(context.Background(), "有哪些告警？alarm-1什么原因？", c, 1)
+	if len(got2) != 1 || got2[0] != ListAlerts {
+		t.Fatalf("ParseIntentSet 应截断到 1, got %v", got2)
+	}
+	// 重写拆分失败 → 回退单意图规则
+	fail := &scriptedLLM{err: errors.New("boom")}
+	got3 := ParseIntentSet(context.Background(), "有哪些告警", fail, 3)
+	if len(got3) != 1 || got3[0] != ListAlerts {
+		t.Fatalf("重写失败应回退规则, got %v", got3)
+	}
+	// completer nil → 单意图规则
+	got4 := ParseIntentSet(context.Background(), "有哪些告警", nil, 3)
+	if len(got4) != 1 || got4[0] != ListAlerts {
+		t.Fatalf("nil completer 应回退规则, got %v", got4)
+	}
+}
+
+func TestIntentName(t *testing.T) {
+	if IntentName(AskRootCause) != "AskRootCause" {
+		t.Fatalf("IntentName(AskRootCause) = %q", IntentName(AskRootCause))
+	}
+	if IntentName(Intent(99)) != "Unknown" {
+		t.Fatalf("未知意图应为 Unknown")
+	}
+}
