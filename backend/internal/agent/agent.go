@@ -22,6 +22,7 @@ type Agent struct {
 	eng      *pipeline.Engine
 	ctxStore *ctxpkg.Store
 	topK     int
+	leaves   func() []model.LeafSpec // 活跃叶子 provider；nil 回退 SeedLeaves
 }
 
 func New(s *store.Store, lc ctxpkg.Completer, eng *pipeline.Engine) *Agent {
@@ -33,7 +34,11 @@ func NewWithContext(s *store.Store, lc ctxpkg.Completer, eng *pipeline.Engine, c
 }
 
 func NewWithLight(s *store.Store, lc, light ctxpkg.Completer, eng *pipeline.Engine, cs *ctxpkg.Store, topK, maxSplit int) *Agent {
-	return &Agent{store: s, llm: lc, lightLLM: light, maxSplit: maxSplit, eng: eng, ctxStore: cs, topK: topK}
+	return NewWithLeaves(s, lc, light, eng, cs, topK, maxSplit, nil)
+}
+
+func NewWithLeaves(s *store.Store, lc, light ctxpkg.Completer, eng *pipeline.Engine, cs *ctxpkg.Store, topK, maxSplit int, leaves func() []model.LeafSpec) *Agent {
+	return &Agent{store: s, llm: lc, lightLLM: light, maxSplit: maxSplit, eng: eng, ctxStore: cs, topK: topK, leaves: leaves}
 }
 
 func (a *Agent) buildAssembled(device, metric string) *ctxpkg.Assembled {
@@ -110,10 +115,28 @@ func (a *Agent) answer(ctx context.Context, userText string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// activeLeaves 返回当前活跃叶子（provider 为空/返回空时回退 SeedLeaves）。
+func (a *Agent) activeLeaves() []model.LeafSpec {
+	if a.leaves != nil {
+		if l := a.leaves(); len(l) > 0 {
+			return l
+		}
+	}
+	return SeedLeaves
+}
+
+// placeholderReply KB/MCP/未知叶子的占位回复；Unknown 返回引导语。
+func (a *Agent) placeholderReply(code Intent) string {
+	if code == Unknown {
+		return a.guideText()
+	}
+	return "已识别该意图，绑定的知识库/MCP 尚未实现。"
+}
+
 // answerSingle 无轻量 LLM 时的单意图规则路径（原 Handle 逻辑）。
 func (a *Agent) answerSingle(ctx context.Context, userText string) string {
 	alertID := extractAlertID(userText, a.store)
-	intent := ParseIntent(userText)
+	intent := RuleMatch(a.activeLeaves(), userText)
 	switch intent {
 	case ListAlerts:
 		return a.listAlertsReply()
@@ -138,7 +161,7 @@ func (a *Agent) answerSingle(ctx context.Context, userText string) string {
 	case AskStatus:
 		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
 	default:
-		return a.guideText()
+		return a.placeholderReply(intent)
 	}
 }
 
@@ -150,7 +173,7 @@ func (a *Agent) answerOne(ctx context.Context, sub string) string {
 
 // answerOneStatus 单个子问题：规则意图优先，Unknown 用轻量 LLM 分类；返回内容与状态。
 func (a *Agent) answerOneStatus(ctx context.Context, sub string) (string, string) {
-	intent := ParseIntentWithLight(ctx, sub, a.lightLLM)
+	intent := ParseIntentWithLight(ctx, a.activeLeaves(), sub, a.lightLLM)
 	switch intent {
 	case ListAlerts:
 		return a.listAlertsReply(), "success"
@@ -176,8 +199,16 @@ func (a *Agent) answerOneStatus(ctx context.Context, sub string) (string, string
 		}
 		return a.answerFor(alertID, intent), "success"
 	default:
-		return a.guideText(), "unknown"
+		return a.placeholderReply(intent), statusFor(intent)
 	}
+}
+
+// statusFor 意图对应的子问题状态行。
+func statusFor(code Intent) string {
+	if code == Unknown {
+		return "unknown"
+	}
+	return "success"
 }
 
 func (a *Agent) listAlertsReply() string {

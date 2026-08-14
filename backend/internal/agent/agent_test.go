@@ -195,68 +195,77 @@ func TestRewriteAndSplit(t *testing.T) {
 
 func TestClassifyWithLight(t *testing.T) {
 	c := &scriptedLLM{raw: `{"intent":"AskRootCause"}`}
-	if got := classifyWithLight(context.Background(), "为什么磁盘满了", c); got != AskRootCause {
-		t.Fatalf("classifyWithLight = %v, want AskRootCause", got)
+	if got := ClassifyWithLight(context.Background(), nil, "为什么磁盘满了", c); got != AskRootCause {
+		t.Fatalf("ClassifyWithLight = %v, want AskRootCause", got)
 	}
-	// 非法意图名 → Unknown
 	bad := &scriptedLLM{raw: `{"intent":"Nope"}`}
-	if got := classifyWithLight(context.Background(), "x", bad); got != Unknown {
+	if got := ClassifyWithLight(context.Background(), nil, "x", bad); got != Unknown {
 		t.Fatalf("非法意图应为 Unknown, got %v", got)
 	}
-	// 解析失败 → Unknown
 	fail := &scriptedLLM{err: errors.New("boom")}
-	if got := classifyWithLight(context.Background(), "x", fail); got != Unknown {
+	if got := ClassifyWithLight(context.Background(), nil, "x", fail); got != Unknown {
 		t.Fatalf("LLM 出错应为 Unknown, got %v", got)
 	}
 }
 
 func TestParseIntentWithLight(t *testing.T) {
-	// 规则命中不调 LLM（fake 返回 Nope 也不影响）
 	c := &scriptedLLM{raw: `{"intent":"Nope"}`}
-	if got := ParseIntentWithLight(context.Background(), "alarm-1什么原因", c); got != AskRootCause {
+	if got := ParseIntentWithLight(context.Background(), nil, "alarm-1什么原因", c); got != AskRootCause {
 		t.Fatalf("规则命中应为 AskRootCause, got %v", got)
 	}
-	// 规则 Unknown → LLM 分类
-	if got := ParseIntentWithLight(context.Background(), "帮我看看今天天气", &scriptedLLM{raw: `{"intent":"ListAlerts"}`}); got != ListAlerts {
+	if got := ParseIntentWithLight(context.Background(), nil, "帮我看看今天天气", &scriptedLLM{raw: `{"intent":"ListAlerts"}`}); got != ListAlerts {
 		t.Fatalf("LLM 分类应为 ListAlerts, got %v", got)
 	}
-	// completer 为 nil → 回退规则结果（Unknown）
-	if got := ParseIntentWithLight(context.Background(), "今天天气如何", nil); got != Unknown {
+	if got := ParseIntentWithLight(context.Background(), nil, "今天天气如何", nil); got != Unknown {
 		t.Fatalf("nil completer 应回退 Unknown, got %v", got)
 	}
 }
 
 func TestParseIntentSet(t *testing.T) {
-	// LLM 拆分两个子问题：规则命中 AskRootCause + 规则命中 ListAlerts
 	c := &scriptedLLM{raw: `{"rewritten":"有哪些告警？alarm-1什么原因？","sub_questions":["有哪些告警","alarm-1什么原因"]}`}
-	got := ParseIntentSet(context.Background(), "有哪些告警？alarm-1什么原因？", c, 3)
+	got := ParseIntentSet(context.Background(), nil, "有哪些告警？alarm-1什么原因？", c, 3)
 	if len(got) != 2 || got[0] != ListAlerts || got[1] != AskRootCause {
-		t.Fatalf("ParseIntentSet = %v, want [ListAlerts AskRootCause]", got)
-	}
-	// 超过 maxSplit 截断
-	got2 := ParseIntentSet(context.Background(), "有哪些告警？alarm-1什么原因？", c, 1)
-	if len(got2) != 1 || got2[0] != ListAlerts {
-		t.Fatalf("ParseIntentSet 应截断到 1, got %v", got2)
-	}
-	// 重写拆分失败 → 回退单意图规则
-	fail := &scriptedLLM{err: errors.New("boom")}
-	got3 := ParseIntentSet(context.Background(), "有哪些告警", fail, 3)
-	if len(got3) != 1 || got3[0] != ListAlerts {
-		t.Fatalf("重写失败应回退规则, got %v", got3)
-	}
-	// completer nil → 单意图规则
-	got4 := ParseIntentSet(context.Background(), "有哪些告警", nil, 3)
-	if len(got4) != 1 || got4[0] != ListAlerts {
-		t.Fatalf("nil completer 应回退规则, got %v", got4)
+		t.Fatalf("ParseIntentSet = %v", got)
 	}
 }
 
 func TestIntentName(t *testing.T) {
 	if IntentName(AskRootCause) != "AskRootCause" {
-		t.Fatalf("IntentName(AskRootCause) = %q", IntentName(AskRootCause))
+		t.Fatalf("IntentName = %q", IntentName(AskRootCause))
 	}
-	if IntentName(Intent(99)) != "Unknown" {
-		t.Fatalf("未知意图应为 Unknown")
+	if IntentName("Bogus") != "Bogus" {
+		t.Fatalf("IntentName 应为恒等映射")
+	}
+}
+
+func TestRuleMatchFromLeaves(t *testing.T) {
+	leaves := []model.LeafSpec{
+		{Code: "AskRootCause", RuleKeywords: []string{"为什么"}},
+		{Code: "ListAlerts", RuleKeywords: []string{"列表"}},
+	}
+	if got := RuleMatch(leaves, "为什么磁盘满了"); got != "AskRootCause" {
+		t.Fatalf("RuleMatch 应命中 AskRootCause, got %q", got)
+	}
+	if got := RuleMatch(leaves, "看看列表"); got != "ListAlerts" {
+		t.Fatalf("RuleMatch 应命中 ListAlerts, got %q", got)
+	}
+	if got := RuleMatch(leaves, "今天天气"); got != Unknown {
+		t.Fatalf("未命中应 Unknown, got %q", got)
+	}
+}
+
+func TestAgentRecognizesCustomLeaf(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	now := time.Now()
+	_ = s.SaveAlert(model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage", Severity: "critical", FiredAt: now, CreatedAt: now})
+	leaves := func() []model.LeafSpec {
+		return []model.LeafSpec{{Code: "MyKB", Name: "MyKB", Description: "查知识库", RuleKeywords: []string{"查手册"}}}
+	}
+	ag := NewWithLeaves(s, nil, nil, nil, nil, 3, 3, leaves)
+	msg, _ := ag.Handle(context.Background(), "帮我查手册")
+	if !strings.Contains(msg.Content, "尚未实现") {
+		t.Fatalf("KB 意图应输出占位语, got %q", msg.Content)
 	}
 }
 

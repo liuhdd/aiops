@@ -8,38 +8,67 @@ import (
 
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/llm"
+	"aiops/internal/model"
 )
 
-type Intent int
+// Intent 意图 code（字符串别名）。
+type Intent = string
 
 const (
-	Unknown Intent = iota
-	ListAlerts
-	InspectAlert
-	AskRootCause
-	AskRecommendation
-	AskStatus
+	Unknown           Intent = "Unknown"
+	ListAlerts        Intent = "ListAlerts"
+	InspectAlert      Intent = "InspectAlert"
+	AskRootCause      Intent = "AskRootCause"
+	AskRecommendation Intent = "AskRecommendation"
+	AskStatus         Intent = "AskStatus"
 )
+
+// SeedLeaves 内置 6 种子（provider 为空时的兜底；顺序即规则匹配优先级）。
+var SeedLeaves = []model.LeafSpec{
+	{Code: AskRootCause, Name: "AskRootCause", Description: "询问根因", RuleKeywords: []string{"什么原因", "为什么", "根因"}},
+	{Code: AskRecommendation, Name: "AskRecommendation", Description: "询问处置建议", RuleKeywords: []string{"怎么处理", "怎么办", "建议", "处置"}},
+	{Code: AskStatus, Name: "AskStatus", Description: "询问状态/进度", RuleKeywords: []string{"状态", "进度"}},
+	{Code: InspectAlert, Name: "InspectAlert", Description: "排查某个告警", RuleKeywords: []string{}},
+	{Code: ListAlerts, Name: "ListAlerts", Description: "查看告警列表", RuleKeywords: []string{"列表", "有哪些告警", "告警"}},
+	{Code: Unknown, Name: "Unknown", Description: "与告警运维无关", RuleKeywords: []string{}},
+}
 
 var alarmRe = regexp.MustCompile(`(?i)alarm[-_ ]?\w*|(compute|web|db|storage|switch)-?0?\d*`)
 
-func ParseIntent(text string) Intent {
-	t := strings.ToLower(text)
-	switch {
-	case strings.Contains(t, "什么原因") || strings.Contains(t, "为什么") || strings.Contains(t, "根因"):
-		return AskRootCause
-	case strings.Contains(t, "怎么处理") || strings.Contains(t, "怎么办") || strings.Contains(t, "建议") || strings.Contains(t, "处置"):
-		return AskRecommendation
-	case strings.Contains(t, "状态") || strings.Contains(t, "进度"):
-		return AskStatus
-	case (strings.Contains(t, "查") || strings.Contains(t, "排查") || strings.Contains(t, "看")) &&
-		alarmRe.MatchString(t):
-		return InspectAlert
-	case strings.Contains(t, "列表") || strings.Contains(t, "有哪些告警") || strings.Contains(t, "告警"):
-		return ListAlerts
+// inspectAlertMatch 内置复合规则：查/排查/看 + 告警/设备名。
+func inspectAlertMatch(low string) bool {
+	verb := strings.Contains(low, "查") || strings.Contains(low, "排查") || strings.Contains(low, "看")
+	return verb && alarmRe.MatchString(low)
+}
+
+// RuleMatch 规则优先：按 leaves 顺序匹配；InspectAlert 用内置复合规则，其余用 rule_keywords 子串命中。
+// leaves 为空时回退 SeedLeaves。
+func RuleMatch(leaves []model.LeafSpec, text string) Intent {
+	if len(leaves) == 0 {
+		leaves = SeedLeaves
+	}
+	low := strings.ToLower(text)
+	for _, l := range leaves {
+		if l.Code == Unknown {
+			continue
+		}
+		if l.Code == InspectAlert {
+			if inspectAlertMatch(low) {
+				return InspectAlert
+			}
+			continue
+		}
+		for _, kw := range l.RuleKeywords {
+			if kw != "" && strings.Contains(low, strings.ToLower(kw)) {
+				return l.Code
+			}
+		}
 	}
 	return Unknown
 }
+
+// ParseIntent 单意图规则识别（向后兼容，等价 RuleMatch(nil, text)）。
+func ParseIntent(text string) Intent { return RuleMatch(nil, text) }
 
 // RewriteAndSplit 轻量 LLM 一次调用完成问题重写与多意图拆分。
 // 返回 rewritten（规范化完整问题）与 subs（拆分出的子问题列表）；LLM 不可用/失败返回 err。
@@ -62,9 +91,20 @@ func RewriteAndSplit(ctx context.Context, text string, c ctxpkg.Completer) (rewr
 	return out.Rewritten, out.Subs, nil
 }
 
-// classifyWithLight 轻量 LLM 分类为 6 类之一；失败/非法映射 Unknown。
-func classifyWithLight(ctx context.Context, text string, c ctxpkg.Completer) Intent {
-	system := "你是意图分类器。判断用户请求属于哪个意图，只输出 JSON：{\"intent\":\"<意图名>\"}。意图名必须是 ListAlerts(查看告警列表)、InspectAlert(排查某个告警)、AskRootCause(询问根因)、AskRecommendation(询问处置建议)、AskStatus(询问状态/进度)、Unknown(与告警运维无关)。无法确定时返回 Unknown。"
+// ClassifyWithLight 轻量 LLM 分类：闭集 = leaves 的 code+description；失败/非法映射 Unknown。
+func ClassifyWithLight(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer) Intent {
+	if len(leaves) == 0 {
+		leaves = SeedLeaves
+	}
+	var parts []string
+	for _, l := range leaves {
+		desc := l.Description
+		if desc == "" {
+			desc = l.Code
+		}
+		parts = append(parts, l.Code+"("+desc+")")
+	}
+	system := "你是意图分类器。判断用户请求属于哪个意图，只输出 JSON：{\"intent\":\"<意图名>\"}。意图名必须是 " + strings.Join(parts, "、") + "。无法确定时返回 Unknown。"
 	raw, err := c.Complete(ctx, system, text)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return Unknown
@@ -75,41 +115,33 @@ func classifyWithLight(ctx context.Context, text string, c ctxpkg.Completer) Int
 	if err := llm.ParseJSON(raw, &out); err != nil {
 		return Unknown
 	}
-	switch out.Intent {
-	case "ListAlerts":
-		return ListAlerts
-	case "InspectAlert":
-		return InspectAlert
-	case "AskRootCause":
-		return AskRootCause
-	case "AskRecommendation":
-		return AskRecommendation
-	case "AskStatus":
-		return AskStatus
+	for _, l := range leaves {
+		if out.Intent == l.Code {
+			return l.Code
+		}
 	}
 	return Unknown
 }
 
-// ParseIntentWithLight 规则优先；规则判 Unknown 时用轻量 LLM 分类；LLM 不可用/失败回退 Unknown。
-func ParseIntentWithLight(ctx context.Context, text string, c ctxpkg.Completer) Intent {
-	if intent := ParseIntent(text); intent != Unknown {
+// ParseIntentWithLight 规则优先；Unknown 用轻量 LLM 分类。
+func ParseIntentWithLight(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer) Intent {
+	if intent := RuleMatch(leaves, text); intent != Unknown {
 		return intent
 	}
 	if c == nil || ctxpkg.IsNilCompleter(c) {
 		return Unknown
 	}
-	return classifyWithLight(ctx, text, c)
+	return ClassifyWithLight(ctx, leaves, text, c)
 }
 
-// ParseIntentSet 解析一条输入的全部意图：LLM 重写+拆分 → 逐子问题 ParseIntentWithLight，截断到 maxSplit。
-// LLM 不可用或拆分失败时回退为单意图规则 ParseIntent(text)。
-func ParseIntentSet(ctx context.Context, text string, c ctxpkg.Completer, maxSplit int) []Intent {
+// ParseIntentSet 解析一条输入的全部意图：重写拆分 → 逐子问题 ParseIntentWithLight，截断到 maxSplit。
+func ParseIntentSet(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer, maxSplit int) []Intent {
 	if c == nil || ctxpkg.IsNilCompleter(c) {
-		return []Intent{ParseIntent(text)}
+		return []Intent{RuleMatch(leaves, text)}
 	}
 	_, subs, err := RewriteAndSplit(ctx, text, c)
 	if err != nil || len(subs) == 0 {
-		return []Intent{ParseIntent(text)}
+		return []Intent{RuleMatch(leaves, text)}
 	}
 	if maxSplit <= 0 {
 		maxSplit = 3
@@ -119,24 +151,10 @@ func ParseIntentSet(ctx context.Context, text string, c ctxpkg.Completer, maxSpl
 	}
 	out := make([]Intent, 0, len(subs))
 	for _, s := range subs {
-		out = append(out, ParseIntentWithLight(ctx, s, c))
+		out = append(out, ParseIntentWithLight(ctx, leaves, s, c))
 	}
 	return out
 }
 
-// IntentName 返回意图的字符串名；未知值返回 "Unknown"。
-func IntentName(i Intent) string {
-	switch i {
-	case ListAlerts:
-		return "ListAlerts"
-	case InspectAlert:
-		return "InspectAlert"
-	case AskRootCause:
-		return "AskRootCause"
-	case AskRecommendation:
-		return "AskRecommendation"
-	case AskStatus:
-		return "AskStatus"
-	}
-	return "Unknown"
-}
+// IntentName 返回意图 code（恒等）。
+func IntentName(i Intent) string { return i }
