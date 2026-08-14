@@ -68,3 +68,37 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("Load() failed: %+v", cfg)
 	}
 }
+
+func TestLoadFromEnvLightIntentDefaults(t *testing.T) {
+	env := map[string]string{"LLM_BASE_URL": "https://main.example.com/v1", "LLM_MODEL": "main-model"}
+	cfg := LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.LLMLightBaseURL != "https://main.example.com/v1" {
+		t.Fatalf("LLMLightBaseURL = %q, want 同 LLM_BASE_URL", cfg.LLMLightBaseURL)
+	}
+	if cfg.LLMLightModel != "main-model" {
+		t.Fatalf("LLMLightModel = %q, want 同 LLM_MODEL", cfg.LLMLightModel)
+	}
+	if cfg.MaxSplit != 3 {
+		t.Fatalf("MaxSplit = %d, want 3", cfg.MaxSplit)
+	}
+}
+
+func TestLoadFromEnvLightIntentOverride(t *testing.T) {
+	env := map[string]string{
+		"LLM_BASE_URL":       "https://main.example.com/v1",
+		"LLM_MODEL":          "main-model",
+		"LLM_LIGHT_BASE_URL": "https://light.example.com/v1",
+		"LLM_LIGHT_MODEL":    "light-model",
+		"INTENT_MAX_SPLIT":   "5",
+	}
+	cfg := LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.LLMLightBaseURL != "https://light.example.com/v1" {
+		t.Fatalf("LLMLightBaseURL = %q, want light url", cfg.LLMLightBaseURL)
+	}
+	if cfg.LLMLightModel != "light-model" {
+		t.Fatalf("LLMLightModel = %q, want light-model", cfg.LLMLightModel)
+	}
+	if cfg.MaxSplit != 5 {
+		t.Fatalf("MaxSplit = %d, want 5", cfg.MaxSplit)
+	}
+}
