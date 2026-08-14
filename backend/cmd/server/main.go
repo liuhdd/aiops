@@ -27,6 +27,11 @@ func main() {
 		log.Printf("llm unavailable (will use rule fallback): %v", err)
 	}
 
+	light, err := llm.NewLightClient(cfg)
+	if err != nil {
+		log.Printf("light llm unavailable (intent fallback to rules): %v", err)
+	}
+
 	mockdata.GenerateAll(42)
 
 	st, err := store.New(cfg.DBPath)
@@ -45,7 +50,7 @@ func main() {
 	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
 	eng.Publish = h.Publish
 
-	ag := agent.NewWithContext(st, lc, eng, cs, cfg.TopK)
+	ag := agent.NewWithLight(st, lc, light, eng, cs, cfg.TopK, cfg.MaxSplit)
 	sim := simulator.New(st, func(a model.Alert) {
 		h.Publish("alert", a)
 		go func() {
