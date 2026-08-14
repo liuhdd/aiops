@@ -151,12 +151,7 @@ func gradeChat(t Task, res *TrialResult) []GraderResult {
 	if len(got) == 0 {
 		got = []string{res.Intent}
 	}
-	ok := false
-	if len(t.Expected.Intents) > 0 {
-		ok = containsAll(got, t.Expected.Intents)
-	} else {
-		ok = contains(got, t.Expected.Intent)
-	}
+	ok := intentMatch(t, res)
 	detail := "intents=" + strings.Join(got, ",")
 	if ok {
 		detail += " reply=" + truncate(res.Reply, 80)
