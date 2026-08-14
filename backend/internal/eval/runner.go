@@ -161,7 +161,7 @@ func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task,
 
 func ensureAlertForChat(st *store.Store, t Task) (model.Alert, error) {
 	// chat 反例/不涉告警：直接返回空
-	if t.Expected.Intent == "Unknown" || t.Expected.Intent == "ListAlerts" {
+	if t.Expected.Intent == "Unknown" || t.Expected.Intent == "ListAlerts" || t.Expected.Intent == "AskStatus" {
 		return model.Alert{}, nil
 	}
 	// 其余 chat 任务需要一个真实告警（用对应 pipeline 任务的 device/metric）
@@ -171,8 +171,21 @@ func ensureAlertForChat(st *store.Store, t Task) (model.Alert, error) {
 		"chat-recommend-gpu":  {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
 		"chat-inspect-switch": {"switch-core-01", "net_in", "critical", "核心交换机入口流量中断"},
 		"chat-multi":          {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+		"chat-disk-reason-2":  {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
 	}[t.ID]
 	dev, metric, sev, msg := scene[0], scene[1], scene[2], scene[3]
+	if t.ID == "chat-multi-recommend" {
+		now := time.Now()
+		for _, id := range []string{"alarm-1", "alarm-2"} {
+			a := model.Alert{ID: id, Device: "db-01", Metric: "disk_usage",
+				Severity: "critical", Message: "磁盘使用率超过95%", Status: "active",
+				FiredAt: now, CreatedAt: now}
+			if err := st.SaveAlert(a); err != nil {
+				return a, err
+			}
+		}
+		return model.Alert{}, nil
+	}
 	alertID := "eval-chat-" + t.ID
 	if t.ID == "chat-multi" {
 		// chat-multi 输入显式引用 alarm-1，需按真实告警 ID 播种

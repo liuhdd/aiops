@@ -74,3 +74,40 @@ func TestValidateTasks(t *testing.T) {
 		}
 	}
 }
+
+func TestChatTasksIntentCoverage(t *testing.T) {
+	// 应争议任务集（Expected.Intent == "Unknown"）
+	wantDisputed := map[string]bool{
+		"chat-irrelevant":       true,
+		"chat-ambiguous":        true,
+		"chat-greeting":         true,
+		"chat-weather-offtopic": true,
+	}
+	found := map[string]bool{}
+	for _, tk := range DefaultTasks() {
+		if tk.Object != ObjectChat {
+			continue
+		}
+		if isShouldDisputed(tk) {
+			found[tk.ID] = true
+		}
+	}
+	if len(found) != len(wantDisputed) {
+		t.Fatalf("应争议任务数 = %d, want %d: %v", len(found), len(wantDisputed), found)
+	}
+	for id := range wantDisputed {
+		if !found[id] {
+			t.Fatalf("缺应争议任务 %s", id)
+		}
+	}
+}
+
+func TestChatMultiRecommendExists(t *testing.T) {
+	tk, ok := TaskByID("chat-multi-recommend")
+	if !ok {
+		t.Fatal("缺 chat-multi-recommend 任务")
+	}
+	if len(tk.Expected.Intents) != 2 {
+		t.Fatalf("chat-multi-recommend 期望 2 个意图, got %v", tk.Expected.Intents)
+	}
+}

@@ -139,6 +139,37 @@ func DefaultTasks() []Task {
 			Expected:  Expected{Intent: "Unknown"},
 		},
 		{
+			ID: "chat-ambiguous", Object: ObjectChat,
+			ChatInput: "帮我查一下原因",
+			Expected:  Expected{Intent: "Unknown"},
+		},
+		{
+			ID: "chat-greeting", Object: ObjectChat,
+			ChatInput: "在吗？",
+			Expected:  Expected{Intent: "Unknown"},
+		},
+		{
+			ID: "chat-weather-offtopic", Object: ObjectChat,
+			ChatInput: "明天天气好吗",
+			Expected:  Expected{Intent: "Unknown"},
+		},
+		{
+			ID: "chat-status-progress", Object: ObjectChat,
+			ChatInput: "现在排查进度如何",
+			Expected:  Expected{Intent: "AskStatus"},
+		},
+		{
+			ID: "chat-disk-reason-2", Object: ObjectChat,
+			ChatInput: "db-01 为什么告警",
+			Expected:  Expected{Intent: "AskRootCause", RootCause: []string{"磁盘空间不足"}},
+		},
+		{
+			ID: "chat-multi-recommend", Object: ObjectChat,
+			ChatInput: "alarm-1 什么原因？alarm-2 怎么处理？",
+			Expected:  Expected{Intents: []string{"AskRootCause", "AskRecommendation"}},
+			Configs:   []string{ConfigLLMSingle, ConfigLLMReact},
+		},
+		{
 			ID: "chat-multi", Object: ObjectChat,
 			ChatInput: "有哪些告警？alarm-1 什么原因？",
 			Expected:  Expected{Intents: []string{"ListAlerts", "AskRootCause"}},
