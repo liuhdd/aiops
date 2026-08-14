@@ -35,3 +35,24 @@ func TestParseJSONPlain(t *testing.T) {
 		t.Fatalf("parsed = %+v", m)
 	}
 }
+
+func TestNewLightClientNoKey(t *testing.T) {
+	cfg := config.Config{LLMAPIKey: ""}
+	c, err := NewLightClient(cfg)
+	if err == nil || c != nil {
+		t.Fatalf("无 key 应返回 nil+err, got c=%v err=%v", c, err)
+	}
+}
+
+func TestNewLightClientDefaultsToMain(t *testing.T) {
+	cfg := config.Config{
+		LLMAPIKey: "sk-test", LLMBaseURL: "https://main.example.com/v1", LLMModel: "main-model",
+	}
+	c, err := NewLightClient(cfg)
+	if err != nil {
+		t.Fatalf("NewLightClient: %v", err)
+	}
+	if c == nil {
+		t.Fatal("有 key 应返回非 nil client")
+	}
+}

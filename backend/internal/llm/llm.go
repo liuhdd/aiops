@@ -35,6 +35,22 @@ func NewClient(cfg config.Config) (*Client, error) {
 	return &Client{model: cm}, nil
 }
 
+// NewLightClient 构造轻量意图模型客户端；未配置 key 或未配置轻量模型时返回 ErrNoAPIKey。
+func NewLightClient(cfg config.Config) (*Client, error) {
+	if cfg.LLMAPIKey == "" {
+		return nil, ErrNoAPIKey
+	}
+	cm, err := openai.NewChatModel(context.Background(), &openai.ChatModelConfig{
+		BaseURL: cfg.LLMLightBaseURL,
+		APIKey:  cfg.LLMAPIKey,
+		Model:   cfg.LLMLightModel,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("new light chat model: %w", err)
+	}
+	return &Client{model: cm}, nil
+}
+
 func (c *Client) Complete(ctx context.Context, system, user string) (string, error) {
 	msg, err := c.model.Generate(ctx, []*schema.Message{
 		schema.SystemMessage(system),
