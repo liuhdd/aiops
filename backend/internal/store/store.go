@@ -85,6 +85,41 @@ func (s *Store) migrate() error {
 		updated_at DATETIME)`); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS intent_nodes (
+		id TEXT PRIMARY KEY,
+		parent_id TEXT NOT NULL DEFAULT '',
+		name TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		code TEXT NOT NULL DEFAULT '',
+		bind_target TEXT NOT NULL DEFAULT '',
+		rule_keywords TEXT NOT NULL DEFAULT '[]',
+		description TEXT NOT NULL DEFAULT '',
+		enabled INTEGER NOT NULL DEFAULT 1,
+		deleted INTEGER NOT NULL DEFAULT 0,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME,
+		updated_at DATETIME)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_intent_parent ON intent_nodes(parent_id, sort_order)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS intent_audit (
+		id TEXT PRIMARY KEY,
+		node_id TEXT NOT NULL,
+		action TEXT NOT NULL,
+		operator TEXT NOT NULL,
+		before_json TEXT,
+		after_json TEXT,
+		created_at DATETIME)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_intent_audit_node ON intent_audit(node_id, created_at)`); err != nil {
+		return err
+	}
+	if err := s.seedIntents(); err != nil {
+		return err
+	}
 	return nil
 }
 
