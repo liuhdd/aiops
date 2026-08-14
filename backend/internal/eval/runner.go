@@ -51,6 +51,7 @@ type TrialResult struct {
 	RunStatus string
 	ErrMsg    string `json:"err_msg,omitempty"`
 	Intent    string
+	Intents   []string `json:"intents,omitempty"`
 	Reply     string
 	Outcome   RunOutcome
 }
@@ -84,7 +85,7 @@ func RunTask(ctx context.Context, t Task, cfg Config, lc *llm.Client, trial int)
 
 	switch t.Object {
 	case ObjectChat:
-		return runChat(ctx, st, eng, t, res)
+		return runChat(ctx, st, eng, t, cfg, lc, cs, res)
 	default:
 		return runPipeline(ctx, st, eng, t, res)
 	}
@@ -125,15 +126,20 @@ func runPipeline(ctx context.Context, st *store.Store, eng *pipeline.Engine, t T
 	return res, nil
 }
 
-func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task, res *TrialResult) (*TrialResult, error) {
+func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task, cfg Config, lc *llm.Client, cs *ctxpkg.Store, res *TrialResult) (*TrialResult, error) {
 	// 需要 alert 供流水线触发；chat 任务若引用设备，预先写入一条告警
 	if _, err := ensureAlertForChat(st, t); err != nil {
 		res.RunStatus = "chat-failed"
 		res.ErrMsg = err.Error()
 		return res, err
 	}
-	// agent.New(s, lc, eng)：规则路径下 lc 传 nil，Handle 走 answerFor
-	ag := agent.New(st, nil, eng)
+	var ag *agent.Agent
+	if cfg.LLM && !isNilClient(lc) {
+		// 对齐生产：注入主 client（eval 中复用为轻模型），Handle 走多意图路径
+		ag = agent.NewWithLight(st, lc, lc, eng, cs, cfg.TopK, 3)
+	} else {
+		ag = agent.New(st, nil, eng)
+	}
 	msg, err := ag.Handle(ctx, t.ChatInput)
 	if err != nil {
 		res.RunStatus = "chat-failed"
@@ -142,7 +148,14 @@ func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task,
 	}
 	res.Reply = msg.Content
 	res.RunStatus = "chat"
-	res.Intent = intentName(agent.ParseIntent(t.ChatInput))
+	var light ctxpkg.Completer
+	if cfg.LLM && !isNilClient(lc) {
+		light = lc
+	}
+	res.Intents = intentNames(agent.ParseIntentSet(ctx, t.ChatInput, light, 3))
+	if len(res.Intents) > 0 {
+		res.Intent = res.Intents[0]
+	}
 	return res, nil
 }
 
@@ -172,21 +185,4 @@ func ensureAlertForChat(st *store.Store, t Task) (model.Alert, error) {
 
 func isNilClient(lc *llm.Client) bool {
 	return lc == nil
-}
-
-// intentName 将 agent.Intent 转为字符串名（与 Task 3 的 intentNameStr 等价，独立定义避免重复声明）
-func intentName(i agent.Intent) string {
-	switch i {
-	case agent.AskRootCause:
-		return "AskRootCause"
-	case agent.AskRecommendation:
-		return "AskRecommendation"
-	case agent.InspectAlert:
-		return "InspectAlert"
-	case agent.ListAlerts:
-		return "ListAlerts"
-	case agent.AskStatus:
-		return "AskStatus"
-	}
-	return "Unknown"
 }

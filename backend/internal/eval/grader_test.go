@@ -80,6 +80,31 @@ func TestGradeChatIntent(t *testing.T) {
 	}
 }
 
+func TestGradeChatMultiIntent(t *testing.T) {
+	task, _ := TaskByID("chat-multi")
+	if len(task.Expected.Intents) != 2 {
+		t.Fatalf("chat-multi 应期望 2 个意图, got %v", task.Expected.Intents)
+	}
+	res := &TrialResult{Intents: []string{"ListAlerts", "AskRootCause"}, Reply: "多意图聚合回复"}
+	scores := gradeChat(task, res)
+	found := map[string]GraderResult{}
+	for _, s := range scores {
+		found[s.Name] = s
+	}
+	if !found["IntentMatch"].Pass {
+		t.Fatalf("多意图全命中应通过: %+v", found["IntentMatch"])
+	}
+	// 缺一个意图 → 不通过
+	res2 := &TrialResult{Intents: []string{"ListAlerts"}}
+	found2 := map[string]GraderResult{}
+	for _, s := range gradeChat(task, res2) {
+		found2[s.Name] = s
+	}
+	if found2["IntentMatch"].Pass {
+		t.Fatalf("缺意图不应通过: %+v", found2["IntentMatch"])
+	}
+}
+
 func TestWeightedScoreNA(t *testing.T) {
 	scores := []GraderResult{
 		{Name: "a", Pass: true, Score: 1, Weight: 0.5},

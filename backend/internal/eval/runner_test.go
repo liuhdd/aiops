@@ -56,6 +56,19 @@ func TestRunTaskChatRecommendRule(t *testing.T) {
 	}
 }
 
+func TestRunTaskChatMultiRuleFallback(t *testing.T) {
+	mockdata.GenerateAll(42)
+	task, _ := TaskByID("chat-multi")
+	// rule 配置（无 LLM）下回退单意图规则解析
+	res, err := RunTask(context.Background(), task, Config{Name: ConfigRule}, nil, 1)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	if len(res.Intents) == 0 {
+		t.Fatal("res.Intents 不应为空")
+	}
+}
+
 // Fix2：未知 chat 任务 ID（未命中 scene 表）仍应返回非 nil 的部分结果，失败 trial 不丢失。
 func TestRunTaskChatUnknownIDReturnsPartial(t *testing.T) {
 	mockdata.GenerateAll(42)

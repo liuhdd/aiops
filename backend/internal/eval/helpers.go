@@ -21,6 +21,15 @@ func unmarshalJSON(raw string, v any) error {
 	return llm.ParseJSON(raw, v)
 }
 
+// intentNames 将子意图集合转为字符串名（与运行时同一命名）。
+func intentNames(its []agent.Intent) []string {
+	out := make([]string, 0, len(its))
+	for _, i := range its {
+		out = append(out, agent.IntentName(i))
+	}
+	return out
+}
+
 // intentNameStr 将 agent.Intent 转为字符串名（iota 0..5）
 func intentNameStr(i agent.Intent) string {
 	switch i {

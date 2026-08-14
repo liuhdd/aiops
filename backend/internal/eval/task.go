@@ -36,7 +36,8 @@ type Expected struct {
 	Logs      []string // 期望日志关键字
 	NoGaps    bool     // 期望证据/根因无 gaps
 	Runbook   string   // 期望 runbook_ref
-	Intent    string   // chat: 期望意图
+	Intent    string   // chat: 期望意图（单意图）
+	Intents   []string // chat: 期望子意图集合（多意图，全部命中才过）
 	ToolUse   []string // context: 期望调用的工具
 }
 
@@ -137,6 +138,12 @@ func DefaultTasks() []Task {
 			ChatInput: "今天天气如何？",
 			Expected:  Expected{Intent: "Unknown"},
 		},
+		{
+			ID: "chat-multi", Object: ObjectChat,
+			ChatInput: "有哪些告警？alarm-1 什么原因？",
+			Expected:  Expected{Intents: []string{"ListAlerts", "AskRootCause"}},
+			Configs:   []string{ConfigLLMSingle, ConfigLLMReact},
+		},
 		// ---- L4 Context/ReAct 任务（仅 llm-react 配置生效） ----
 		{
 			ID: "react-gpu-evidence", Object: ObjectContext,
@@ -170,8 +177,8 @@ func ValidateTasks() error {
 			if t.ChatInput == "" {
 				return fmt.Errorf("chat 任务 %s 缺 ChatInput", t.ID)
 			}
-			if t.Expected.Intent == "" {
-				return fmt.Errorf("chat 任务 %s 缺期望 Intent", t.ID)
+			if t.Expected.Intent == "" && len(t.Expected.Intents) == 0 {
+				return fmt.Errorf("chat 任务 %s 缺期望 Intent/Intents", t.ID)
 			}
 			continue
 		}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"aiops/internal/agent"
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/model"
 )
@@ -148,9 +147,17 @@ func edgeRootCause(t Task, res *TrialResult) GraderResult {
 }
 
 func gradeChat(t Task, res *TrialResult) []GraderResult {
-	intent := agent.ParseIntent(t.ChatInput)
-	ok := intentNameStr(intent) == t.Expected.Intent
-	detail := "intent=" + intentNameStr(intent)
+	got := res.Intents
+	if len(got) == 0 {
+		got = []string{res.Intent}
+	}
+	ok := false
+	if len(t.Expected.Intents) > 0 {
+		ok = containsAll(got, t.Expected.Intents)
+	} else {
+		ok = contains(got, t.Expected.Intent)
+	}
+	detail := "intents=" + strings.Join(got, ",")
 	if ok {
 		detail += " reply=" + truncate(res.Reply, 80)
 	}
@@ -270,6 +277,15 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func containsAll(haystack, needles []string) bool {
+	for _, n := range needles {
+		if !contains(haystack, n) {
+			return false
+		}
+	}
+	return true
 }
 
 func truncate(s string, n int) string {
