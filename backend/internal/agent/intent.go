@@ -111,6 +111,9 @@ func ParseIntentSet(ctx context.Context, text string, c ctxpkg.Completer, maxSpl
 	if err != nil || len(subs) == 0 {
 		return []Intent{ParseIntent(text)}
 	}
+	if maxSplit <= 0 {
+		maxSplit = 3
+	}
 	if len(subs) > maxSplit {
 		subs = subs[:maxSplit]
 	}

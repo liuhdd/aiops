@@ -35,7 +35,7 @@ func NewClient(cfg config.Config) (*Client, error) {
 	return &Client{model: cm}, nil
 }
 
-// NewLightClient 构造轻量意图模型客户端；未配置 key 或未配置轻量模型时返回 ErrNoAPIKey。
+// NewLightClient 构造轻量意图模型客户端；未配置 LLM_API_KEY 时返回 ErrNoAPIKey。
 func NewLightClient(cfg config.Config) (*Client, error) {
 	if cfg.LLMAPIKey == "" {
 		return nil, ErrNoAPIKey

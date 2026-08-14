@@ -29,22 +29,3 @@ func intentNames(its []agent.Intent) []string {
 	}
 	return out
 }
-
-// intentNameStr 将 agent.Intent 转为字符串名（iota 0..5）
-func intentNameStr(i agent.Intent) string {
-	switch i {
-	case agent.Unknown:
-		return "Unknown"
-	case agent.ListAlerts:
-		return "ListAlerts"
-	case agent.InspectAlert:
-		return "InspectAlert"
-	case agent.AskRootCause:
-		return "AskRootCause"
-	case agent.AskRecommendation:
-		return "AskRecommendation"
-	case agent.AskStatus:
-		return "AskStatus"
-	}
-	return "Unknown"
-}

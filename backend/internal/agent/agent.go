@@ -113,7 +113,8 @@ func (a *Agent) answer(ctx context.Context, userText string) string {
 // answerSingle 无轻量 LLM 时的单意图规则路径（原 Handle 逻辑）。
 func (a *Agent) answerSingle(ctx context.Context, userText string) string {
 	alertID := extractAlertID(userText, a.store)
-	switch ParseIntent(userText) {
+	intent := ParseIntent(userText)
+	switch intent {
 	case ListAlerts:
 		return a.listAlertsReply()
 	case InspectAlert, AskRootCause, AskRecommendation:
@@ -131,9 +132,9 @@ func (a *Agent) answerSingle(ctx context.Context, userText string) string {
 			time.Sleep(50 * time.Millisecond)
 		}
 		if !ctxpkg.IsNilCompleter(a.llm) {
-			return a.answerWithLLM(ctx, alertID, ParseIntent(userText), userText)
+			return a.answerWithLLM(ctx, alertID, intent, userText)
 		}
-		return a.answerFor(alertID, ParseIntent(userText))
+		return a.answerFor(alertID, intent)
 	case AskStatus:
 		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
 	default:

@@ -170,10 +170,16 @@ func ensureAlertForChat(st *store.Store, t Task) (model.Alert, error) {
 		"chat-root-cause-db":  {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
 		"chat-recommend-gpu":  {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
 		"chat-inspect-switch": {"switch-core-01", "net_in", "critical", "核心交换机入口流量中断"},
+		"chat-multi":          {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
 	}[t.ID]
 	dev, metric, sev, msg := scene[0], scene[1], scene[2], scene[3]
+	alertID := "eval-chat-" + t.ID
+	if t.ID == "chat-multi" {
+		// chat-multi 输入显式引用 alarm-1，需按真实告警 ID 播种
+		alertID = "alarm-1"
+	}
 	alert := model.Alert{
-		ID: "eval-chat-" + t.ID, Device: dev, Metric: metric,
+		ID: alertID, Device: dev, Metric: metric,
 		Severity: sev, Message: msg, Status: "active",
 		FiredAt: time.Now(), CreatedAt: time.Now(),
 	}

@@ -291,8 +291,33 @@ func TestHandleUnknownGuidance(t *testing.T) {
 	defer s.Close()
 	ag := New(s, nil, nil)
 	msg, _ := ag.Handle(context.Background(), "今天天气如何？")
-	if !strings.Contains(msg.Content, "AIOps运维助手") {
-		t.Fatalf("Unknown 应输出引导语, got %q", msg.Content)
+	if !strings.Contains(msg.Content, "重新描述你的问题") {
+		t.Fatalf("Unknown 应输出新引导语, got %q", msg.Content)
+	}
+}
+
+func TestHandleAggregationUnknownAndSkipped(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	now := time.Now()
+	_ = s.SaveAlert(model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now})
+	_ = s.SaveRun(model.PipelineRun{ID: "run-alarm-1", AlertID: "alarm-1", Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-alarm-1", StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	// 重写拆分返回 4 个子问题（超出 maxSplit=3），其中 "随便说说" 无规则意图，
+	// 触发轻量 LLM 分类：fake 返回原始 JSON，其 intent 字段为空 → Unknown。
+	light := &scriptedLLM{raw: `{"rewritten":"有哪些告警？alarm-1什么原因？随便说说？还有别的？","sub_questions":["有哪些告警","alarm-1什么原因","随便说说","还有别的"]}`}
+	ag := NewWithLight(s, nil, light, nil, nil, 3, 3)
+	msg, err := ag.Handle(context.Background(), "有哪些告警？alarm-1什么原因？随便说说？还有别的？")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "unknown") {
+		t.Fatalf("Unknown 子问题应输出 unknown 状态行: %q", msg.Content)
+	}
+	if !strings.Contains(msg.Content, "skipped") {
+		t.Fatalf("超限子问题应输出 skipped 状态行: %q", msg.Content)
 	}
 }
 

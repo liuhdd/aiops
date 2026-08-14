@@ -64,8 +64,8 @@ func TestRunTaskChatMultiRuleFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTask: %v", err)
 	}
-	if len(res.Intents) == 0 {
-		t.Fatal("res.Intents 不应为空")
+	if len(res.Intents) != 1 || res.Intents[0] != "AskRootCause" {
+		t.Fatalf("res.Intents = %v, want [AskRootCause]", res.Intents)
 	}
 }
 
