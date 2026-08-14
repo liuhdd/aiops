@@ -67,6 +67,48 @@ func TestUpdateKindChangeClearsBind(t *testing.T) {
 	}
 }
 
+func TestUpdateGroupWithChildrenToLeafFails(t *testing.T) {
+	svc := newTestService(t)
+	g, err := svc.Create(context.Background(), "t", CreateReq{Name: "有子分组", Kind: model.KindGroup})
+	if err != nil {
+		t.Fatalf("Create 分组: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), "t", CreateReq{ParentID: g.ID, Name: "叶子", Kind: model.KindKB, Code: "leaf1"}); err != nil {
+		t.Fatalf("Create 叶子: %v", err)
+	}
+	if _, err := svc.Update(context.Background(), "t", g.ID, UpdateReq{ParentID: g.ParentID, Name: g.Name, Kind: model.KindKB, Code: "leaf2"}); err == nil {
+		t.Fatal("有子节点的分组转为意图叶子应报错")
+	}
+}
+
+func TestCreateUnderDeletedParentFails(t *testing.T) {
+	svc := newTestService(t)
+	g, err := svc.Create(context.Background(), "t", CreateReq{Name: "临时分组", Kind: model.KindGroup})
+	if err != nil {
+		t.Fatalf("Create 分组: %v", err)
+	}
+	if err := svc.Delete(context.Background(), "t", []string{g.ID}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), "t", CreateReq{ParentID: g.ID, Name: "孤儿", Kind: model.KindKB, Code: "orphan1"}); err == nil {
+		t.Fatal("软删除分组下创建节点应报错")
+	}
+}
+
+func TestUpdateDeletedNodeFails(t *testing.T) {
+	svc := newTestService(t)
+	n, err := svc.Create(context.Background(), "t", CreateReq{ParentID: "grp-builtin", Name: "临时叶子", Kind: model.KindKB, Code: "tmp1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := svc.Delete(context.Background(), "t", []string{n.ID}); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := svc.Update(context.Background(), "t", n.ID, UpdateReq{ParentID: n.ParentID, Name: n.Name, Kind: model.KindKB, Code: n.Code}); err != ErrNotFound {
+		t.Fatalf("软删除节点 Update 应 ErrNotFound, got %v", err)
+	}
+}
+
 func TestDeleteSubtreeIntegrity(t *testing.T) {
 	svc := newTestService(t)
 	// 只删分组不删后代 → 报错并提示漏了谁

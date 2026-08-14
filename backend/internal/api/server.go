@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -134,11 +135,11 @@ func operator(r *http.Request) string {
 
 func intentStatus(err error) int {
 	switch {
-	case err == intent.ErrDuplicateCode:
+	case errors.Is(err, intent.ErrDuplicateCode):
 		return http.StatusConflict
-	case err == intent.ErrNotFound:
+	case errors.Is(err, intent.ErrNotFound):
 		return http.StatusNotFound
-	case err == intent.ErrSubtreeIncomplete:
+	case errors.Is(err, intent.ErrSubtreeIncomplete):
 		return http.StatusBadRequest
 	default:
 		return http.StatusBadRequest

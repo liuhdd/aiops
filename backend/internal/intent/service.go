@@ -88,6 +88,9 @@ func (s *Service) Update(ctx context.Context, operator string, id string, req Up
 		if err != nil {
 			return ErrNotFound
 		}
+		if cur.Deleted {
+			return ErrNotFound
+		}
 		n := cur
 		n.Name = req.Name
 		n.Code = req.Code
@@ -356,12 +359,24 @@ func validateNode(n model.IntentNode, tx store.IntentStore) error {
 		if err != nil {
 			return errors.New("父节点不存在")
 		}
+		if p.Deleted {
+			return errors.New("父节点不存在")
+		}
 		if p.Kind != model.KindGroup {
 			return errors.New("父节点必须是分组")
 		}
 	}
 	if n.Kind == model.KindGroup {
 		return nil
+	}
+	nodes, err := tx.ListIntentNodes()
+	if err != nil {
+		return err
+	}
+	for _, c := range nodes {
+		if c.ParentID == n.ID && !c.Deleted {
+			return errors.New("有子节点的分组不能转为意图叶子")
+		}
 	}
 	if strings.TrimSpace(n.Code) == "" {
 		return errors.New("意图叶子必须填写 code")
