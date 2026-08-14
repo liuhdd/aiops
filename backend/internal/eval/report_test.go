@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"aiops/internal/mockdata"
@@ -102,5 +103,29 @@ func TestBuildReportJSON(t *testing.T) {
 	}
 	if m["summary"] == nil {
 		t.Fatal("报告缺 summary 字段")
+	}
+}
+
+func TestBuildReportIntentStats(t *testing.T) {
+	mockdata.GenerateAll(42)
+	task, _ := TaskByID("chat-list-alerts")
+	cfg := Config{Name: ConfigRule}
+	res, err := RunTask(context.Background(), task, cfg, nil, 1)
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+	sc := ScoredTrial{TrialResult: res, Scores: Grade(context.Background(), task, cfg, res, nil)}
+	sc.Score = WeightedScore(sc.Scores)
+	sc.Pass = sc.Score >= 0.6
+	rep := BuildReport([]Task{task}, []Config{cfg}, map[string][]ScoredTrial{"chat-list-alerts|rule": {sc}})
+	st := rep.Summary.ByConfig["rule"]
+	if st.Intent == nil {
+		t.Fatal("ByConfig 应带 Intent 指标组")
+	}
+	if st.Intent.Accuracy != 1.0 {
+		t.Fatalf("accuracy = %v, want 1.0", st.Intent.Accuracy)
+	}
+	if !strings.Contains(rep.Summarize(), "intent") {
+		t.Fatalf("摘要应打印 intent 行: %q", rep.Summarize())
 	}
 }

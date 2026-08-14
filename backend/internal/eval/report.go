@@ -29,10 +29,11 @@ type Summary struct {
 }
 
 type Stats struct {
-	PassAtK   float64 `json:"pass_at_k"`
-	MeanScore float64 `json:"mean_score"`
-	Stddev    float64 `json:"stddev"`
-	Saturated bool    `json:"saturated"`
+	PassAtK   float64      `json:"pass_at_k"`
+	MeanScore float64      `json:"mean_score"`
+	Stddev    float64      `json:"stddev"`
+	Saturated bool         `json:"saturated"`
+	Intent    *IntentStats `json:"intent,omitempty"` // chat 意图分类指标（仅 ByConfig 填充）
 }
 
 type TaskReport struct {
@@ -130,11 +131,14 @@ func BuildReport(tasks []Task, configs []Config, scored map[string][]ScoredTrial
 			a.n++
 		}
 	}
+	intents := intentMetrics(tasks, configs, scored)
 	for name, a := range cfgAcc {
 		pk := a.sumPk / float64(a.n)
+		ist := intents[name]
 		rep.Summary.ByConfig[name] = Stats{
 			PassAtK: pk, MeanScore: a.sumMean / float64(a.n),
 			Stddev: a.sumSd / float64(a.n), Saturated: pk > 0.85,
+			Intent: &ist,
 		}
 	}
 	for name, a := range objAcc {
@@ -230,6 +234,10 @@ func (r Report) Summarize() string {
 		r.Summary.Overall.PassAtK, r.Summary.Overall.MeanScore, r.Summary.Overall.Stddev)
 	for cfg, st := range r.Summary.ByConfig {
 		fmt.Fprintf(&b, "  [%s] pass@k=%.2f 平均分=%.2f\n", cfg, st.PassAtK, st.MeanScore)
+		if st.Intent != nil {
+			fmt.Fprintf(&b, "       intent: 正确率=%.2f 可信度=%.2f 召回率=%.2f\n",
+				st.Intent.Accuracy, st.Intent.Precision, st.Intent.Recall)
+		}
 	}
 	if r.Summary.Overall.Saturated {
 		b.WriteString("警告: 评测饱和 (pass@k>0.85)，建议补充难题。\n")
