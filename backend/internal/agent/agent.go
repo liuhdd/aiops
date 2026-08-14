@@ -17,17 +17,23 @@ import (
 type Agent struct {
 	store    *store.Store
 	llm      ctxpkg.Completer
+	lightLLM ctxpkg.Completer // 轻量意图模型（重写+拆分+分类）
+	maxSplit int              // 多意图拆分上限
 	eng      *pipeline.Engine
 	ctxStore *ctxpkg.Store
 	topK     int
 }
 
 func New(s *store.Store, lc ctxpkg.Completer, eng *pipeline.Engine) *Agent {
-	return NewWithContext(s, lc, eng, nil, 3)
+	return NewWithLight(s, lc, lc, eng, nil, 3, 3)
 }
 
 func NewWithContext(s *store.Store, lc ctxpkg.Completer, eng *pipeline.Engine, cs *ctxpkg.Store, topK int) *Agent {
-	return &Agent{store: s, llm: lc, eng: eng, ctxStore: cs, topK: topK}
+	return NewWithLight(s, lc, lc, eng, cs, topK, 3)
+}
+
+func NewWithLight(s *store.Store, lc, light ctxpkg.Completer, eng *pipeline.Engine, cs *ctxpkg.Store, topK, maxSplit int) *Agent {
+	return &Agent{store: s, llm: lc, lightLLM: light, maxSplit: maxSplit, eng: eng, ctxStore: cs, topK: topK}
 }
 
 func (a *Agent) buildAssembled(device, metric string) *ctxpkg.Assembled {
@@ -63,60 +69,132 @@ func (a *Agent) Handle(ctx context.Context, userText string) (model.Message, err
 	}
 	_ = a.store.SaveMessage(userMsg)
 
-	alertID := extractAlertID(userText, a.store)
-	reply := "你好，我是AIOps运维助手。你可以问我：有哪些告警 / 查一下<告警ID>什么原因 / <告警ID>怎么处理。"
-
-	switch ParseIntent(userText) {
-	case ListAlerts:
-		alerts, _ := a.store.ListAlerts()
-		if len(alerts) == 0 {
-			reply = "当前没有告警。"
-		} else {
-			var b strings.Builder
-			b.WriteString("当前告警列表：\n")
-			for _, al := range alerts {
-				fmt.Fprintf(&b, "- %s [%s] %s %s\n", al.ID, al.Severity, al.Device, al.Message)
-			}
-			reply = b.String()
-		}
-	case InspectAlert, AskRootCause, AskRecommendation:
-		if alertID == "" {
-			reply = "请指明告警ID，例如：alarm-123 什么原因？"
-		} else if a.eng != nil {
-			alert, err := a.store.GetAlert(alertID)
-			if err != nil {
-				reply = fmt.Sprintf("未找到告警 %s。", alertID)
-			} else {
-				if _, runErr := a.store.GetRun("run-" + alertID); runErr != nil {
-					_ = a.eng.Run(ctx, alert, nil)
-				}
-				time.Sleep(50 * time.Millisecond)
-				if !ctxpkg.IsNilCompleter(a.llm) {
-					reply = a.answerWithLLM(ctx, alertID, ParseIntent(userText), userText)
-				} else {
-					reply = a.answerFor(alertID, ParseIntent(userText))
-				}
-			}
-		} else {
-			if !ctxpkg.IsNilCompleter(a.llm) {
-				reply = a.answerWithLLM(ctx, alertID, ParseIntent(userText), userText)
-			} else {
-				reply = a.answerFor(alertID, ParseIntent(userText))
-			}
-		}
-	case AskStatus:
-		reply = "告警状态可在左侧列表查看，点击告警查看排查时间线。"
-	}
+	reply := a.answer(ctx, userText)
 
 	assistantMsg := model.Message{
 		ID: model.NewID("msg"), Role: model.RoleAssistant,
 		Content: reply, CreatedAt: time.Now(),
 	}
-	if alertID != "" {
+	if alertID := extractAlertID(userText, a.store); alertID != "" {
 		assistantMsg.AlertID = alertID
 	}
 	_ = a.store.SaveMessage(assistantMsg)
 	return assistantMsg, nil
+}
+
+// answer 多意图优先：有轻量 LLM 时重写拆分后逐子问题聚合；否则回退单意图规则路径。
+func (a *Agent) answer(ctx context.Context, userText string) string {
+	if a.lightLLM == nil || ctxpkg.IsNilCompleter(a.lightLLM) {
+		return a.answerSingle(ctx, userText)
+	}
+	_, subs, err := RewriteAndSplit(ctx, userText, a.lightLLM)
+	if err != nil || len(subs) == 0 {
+		return a.answerSingle(ctx, userText)
+	}
+	if len(subs) == 1 {
+		return a.answerOne(ctx, subs[0])
+	}
+	limit := a.maxSplit
+	if limit <= 0 {
+		limit = 3
+	}
+	var b strings.Builder
+	for i, sub := range subs {
+		if i >= limit {
+			fmt.Fprintf(&b, "[%d] %s → skipped（超出上限 %d）\n", i+1, sub, limit)
+			continue
+		}
+		content, status := a.answerOneStatus(ctx, sub)
+		fmt.Fprintf(&b, "[%d] %s → %s\n%s\n", i+1, sub, status, content)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// answerSingle 无轻量 LLM 时的单意图规则路径（原 Handle 逻辑）。
+func (a *Agent) answerSingle(ctx context.Context, userText string) string {
+	alertID := extractAlertID(userText, a.store)
+	switch ParseIntent(userText) {
+	case ListAlerts:
+		return a.listAlertsReply()
+	case InspectAlert, AskRootCause, AskRecommendation:
+		if alertID == "" {
+			return "请指明告警ID，例如：alarm-123 什么原因？"
+		}
+		alert, err := a.store.GetAlert(alertID)
+		if err != nil {
+			return fmt.Sprintf("未找到告警 %s。", alertID)
+		}
+		if a.eng != nil {
+			if _, runErr := a.store.GetRun("run-" + alertID); runErr != nil {
+				_ = a.eng.Run(ctx, alert, nil)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !ctxpkg.IsNilCompleter(a.llm) {
+			return a.answerWithLLM(ctx, alertID, ParseIntent(userText), userText)
+		}
+		return a.answerFor(alertID, ParseIntent(userText))
+	case AskStatus:
+		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
+	default:
+		return a.guideText()
+	}
+}
+
+// answerOne 单子问题的回复（不带头部状态行）。
+func (a *Agent) answerOne(ctx context.Context, sub string) string {
+	content, _ := a.answerOneStatus(ctx, sub)
+	return content
+}
+
+// answerOneStatus 单个子问题：规则意图优先，Unknown 用轻量 LLM 分类；返回内容与状态。
+func (a *Agent) answerOneStatus(ctx context.Context, sub string) (string, string) {
+	intent := ParseIntentWithLight(ctx, sub, a.lightLLM)
+	switch intent {
+	case ListAlerts:
+		return a.listAlertsReply(), "success"
+	case AskStatus:
+		return "告警状态可在左侧列表查看，点击告警查看排查时间线。", "success"
+	case InspectAlert, AskRootCause, AskRecommendation:
+		alertID := extractAlertID(sub, a.store)
+		if alertID == "" {
+			return "请指明告警ID，例如：alarm-123 什么原因？", "no_alert"
+		}
+		alert, err := a.store.GetAlert(alertID)
+		if err != nil {
+			return fmt.Sprintf("未找到告警 %s。", alertID), "no_alert"
+		}
+		if a.eng != nil {
+			if _, runErr := a.store.GetRun("run-" + alertID); runErr != nil {
+				_ = a.eng.Run(ctx, alert, nil)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !ctxpkg.IsNilCompleter(a.llm) {
+			return a.answerWithLLM(ctx, alertID, intent, sub), "success"
+		}
+		return a.answerFor(alertID, intent), "success"
+	default:
+		return a.guideText(), "unknown"
+	}
+}
+
+func (a *Agent) listAlertsReply() string {
+	alerts, _ := a.store.ListAlerts()
+	if len(alerts) == 0 {
+		return "当前没有告警。"
+	}
+	var b strings.Builder
+	b.WriteString("当前告警列表：\n")
+	for _, al := range alerts {
+		fmt.Fprintf(&b, "- %s [%s] %s %s\n", al.ID, al.Severity, al.Device, al.Message)
+	}
+	return b.String()
+}
+
+// guideText Unknown 意图的增强引导语。
+func (a *Agent) guideText() string {
+	return "你好，我是AIOps运维助手。我可以帮你：\n- 查看告警列表：如\"有哪些告警\"\n- 排查单个告警：如\"查一下 alarm-123 什么原因\"\n- 获取处置建议：如\"alarm-123 怎么处理\"\n- 查看排查进度：如\"排查进度如何\"\n如果输入和以上无关，请重新描述你的问题。"
 }
 
 func extractAlertID(text string, s *store.Store) string {

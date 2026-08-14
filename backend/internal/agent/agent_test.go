@@ -259,3 +259,50 @@ func TestIntentName(t *testing.T) {
 		t.Fatalf("未知意图应为 Unknown")
 	}
 }
+
+func TestHandleMultiIntentAggregation(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	now := time.Now()
+	_ = s.SaveAlert(model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now})
+	_ = s.SaveRun(model.PipelineRun{ID: "run-alarm-1", AlertID: "alarm-1", Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-alarm-1", StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	light := &scriptedLLM{raw: `{"rewritten":"有哪些告警？alarm-1什么原因？","sub_questions":["有哪些告警","alarm-1什么原因"]}`}
+	ag := NewWithLight(s, nil, light, nil, nil, 3, 3)
+	msg, err := ag.Handle(context.Background(), "有哪些告警？alarm-1什么原因？")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "[1]") || !strings.Contains(msg.Content, "success") {
+		t.Fatalf("聚合回复缺分项状态: %q", msg.Content)
+	}
+	if !strings.Contains(msg.Content, "当前告警列表") {
+		t.Fatalf("聚合回复缺告警列表: %q", msg.Content)
+	}
+	if !strings.Contains(msg.Content, "磁盘空间不足") {
+		t.Fatalf("聚合回复缺根因: %q", msg.Content)
+	}
+}
+
+func TestHandleUnknownGuidance(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	ag := New(s, nil, nil)
+	msg, _ := ag.Handle(context.Background(), "今天天气如何？")
+	if !strings.Contains(msg.Content, "AIOps运维助手") {
+		t.Fatalf("Unknown 应输出引导语, got %q", msg.Content)
+	}
+}
+
+func TestNewBackwardCompat(t *testing.T) {
+	ag := New(nil, nil, nil)
+	if ag.maxSplit != 3 || ag.lightLLM != nil {
+		t.Fatalf("New 应设 maxSplit=3 light=nil, got %+v", ag)
+	}
+	ag2 := NewWithContext(nil, nil, nil, nil, 3)
+	if ag2.maxSplit != 3 {
+		t.Fatalf("NewWithContext 应设 maxSplit=3, got %d", ag2.maxSplit)
+	}
+}
