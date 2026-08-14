@@ -152,7 +152,7 @@ func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task,
 	if cfg.LLM && !isNilClient(lc) {
 		light = lc
 	}
-	res.Intents = intentNames(agent.ParseIntentSet(ctx, t.ChatInput, light, 3))
+	res.Intents = intentNames(agent.ParseIntentSet(ctx, nil, t.ChatInput, light, 3))
 	if len(res.Intents) > 0 {
 		res.Intent = res.Intents[0]
 	}
