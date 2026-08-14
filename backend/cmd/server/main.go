@@ -51,7 +51,11 @@ func main() {
 	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
 	eng.Publish = h.Publish
 
-	ag := agent.NewWithLight(st, lc, light, eng, cs, cfg.TopK, cfg.MaxSplit)
+	svc := intent.NewService(st, intent.NewMemCache())
+	ag := agent.NewWithLeaves(st, lc, light, eng, cs, cfg.TopK, cfg.MaxSplit, func() []model.LeafSpec {
+		leaves, _ := svc.ActiveLeaves(context.Background())
+		return leaves
+	})
 	sim := simulator.New(st, func(a model.Alert) {
 		h.Publish("alert", a)
 		go func() {
@@ -60,7 +64,7 @@ func main() {
 	})
 	sim.Start(context.Background(), cfg.SimInterval)
 
-	handler := api.NewServer(cfg, st, ag, eng, h, sim, intent.NewService(st, intent.NewMemCache()))
+	handler := api.NewServer(cfg, st, ag, eng, h, sim, svc)
 	log.Printf("aiops backend listening on %s", cfg.Port)
 	if err := http.ListenAndServe(cfg.Port, handler); err != nil {
 		log.Fatal(err)
