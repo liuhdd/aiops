@@ -52,3 +52,36 @@ export interface WSMessage {
   type: WSEventType
   data: unknown
 }
+
+export type IntentKind = 'GROUP' | 'SYSTEM' | 'KB' | 'MCP'
+
+export interface IntentNode {
+  id: string
+  parent_id: string
+  name: string
+  kind: IntentKind
+  code: string
+  bind_target: string
+  rule_keywords: string[]
+  description: string
+  enabled: boolean
+  deleted: boolean
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface IntentTreeNode extends IntentNode {
+  children: IntentTreeNode[]
+}
+
+export interface IntentUpsert {
+  parent_id: string
+  name: string
+  kind: IntentKind
+  code: string
+  bind_target: string
+  rule_keywords: string[]
+  description: string
+  sort_order: number
+}
