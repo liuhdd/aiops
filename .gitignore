@@ -10,3 +10,5 @@ dist/
 backend/bin/
 
 .superpowers/
+
+ragent/
