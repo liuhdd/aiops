@@ -41,12 +41,12 @@ func NewWithLeaves(s *store.Store, lc, light ctxpkg.Completer, eng *pipeline.Eng
 	return &Agent{store: s, llm: lc, lightLLM: light, maxSplit: maxSplit, eng: eng, ctxStore: cs, topK: topK, leaves: leaves}
 }
 
-func (a *Agent) buildAssembled(device, metric string) *ctxpkg.Assembled {
+func (a *Agent) buildAssembled(device, metric string, intents []string) *ctxpkg.Assembled {
 	if a.ctxStore == nil || device == "" || metric == "" {
 		return nil
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
-	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat"}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents}, false, nil)
 	if err != nil {
 		return nil
 	}
@@ -54,7 +54,7 @@ func (a *Agent) buildAssembled(device, metric string) *ctxpkg.Assembled {
 }
 
 func (a *Agent) memorySuffix(device, metric string) string {
-	as := a.buildAssembled(device, metric)
+	as := a.buildAssembled(device, metric, nil)
 	if as == nil || !strings.Contains(as.User, "【设备历史经验】") {
 		return ""
 	}
@@ -161,6 +161,11 @@ func (a *Agent) answerSingle(ctx context.Context, userText string) string {
 	case AskStatus:
 		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
 	default:
+		if !isSystemIntent(intent) {
+			if content, ok := a.kbReply(ctx, intent); ok {
+				return content
+			}
+		}
 		return a.placeholderReply(intent)
 	}
 }
@@ -199,6 +204,12 @@ func (a *Agent) answerOneStatus(ctx context.Context, sub string) (string, string
 		}
 		return a.answerFor(alertID, intent), "success"
 	default:
+		if !isSystemIntent(intent) {
+			if content, ok := a.kbReply(ctx, intent); ok {
+				return content, "success"
+			}
+			return a.placeholderReply(intent), statusFor(intent)
+		}
 		return a.placeholderReply(intent), statusFor(intent)
 	}
 }
@@ -209,6 +220,37 @@ func statusFor(code Intent) string {
 		return "unknown"
 	}
 	return "success"
+}
+
+// isSystemIntent 内置 SYSTEM 意图（种子 6 个）。
+func isSystemIntent(code Intent) bool {
+	switch code {
+	case Unknown, ListAlerts, InspectAlert, AskRootCause, AskRecommendation, AskStatus:
+		return true
+	}
+	return false
+}
+
+// kbReply 按意图 code 检索知识库并返回命中文档行；无命中返回 ok=false。
+func (a *Agent) kbReply(ctx context.Context, code string) (string, bool) {
+	if a.ctxStore == nil {
+		return "", false
+	}
+	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
+	as, err := asm.Assemble(ctxpkg.Query{Stage: "chat", Intents: []string{code}}, false, nil)
+	if err != nil {
+		return "", false
+	}
+	var lines []string
+	for _, c := range as.Selected {
+		if c.Source == ctxpkg.SourceKnowledge {
+			lines = append(lines, "- "+c.Content)
+		}
+	}
+	if len(lines) == 0 {
+		return "", false
+	}
+	return "知识库相关文档：\n" + strings.Join(lines, "\n"), true
 }
 
 func (a *Agent) listAlertsReply() string {
@@ -310,7 +352,7 @@ func (a *Agent) answerWithLLM(ctx context.Context, alertID string, intent Intent
 		}
 	}
 	ctxStr := ""
-	if as := a.buildAssembled(alert.Device, alert.Metric); as != nil {
+	if as := a.buildAssembled(alert.Device, alert.Metric, []string{intent}); as != nil {
 		ctxStr = as.User
 	}
 	system := "你是算力中心硬件运维助手。结合给定上下文与已有排查结论，用中文简明回答用户的根因或处置问题。"

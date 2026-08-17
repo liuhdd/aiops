@@ -378,3 +378,41 @@ func TestNewBackwardCompat(t *testing.T) {
 		t.Fatalf("NewWithContext 应设 maxSplit=3, got %d", ag2.maxSplit)
 	}
 }
+
+func TestAgentKBIntentReturnsKnowledge(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	_ = s.WithKBTx(func(tx store.KBStore) error {
+		now := time.Now()
+		if err := tx.InsertKbDocument(model.KbDocument{
+			ID: "kbdoc-1", Title: "磁盘清理手册", Category: model.KBRunbook,
+			Metrics: []string{"disk_usage"}, Intents: []string{"DiskCleanup"},
+			Content: "清理日志与归档。", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		return tx.InsertKbChunk(model.KbChunk{ID: "c1", DocID: "kbdoc-1", Seq: 0,
+			Content: "清理日志与归档。", CreatedAt: now})
+	})
+	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, func() []model.LeafSpec {
+		return []model.LeafSpec{{Code: "DiskCleanup", Name: "DiskCleanup", Description: "磁盘清理", RuleKeywords: []string{"清理磁盘"}}}
+	})
+	msg, _ := ag.Handle(context.Background(), "怎么清理磁盘")
+	if !strings.Contains(msg.Content, "磁盘清理手册") {
+		t.Fatalf("KB 意图应返回知识, got %q", msg.Content)
+	}
+}
+
+func TestAgentKBIntentFallsBackToPlaceholder(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, func() []model.LeafSpec {
+		return []model.LeafSpec{{Code: "MCP1", Name: "MCP1", Description: "mcp", RuleKeywords: []string{"mcp命令"}}}
+	})
+	msg, _ := ag.Handle(context.Background(), "执行 mcp命令")
+	if !strings.Contains(msg.Content, "尚未实现") {
+		t.Fatalf("无命中知识应回退占位语, got %q", msg.Content)
+	}
+}
