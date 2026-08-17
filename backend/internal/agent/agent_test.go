@@ -238,6 +238,29 @@ func TestIntentName(t *testing.T) {
 	}
 }
 
+func TestRuleScore(t *testing.T) {
+	cases := []struct {
+		text string
+		want Intent
+		conf float64
+	}{
+		{"有哪些告警", ListAlerts, 0.6},
+		{"查一下alarm-123是什么原因", AskRootCause, 0.6},
+		{"你好", Unknown, 0},
+	}
+	for _, c := range cases {
+		sc := RuleScore(nil, c.text)
+		if sc.Intent != c.want || sc.Confidence != c.conf {
+			t.Fatalf("RuleScore(%q) = (%v,%v), want (%v,%v)", c.text, sc.Intent, sc.Confidence, c.want, c.conf)
+		}
+	}
+	leaves := []model.LeafSpec{{Code: "MyKB", Name: "MyKB", RuleKeywords: []string{"db-01"}}}
+	sc := RuleScore(leaves, "查一下db-01的问题")
+	if sc.Intent != "MyKB" || sc.Confidence != 0.9 {
+		t.Fatalf("实体命中应 0.9, got (%v,%v)", sc.Intent, sc.Confidence)
+	}
+}
+
 func TestRuleMatchFromLeaves(t *testing.T) {
 	leaves := []model.LeafSpec{
 		{Code: "AskRootCause", RuleKeywords: []string{"为什么"}},

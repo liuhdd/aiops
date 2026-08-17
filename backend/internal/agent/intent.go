@@ -8,6 +8,7 @@ import (
 
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/llm"
+	"aiops/internal/mockdata"
 	"aiops/internal/model"
 )
 
@@ -41,30 +42,80 @@ func inspectAlertMatch(low string) bool {
 	return verb && alarmRe.MatchString(low)
 }
 
-// RuleMatch 规则优先：按 leaves 顺序匹配；InspectAlert 用内置复合规则，其余用 rule_keywords 子串命中。
-// leaves 为空时回退 SeedLeaves。
-func RuleMatch(leaves []model.LeafSpec, text string) Intent {
+// ScoredIntent 带置信度的意图识别结果。
+type ScoredIntent struct {
+	Intent     Intent
+	Confidence float64 // 0~1
+}
+
+// entityWords 实体词表（设备名 + 已知指标名）。
+var entityWords = func() map[string]bool {
+	m := make(map[string]bool)
+	for _, d := range mockdata.Devices() {
+		m[strings.ToLower(d.Name)] = true
+	}
+	for _, k := range []string{"cpu_usage", "disk_usage", "gpu_util", "mem_usage", "net_in"} {
+		m[k] = true
+	}
+	return m
+}()
+
+// isEntityWord 判断关键词是否为实体名（设备/指标/alarm id）。
+func isEntityWord(kw string) bool {
+	if entityWords[strings.ToLower(kw)] {
+		return true
+	}
+	return alarmRe.MatchString(kw)
+}
+
+// RuleScore 规则打分：按 leaves 顺序匹配，命中实体关键词 0.9、主题词/复合规则 0.6，无命中 Unknown(0)。
+// 选择语义与 RuleMatch 一致（同分时先出现者胜），仅附加置信度。
+func RuleScore(leaves []model.LeafSpec, text string) ScoredIntent {
 	if len(leaves) == 0 {
 		leaves = SeedLeaves
 	}
 	low := strings.ToLower(text)
+	best := ScoredIntent{Intent: Unknown, Confidence: 0}
 	for _, l := range leaves {
 		if l.Code == Unknown {
 			continue
 		}
 		if l.Code == InspectAlert {
-			if inspectAlertMatch(low) {
-				return InspectAlert
+			if inspectAlertMatch(low) && best.Confidence < 0.6 {
+				best = ScoredIntent{Intent: InspectAlert, Confidence: 0.6}
 			}
 			continue
 		}
 		for _, kw := range l.RuleKeywords {
-			if kw != "" && strings.Contains(low, strings.ToLower(kw)) {
-				return l.Code
+			if kw == "" || !strings.Contains(low, strings.ToLower(kw)) {
+				continue
+			}
+			conf := 0.6
+			if isEntityWord(kw) {
+				conf = 0.9
+			}
+			if conf > best.Confidence {
+				best = ScoredIntent{Intent: l.Code, Confidence: conf}
+			}
+		}
+		for _, phrase := range []string{l.Description, l.Path} {
+			if phrase == "" {
+				continue
+			}
+			if strings.Contains(low, strings.ToLower(phrase)) && best.Confidence < 0.6 {
+				best = ScoredIntent{Intent: l.Code, Confidence: 0.6}
 			}
 		}
 	}
-	return Unknown
+	if best.Confidence < 0.4 {
+		return ScoredIntent{Intent: Unknown, Confidence: 0}
+	}
+	return best
+}
+
+// RuleMatch 规则优先：等价 RuleScore(...).Intent（向后兼容）。
+func RuleMatch(leaves []model.LeafSpec, text string) Intent {
+	return RuleScore(leaves, text).Intent
 }
 
 // ParseIntent 单意图规则识别（向后兼容，等价 RuleMatch(nil, text)）。
