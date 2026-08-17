@@ -34,6 +34,7 @@ type IntentNode struct {
 	BindTarget   string     `json:"bind_target"`
 	RuleKeywords []string   `json:"rule_keywords"`
 	Description  string     `json:"description"`
+	Examples     []string   `json:"examples"`
 	Enabled      bool       `json:"enabled"`
 	Deleted      bool       `json:"deleted"`
 	SortOrder    int        `json:"sort_order"`
@@ -55,7 +56,9 @@ type LeafSpec struct {
 	Code         string   `json:"code"`
 	Name         string   `json:"name"`
 	Description  string   `json:"description"`
+	Examples     []string `json:"examples"`
 	RuleKeywords []string `json:"rule_keywords"`
+	Path         string   `json:"path"`
 }
 
 // 留痕动作常量
