@@ -2,9 +2,15 @@ import type {
   Alert,
   AlertDetail,
   ChatMessage,
+  IntentLeaf,
   IntentNode,
   IntentTreeNode,
   IntentUpsert,
+  KbDoc,
+  KbDocDetail,
+  KbDocSummary,
+  KbDocUpsert,
+  KbFilter,
 } from '../types'
 
 const base = '/api'
@@ -65,3 +71,27 @@ export const setIntentStatus = (ids: string[], enabled: boolean) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids, enabled }),
   })
+export const fetchIntentLeaves = () => req<IntentLeaf[]>('/intents/leaves')
+
+export const fetchKbDocs = (f: KbFilter = {}) => {
+  const qs = new URLSearchParams()
+  if (f.category) qs.set('category', f.category)
+  if (f.device_type) qs.set('device_type', f.device_type)
+  if (f.vendor) qs.set('vendor', f.vendor)
+  if (f.model) qs.set('model', f.model)
+  if (f.intent) qs.set('intent', f.intent)
+  if (f.q) qs.set('q', f.q)
+  const s = qs.toString()
+  return req<KbDocSummary[]>(`/kb/docs${s ? `?${s}` : ''}`)
+}
+export const fetchKbDoc = (id: string) => req<KbDocDetail>(`/kb/docs/${id}`)
+export const uploadKbDoc = (form: FormData) =>
+  req<KbDoc>('/kb/upload', { method: 'POST', body: form })
+export const updateKbDoc = (id: string, body: KbDocUpsert) =>
+  req<KbDoc>(`/kb/docs/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+export const deleteKbDoc = (id: string) =>
+  req<{ status: string }>(`/kb/docs/${id}`, { method: 'DELETE' })

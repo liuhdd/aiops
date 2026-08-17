@@ -3,6 +3,7 @@ import AlertList from './components/AlertList'
 import PipelineTimeline from './components/PipelineTimeline'
 import ChatPanel from './components/ChatPanel'
 import IntentManager from './components/IntentManager'
+import KnowledgeBase from './components/KnowledgeBase'
 import { fetchAlerts, fetchAlert, fetchMessages, postChat } from './api/client'
 import { subscribeWS } from './api/ws'
 import type { Alert, AlertDetail, ChatMessage } from './types'
@@ -12,7 +13,7 @@ export default function App() {
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<AlertDetail | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [view, setView] = useState<'ops' | 'intents'>('ops')
+  const [view, setView] = useState<'ops' | 'intents' | 'kb'>('ops')
 
   useEffect(() => {
     fetchAlerts().then(setAlerts).catch(() => {})
@@ -48,26 +49,10 @@ export default function App() {
     return reply
   }
 
-  if (view === 'intents') {
-    return (
-      <div style={{ fontFamily: 'system-ui, sans-serif' }}>
-        <h1 style={{ padding: '8px 16px' }}>AIOps 硬件智能运维</h1>
-        <nav style={{ padding: '0 16px' }}>
-          <button onClick={() => setView('ops')}>运维面板</button>
-          <button onClick={() => setView('intents')} style={{ fontWeight: 700 }}>意图管理</button>
-        </nav>
-        <IntentManager />
-      </div>
-    )
-  }
-
-  return (
-    <div style={{ fontFamily: 'system-ui, sans-serif' }}>
-      <h1 style={{ padding: '8px 16px' }}>AIOps 硬件智能运维</h1>
-      <nav style={{ padding: '0 16px' }}>
-        <button onClick={() => setView('ops')} style={{ fontWeight: 700 }}>运维面板</button>
-        <button onClick={() => setView('intents')}>意图管理</button>
-      </nav>
+  const main =
+    view === 'intents' ? <IntentManager />
+    : view === 'kb' ? <KnowledgeBase />
+    : (
       <div style={{ display: 'flex', gap: 16, padding: 16 }}>
         <div style={{ flex: 2 }}>
           <AlertList alerts={alerts} onSelect={setSelected} />
@@ -81,6 +66,17 @@ export default function App() {
           <ChatPanel messages={messages} onSend={handleSend} />
         </div>
       </div>
+    )
+
+  return (
+    <div style={{ fontFamily: 'system-ui, sans-serif' }}>
+      <h1 style={{ padding: '8px 16px' }}>AIOps 硬件智能运维</h1>
+      <nav style={{ padding: '0 16px' }}>
+        <button onClick={() => setView('ops')} style={view === 'ops' ? { fontWeight: 700 } : undefined}>运维面板</button>
+        <button onClick={() => setView('intents')} style={view === 'intents' ? { fontWeight: 700 } : undefined}>意图管理</button>
+        <button onClick={() => setView('kb')} style={view === 'kb' ? { fontWeight: 700 } : undefined}>知识库</button>
+      </nav>
+      {main}
     </div>
   )
 }

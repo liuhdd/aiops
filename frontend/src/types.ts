@@ -87,3 +87,66 @@ export interface IntentUpsert {
   examples: string[]
   sort_order: number
 }
+
+export interface IntentLeaf {
+  code: string
+  name: string
+  description: string
+  rule_keywords: string[]
+  path: string
+}
+
+export type KbCategory = 'case' | 'manual' | 'runbook' | 'other'
+
+export interface KbDoc {
+  id: string
+  title: string
+  category: KbCategory
+  device_types: string[]
+  vendor: string[]
+  model: string[]
+  metrics: string[]
+  keywords: string[]
+  intents: string[]
+  source_file: string
+  content: string
+  created_at: string
+  updated_at: string
+}
+
+export interface KbChunk {
+  id: string
+  doc_id: string
+  seq: number
+  heading: string
+  content: string
+  created_at: string
+}
+
+export interface KbDocSummary extends KbDoc {
+  chunk_count: number
+}
+
+export interface KbDocDetail extends KbDoc {
+  chunks: KbChunk[]
+}
+
+export interface KbDocUpsert {
+  title: string
+  category: KbCategory
+  device_types: string[]
+  vendor: string[]
+  model: string[]
+  metrics: string[]
+  keywords: string[]
+  intents: string[]
+}
+
+export interface KbFilter {
+  category?: string
+  device_type?: string
+  vendor?: string
+  model?: string
+  intent?: string
+  q?: string
+}
