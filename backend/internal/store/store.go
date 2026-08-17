@@ -121,6 +121,37 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_intent_audit_node ON intent_audit(node_id, created_at)`); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS kb_documents (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL,
+		category TEXT NOT NULL,
+		device_types TEXT NOT NULL DEFAULT '[]',
+		vendor TEXT NOT NULL DEFAULT '[]',
+		model TEXT NOT NULL DEFAULT '[]',
+		metrics TEXT NOT NULL DEFAULT '[]',
+		keywords TEXT NOT NULL DEFAULT '[]',
+		intents TEXT NOT NULL DEFAULT '[]',
+		source_file TEXT NOT NULL DEFAULT '',
+		content TEXT NOT NULL,
+		created_at DATETIME,
+		updated_at DATETIME)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kb_docs_category ON kb_documents(category)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS kb_chunks (
+		id TEXT PRIMARY KEY,
+		doc_id TEXT NOT NULL,
+		seq INTEGER NOT NULL,
+		heading TEXT NOT NULL DEFAULT '',
+		content TEXT NOT NULL,
+		created_at DATETIME)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id, seq)`); err != nil {
+		return err
+	}
 	if err := s.seedIntents(); err != nil {
 		return err
 	}
