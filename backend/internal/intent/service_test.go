@@ -162,6 +162,47 @@ func TestCacheInvalidatedOnWrite(t *testing.T) {
 	}
 }
 
+func TestCreatePersistsExamples(t *testing.T) {
+	svc := newTestService(t)
+	n, err := svc.Create(context.Background(), "t", CreateReq{ParentID: "grp-builtin", Name: "带示例", Kind: model.KindKB, Code: "ex1", Examples: []string{"a", "b"}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(n.Examples) != 2 || n.Examples[0] != "a" {
+		t.Fatalf("examples = %+v", n.Examples)
+	}
+	leaves, _ := svc.ActiveLeaves(context.Background())
+	for _, l := range leaves {
+		if l.Code == "ex1" && (len(l.Examples) != 2 || l.Examples[1] != "b") {
+			t.Fatalf("leaf examples = %+v", l.Examples)
+		}
+	}
+}
+
+func TestActiveLeavesPath(t *testing.T) {
+	svc := newTestService(t)
+	g, err := svc.Create(context.Background(), "t", CreateReq{Name: "告警排查", Kind: model.KindGroup})
+	if err != nil {
+		t.Fatalf("Create 分组: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), "t", CreateReq{ParentID: g.ID, Name: "查手册", Kind: model.KindKB, Code: "kbx"}); err != nil {
+		t.Fatalf("Create 叶子: %v", err)
+	}
+	leaves, _ := svc.ActiveLeaves(context.Background())
+	found := false
+	for _, l := range leaves {
+		if l.Code == "kbx" {
+			if l.Path != "告警排查" {
+				t.Fatalf("Path = %q, want 告警排查", l.Path)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("未找到 kbx 叶子")
+	}
+}
+
 type countCache struct{ puts, invalidates int }
 
 func (c *countCache) Get(context.Context) ([]model.IntentNode, bool) { return nil, false }
