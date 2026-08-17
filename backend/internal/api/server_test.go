@@ -197,7 +197,7 @@ func TestKBUpdateDoc(t *testing.T) {
 	if err := json.NewDecoder(ures.Body).Decode(&doc); err != nil {
 		t.Fatalf("decode doc: %v", err)
 	}
-	pbody := `{"title":"新标题","category":"manual","device_types":["switch"],"vendor":["H3C"],"model":["S5560"],"metrics":[],"keywords":[],"intents":[]}`
+	pbody := `{"title":"新标题","category":"manual","device_types":["switch"],"vendor":["H3C"],"model":["S5560"],"metrics":[],"keywords":["光模块"],"intents":["AskRootCause"]}`
 	preq, _ := http.NewRequest("PATCH", ts.URL+"/api/kb/docs/"+doc.ID, strings.NewReader(pbody))
 	preq.Header.Set("Content-Type", "application/json")
 	pres, err := http.DefaultClient.Do(preq)
@@ -214,6 +214,21 @@ func TestKBUpdateDoc(t *testing.T) {
 	}
 	if updated.Title != "新标题" {
 		t.Fatalf("title 应已更新为 新标题, got %q", updated.Title)
+	}
+	if len(updated.DeviceTypes) != 1 || updated.DeviceTypes[0] != "switch" {
+		t.Fatalf("device_types 应更新为 [switch], got %v", updated.DeviceTypes)
+	}
+	if len(updated.Vendor) != 1 || updated.Vendor[0] != "H3C" {
+		t.Fatalf("vendor 应更新为 [H3C], got %v", updated.Vendor)
+	}
+	if len(updated.Model) != 1 || updated.Model[0] != "S5560" {
+		t.Fatalf("model 应更新为 [S5560], got %v", updated.Model)
+	}
+	if len(updated.Keywords) != 1 || updated.Keywords[0] != "光模块" {
+		t.Fatalf("keywords 应更新为 [光模块], got %v", updated.Keywords)
+	}
+	if len(updated.Intents) != 1 || updated.Intents[0] != "AskRootCause" {
+		t.Fatalf("intents 应更新为 [AskRootCause], got %v", updated.Intents)
 	}
 }
 

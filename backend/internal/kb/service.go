@@ -33,14 +33,14 @@ type UploadReq struct {
 
 // UpdateReq 全量覆盖元数据（不动 content）。
 type UpdateReq struct {
-	Title       string
-	Category    model.KBCategory
-	DeviceTypes []string
-	Vendor      []string
-	Model       []string
-	Metrics     []string
-	Keywords    []string
-	Intents     []string
+	Title       string           `json:"title"`
+	Category    model.KBCategory `json:"category"`
+	DeviceTypes []string         `json:"device_types"`
+	Vendor      []string         `json:"vendor"`
+	Model       []string         `json:"model"`
+	Metrics     []string         `json:"metrics"`
+	Keywords    []string         `json:"keywords"`
+	Intents     []string         `json:"intents"`
 }
 
 // SeedDoc 种子文档（mockdata 导入视图）。
