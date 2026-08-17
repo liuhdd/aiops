@@ -108,6 +108,14 @@ func (r *kbRepo) DeleteKbDocument(id string) error {
 	return err
 }
 
+// likeEscape 转义 LIKE 通配符，使筛选词按字面匹配。
+func likeEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // ---- *Store 委托与事务 ----
 
 func (s *Store) ListKbDocuments(f KbFilter) ([]model.KbDocSummary, error) {
@@ -118,24 +126,24 @@ func (s *Store) ListKbDocuments(f KbFilter) ([]model.KbDocSummary, error) {
 		args = append(args, f.Category)
 	}
 	if f.DeviceType != "" {
-		conds = append(conds, `d.device_types LIKE '%'||?||'%'`)
-		args = append(args, `"`+f.DeviceType+`"`)
+		conds = append(conds, `d.device_types LIKE '%'||?||'%' ESCAPE '\'`)
+		args = append(args, `"`+likeEscape(f.DeviceType)+`"`)
 	}
 	if f.Vendor != "" {
-		conds = append(conds, `d.vendor LIKE '%'||?||'%'`)
-		args = append(args, `"`+f.Vendor+`"`)
+		conds = append(conds, `d.vendor LIKE '%'||?||'%' ESCAPE '\'`)
+		args = append(args, `"`+likeEscape(f.Vendor)+`"`)
 	}
 	if f.Model != "" {
-		conds = append(conds, `d.model LIKE '%'||?||'%'`)
-		args = append(args, `"`+f.Model+`"`)
+		conds = append(conds, `d.model LIKE '%'||?||'%' ESCAPE '\'`)
+		args = append(args, `"`+likeEscape(f.Model)+`"`)
 	}
 	if f.Intent != "" {
-		conds = append(conds, `d.intents LIKE '%'||?||'%'`)
-		args = append(args, `"`+f.Intent+`"`)
+		conds = append(conds, `d.intents LIKE '%'||?||'%' ESCAPE '\'`)
+		args = append(args, `"`+likeEscape(f.Intent)+`"`)
 	}
 	if f.Q != "" {
-		conds = append(conds, `(d.title LIKE '%'||?||'%' OR d.content LIKE '%'||?||'%')`)
-		args = append(args, f.Q, f.Q)
+		conds = append(conds, `(d.title LIKE '%'||?||'%' ESCAPE '\' OR d.content LIKE '%'||?||'%' ESCAPE '\')`)
+		args = append(args, likeEscape(f.Q), likeEscape(f.Q))
 	}
 	where := ""
 	if len(conds) > 0 {
@@ -149,7 +157,7 @@ func (s *Store) ListKbDocuments(f KbFilter) ([]model.KbDocSummary, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.KbDocSummary
+	out := make([]model.KbDocSummary, 0)
 	for rows.Next() {
 		// 注意：rows.Scan 每行只能调用一次，chunk_count 须与文档列一并扫描。
 		var s model.KbDocSummary
@@ -185,7 +193,7 @@ func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.KbKnowledgeChunk
+	out := make([]model.KbKnowledgeChunk, 0)
 	for rows.Next() {
 		var k model.KbKnowledgeChunk
 		var dt, vd, md, mtr, kw, in string

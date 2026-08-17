@@ -104,6 +104,9 @@ func TestKBListEmptyAndUpload(t *testing.T) {
 	if len(list) != 0 {
 		t.Fatalf("空库应空列表, got %d", len(list))
 	}
+	if list == nil {
+		t.Fatal("空库应返回 [] 而非 null")
+	}
 
 	body := &bytes.Buffer{}
 	mw := multipart.NewWriter(body)
@@ -131,8 +134,14 @@ func TestKBListEmptyAndUpload(t *testing.T) {
 	if doc.Category != model.KBManual || len(doc.DeviceTypes) == 0 || len(doc.Intents) == 0 {
 		t.Fatalf("doc = %+v", doc)
 	}
-	res2, _ := http.Get(ts.URL + "/api/kb/docs?vendor=H3C")
+	res2, err := http.Get(ts.URL + "/api/kb/docs?vendor=H3C")
+	if err != nil {
+		t.Fatalf("filtered list: %v", err)
+	}
 	defer res2.Body.Close()
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("filtered list status = %d", res2.StatusCode)
+	}
 	var list2 []model.KbDocSummary
 	if err := json.NewDecoder(res2.Body).Decode(&list2); err != nil {
 		t.Fatalf("decode list2: %v", err)
@@ -140,8 +149,14 @@ func TestKBListEmptyAndUpload(t *testing.T) {
 	if len(list2) != 1 || list2[0].ChunkCount == 0 {
 		t.Fatalf("filtered list = %+v", list2)
 	}
-	res3, _ := http.Get(ts.URL + "/api/kb/docs/" + doc.ID)
+	res3, err := http.Get(ts.URL + "/api/kb/docs/" + doc.ID)
+	if err != nil {
+		t.Fatalf("detail: %v", err)
+	}
 	defer res3.Body.Close()
+	if res3.StatusCode != http.StatusOK {
+		t.Fatalf("detail status = %d", res3.StatusCode)
+	}
 	var detail kb.DocDetail
 	if err := json.NewDecoder(res3.Body).Decode(&detail); err != nil {
 		t.Fatalf("decode detail: %v", err)
@@ -150,10 +165,67 @@ func TestKBListEmptyAndUpload(t *testing.T) {
 		t.Fatalf("detail chunks empty")
 	}
 	dreq, _ := http.NewRequest("DELETE", ts.URL+"/api/kb/docs/"+doc.ID, nil)
-	dres, _ := http.DefaultClient.Do(dreq)
+	dres, err := http.DefaultClient.Do(dreq)
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
 	defer dres.Body.Close()
 	if dres.StatusCode != http.StatusOK {
 		t.Fatalf("delete status = %d", dres.StatusCode)
+	}
+}
+
+func TestKBUpdateDoc(t *testing.T) {
+	ts := newKBServer(t)
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	fw, _ := mw.CreateFormFile("file", "手册.md")
+	_, _ = fw.Write([]byte("# 光模块\n检查光模块告警，涉及 switch 设备。"))
+	_ = mw.WriteField("category", "manual")
+	_ = mw.Close()
+	req, _ := http.NewRequest("POST", ts.URL+"/api/kb/upload", body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	ures, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	defer ures.Body.Close()
+	if ures.StatusCode != http.StatusOK {
+		t.Fatalf("upload status = %d body=%s", ures.StatusCode, readBody(ures))
+	}
+	var doc model.KbDocument
+	if err := json.NewDecoder(ures.Body).Decode(&doc); err != nil {
+		t.Fatalf("decode doc: %v", err)
+	}
+	pbody := `{"title":"新标题","category":"manual","device_types":["switch"],"vendor":["H3C"],"model":["S5560"],"metrics":[],"keywords":[],"intents":[]}`
+	preq, _ := http.NewRequest("PATCH", ts.URL+"/api/kb/docs/"+doc.ID, strings.NewReader(pbody))
+	preq.Header.Set("Content-Type", "application/json")
+	pres, err := http.DefaultClient.Do(preq)
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	defer pres.Body.Close()
+	if pres.StatusCode != http.StatusOK {
+		t.Fatalf("patch status = %d body=%s", pres.StatusCode, readBody(pres))
+	}
+	var updated model.KbDocument
+	if err := json.NewDecoder(pres.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated: %v", err)
+	}
+	if updated.Title != "新标题" {
+		t.Fatalf("title 应已更新为 新标题, got %q", updated.Title)
+	}
+}
+
+func TestKBGetNotFound(t *testing.T) {
+	ts := newKBServer(t)
+	res, err := http.Get(ts.URL + "/api/kb/docs/nonexistent")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("不存在文档应 404, got %d", res.StatusCode)
 	}
 }
 
@@ -167,7 +239,10 @@ func TestKBUploadBadFile(t *testing.T) {
 	_ = mw.Close()
 	req, _ := http.NewRequest("POST", ts.URL+"/api/kb/upload", body)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	res, _ := http.DefaultClient.Do(req)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("upload bad file: %v", err)
+	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusBadRequest {
 		t.Fatalf("非法类型应 400, got %d", res.StatusCode)

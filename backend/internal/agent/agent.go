@@ -243,9 +243,14 @@ func (a *Agent) kbReply(ctx context.Context, code string) (string, bool) {
 	}
 	var lines []string
 	for _, c := range as.Selected {
-		if c.Source == ctxpkg.SourceKnowledge {
-			lines = append(lines, "- "+c.Content)
+		if c.Source != ctxpkg.SourceKnowledge {
+			continue
 		}
+		// 仅保留 intents 元数据与意图码精确相交的块，避免无关文档混入。
+		if !ctxpkg.MatchesIntent(c.Metadata["intents"], code) {
+			continue
+		}
+		lines = append(lines, "- "+c.Content)
 	}
 	if len(lines) == 0 {
 		return "", false

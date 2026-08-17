@@ -337,7 +337,7 @@ func kbStatus(err error) int {
 	case errors.Is(err, kb.ErrBadFile), errors.Is(err, kb.ErrEmptyContent), errors.Is(err, kb.ErrBadCategory):
 		return http.StatusBadRequest
 	default:
-		return http.StatusBadRequest
+		return http.StatusInternalServerError
 	}
 }
 

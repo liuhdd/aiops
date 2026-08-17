@@ -1,6 +1,7 @@
 package context
 
 import (
+	"math"
 	"sort"
 	"testing"
 	"time"
@@ -76,6 +77,28 @@ func TestSelectFiltersBelowThreshold(t *testing.T) {
 	got := sel.Select([]Chunk{weak}, Query{Metric: "disk_usage"}, 3, 0.9)
 	if len(got) != 0 {
 		t.Fatalf("expected filtered out, got %d", len(got))
+	}
+}
+
+func TestScoreEmptyQueryFieldsDoNotAutoMatchTags(t *testing.T) {
+	sel := Selector{}
+	now := time.Now()
+	// 无 Device/Metric 的查询不应因空串 Contains 而给所有块打满标签分。
+	matched := chunk(SourceKnowledge, "正文内容", map[string]string{
+		"metrics": "disk_usage", "device_types": "db-01",
+	})
+	unmatched := chunk(SourceKnowledge, "正文内容", map[string]string{
+		"metrics": "gpu_util", "device_types": "gpu-01",
+	})
+	a := sel.Score(matched, Query{}, now)
+	b := sel.Score(unmatched, Query{}, now)
+	if a != b {
+		t.Fatalf("空 Device/Metric 不应自动匹配标签: matched=%f unmatched=%f", a, b)
+	}
+	// 标签不应有任何贡献：期望分 = 关键词权重（无词时满）+ 默认新近度权重*0.5。
+	want := kwWeight + recencyWeight*0.5
+	if math.Abs(a-want) > 1e-9 {
+		t.Fatalf("空查询不应有标签加分: got=%f want=%f", a, want)
 	}
 }
 

@@ -65,6 +65,10 @@ func Chunk(content string) []ChunkResult {
 		cur.Content += line
 	}
 	flush()
+	// 纯标题文档：无正文分组时保证至少产 1 块（标题行作为内容）。
+	if len(groups) == 0 && strings.TrimSpace(content) != "" {
+		groups = append(groups, ChunkResult{Content: content})
+	}
 	var out []ChunkResult
 	for _, g := range groups {
 		if len([]rune(g.Content)) <= DefaultChunkSize {

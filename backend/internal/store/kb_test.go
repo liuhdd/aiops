@@ -76,6 +76,27 @@ func TestKbListFilters(t *testing.T) {
 	}
 }
 
+func TestKbListFilterLiteralWildcards(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	_ = s.WithKBTx(func(tx KBStore) error {
+		_ = tx.InsertKbDocument(model.KbDocument{ID: "d1", Title: "100%故障排查", Category: model.KBManual,
+			Vendor: []string{"H3C"}, Content: "含百分号内容", CreatedAt: now, UpdatedAt: now})
+		_ = tx.InsertKbDocument(mkDoc("d2", "100kw普通文档", model.KBManual))
+		return nil
+	})
+	// q 含 % 应字面匹配：未转义时 '%100%%' 会把 % 当通配符，命中 d1/d2 两个。
+	list, err := s.ListKbDocuments(KbFilter{Q: "100%"})
+	if err != nil || len(list) != 1 || list[0].ID != "d1" {
+		t.Fatalf("Q 含 %% 应字面匹配: %v %+v", err, list)
+	}
+	// 下划线同理：S5_60 不匹配 S5560。
+	list2, err := s.ListKbDocuments(KbFilter{Model: "S5_60"})
+	if err != nil || len(list2) != 0 {
+		t.Fatalf("Model 含 _ 应字面匹配: %v %+v", err, list2)
+	}
+}
+
 func TestKbDeleteCascadesChunks(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now()

@@ -43,8 +43,8 @@ func (Selector) Score(chunk Chunk, q Query, now time.Time) float64 {
 		kwScore = float64(matched) / float64(len(kws))
 	}
 	tagScore := 0.0
-	if strings.Contains(chunk.Metadata["metrics"], q.Metric) ||
-		strings.Contains(chunk.Metadata["device_types"], q.Device) {
+	if (q.Metric != "" && strings.Contains(chunk.Metadata["metrics"], q.Metric)) ||
+		(q.Device != "" && strings.Contains(chunk.Metadata["device_types"], q.Device)) {
 		tagScore = 1.0
 	}
 	recencyScore := 0.5
@@ -62,6 +62,11 @@ func (Selector) Score(chunk Chunk, q Query, now time.Time) float64 {
 		intentScore = 1.0
 	}
 	return kwWeight*kwScore + tagWeight*tagScore + intentWeight*intentScore + recencyWeight*recencyScore
+}
+
+// MatchesIntent 判断块文档 intents 元数据（逗号分隔）是否包含指定意图码（精确 token 匹配）。
+func MatchesIntent(meta, code string) bool {
+	return hitsIntent([]string{code}, meta)
 }
 
 // hitsIntent 查询意图与块文档 intents 元数据（逗号分隔）是否有交集。

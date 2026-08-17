@@ -59,3 +59,14 @@ func TestChunkEmpty(t *testing.T) {
 		t.Fatalf("空内容应返回 nil, got %+v", got)
 	}
 }
+
+func TestChunkHeadingOnlyProducesOneChunk(t *testing.T) {
+	content := "# 只有标题\n## 没有正文"
+	got := Chunk(content)
+	if len(got) != 1 {
+		t.Fatalf("纯标题文档应产 1 块, got %d", len(got))
+	}
+	if !strings.Contains(got[0].Content, "只有标题") || !strings.Contains(got[0].Content, "没有正文") {
+		t.Fatalf("块应包含标题行内容, got %+v", got[0])
+	}
+}

@@ -416,3 +416,44 @@ func TestAgentKBIntentFallsBackToPlaceholder(t *testing.T) {
 		t.Fatalf("无命中知识应回退占位语, got %q", msg.Content)
 	}
 }
+
+func TestAgentKBReplyFiltersByIntent(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	_ = s.WithKBTx(func(tx store.KBStore) error {
+		now := time.Now()
+		if err := tx.InsertKbDocument(model.KbDocument{
+			ID: "kbdoc-1", Title: "磁盘清理手册", Category: model.KBRunbook,
+			Metrics: []string{"disk_usage"}, Intents: []string{"DiskCleanup"},
+			Content: "清理日志与归档。", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		if err := tx.InsertKbChunk(model.KbChunk{ID: "c1", DocID: "kbdoc-1", Seq: 0,
+			Content: "清理日志与归档。", CreatedAt: now}); err != nil {
+			return err
+		}
+		// 无关文档：意图不同，时间戳设在未来保证 recency=1.0、恰好过阈值，
+		// 使排除只能由意图过滤完成而非分数阈值。
+		if err := tx.InsertKbDocument(model.KbDocument{
+			ID: "kbdoc-2", Title: "GPU故障手册", Category: model.KBManual,
+			Metrics: []string{"gpu_util"}, Intents: []string{"GPUCheck"},
+			Content: "检查GPU温度与风扇。", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		return tx.InsertKbChunk(model.KbChunk{ID: "c2", DocID: "kbdoc-2", Seq: 0,
+			Content: "检查GPU温度与风扇。", CreatedAt: now.Add(time.Hour)})
+	})
+	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, func() []model.LeafSpec {
+		return []model.LeafSpec{{Code: "DiskCleanup", Name: "DiskCleanup", Description: "磁盘清理", RuleKeywords: []string{"清理磁盘"}}}
+	})
+	msg, _ := ag.Handle(context.Background(), "怎么清理磁盘")
+	if !strings.Contains(msg.Content, "清理日志与归档") {
+		t.Fatalf("KB 应返回匹配意图的块, got %q", msg.Content)
+	}
+	if strings.Contains(msg.Content, "GPU故障手册") {
+		t.Fatalf("KB 不应返回无关意图文档, got %q", msg.Content)
+	}
+}
