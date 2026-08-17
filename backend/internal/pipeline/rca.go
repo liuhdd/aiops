@@ -35,6 +35,7 @@ func (s *RCAStage) react(ctx context.Context, st *State) error {
 	q := ctxpkg.Query{
 		Device: st.Alert.Device, Metric: st.Alert.Metric, Severity: st.Alert.Severity,
 		Stage: "rca", RunID: st.Run.ID, Keywords: []string{st.Alert.Message},
+		Intents: []string{"AskRootCause"},
 	}
 	as, err := st.Ctx.Assemble(q, true)
 	if err != nil {
@@ -68,7 +69,8 @@ func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
 	if st.Ctx != nil {
 		if as, err := st.Ctx.Assemble(ctxpkg.Query{
 			Device: st.Alert.Device, Metric: st.Alert.Metric, Severity: st.Alert.Severity,
-			Stage: "rca", RunID: st.Run.ID, Keywords: []string{st.Alert.Message}}, false); err == nil {
+			Stage: "rca", RunID: st.Run.ID, Keywords: []string{st.Alert.Message},
+			Intents: []string{"AskRootCause"}}, false); err == nil {
 			user = as.User + "\n"
 		}
 	}

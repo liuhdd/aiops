@@ -35,7 +35,8 @@ func (s *RecommendStage) Run(ctx context.Context, st *State) error {
 		if st.Ctx != nil {
 			if as, err := st.Ctx.Assemble(ctxpkg.Query{
 				Device: st.Alert.Device, Metric: st.Alert.Metric, Severity: st.Alert.Severity,
-				Stage: "recommend", RunID: st.Run.ID, Keywords: []string{st.Alert.Message}}, false); err == nil {
+				Stage: "recommend", RunID: st.Run.ID, Keywords: []string{st.Alert.Message},
+				Intents: []string{"AskRecommendation"}}, false); err == nil {
 				user = as.User + "\n"
 			}
 		}
