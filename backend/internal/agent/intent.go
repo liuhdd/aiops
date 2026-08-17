@@ -8,6 +8,7 @@ import (
 
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/llm"
+	"aiops/internal/mockdata"
 	"aiops/internal/model"
 )
 
@@ -25,12 +26,12 @@ const (
 
 // SeedLeaves 内置 6 种子（provider 为空时的兜底；顺序即规则匹配优先级）。
 var SeedLeaves = []model.LeafSpec{
-	{Code: AskRootCause, Name: "AskRootCause", Description: "询问根因", RuleKeywords: []string{"什么原因", "为什么", "根因"}},
-	{Code: AskRecommendation, Name: "AskRecommendation", Description: "询问处置建议", RuleKeywords: []string{"怎么处理", "怎么办", "建议", "处置"}},
-	{Code: AskStatus, Name: "AskStatus", Description: "询问状态/进度", RuleKeywords: []string{"状态", "进度"}},
-	{Code: InspectAlert, Name: "InspectAlert", Description: "排查某个告警", RuleKeywords: []string{}},
-	{Code: ListAlerts, Name: "ListAlerts", Description: "查看告警列表", RuleKeywords: []string{"列表", "有哪些告警", "告警"}},
-	{Code: Unknown, Name: "Unknown", Description: "与告警运维无关", RuleKeywords: []string{}},
+	{Code: AskRootCause, Name: "AskRootCause", Description: "询问根因", Examples: []string{"alarm-123 什么原因", "这台机器为什么告警"}, RuleKeywords: []string{"什么原因", "为什么", "根因"}},
+	{Code: AskRecommendation, Name: "AskRecommendation", Description: "询问处置建议", Examples: []string{"alarm-123 怎么处理", "磁盘满了怎么办"}, RuleKeywords: []string{"怎么处理", "怎么办", "建议", "处置"}},
+	{Code: AskStatus, Name: "AskStatus", Description: "询问状态/进度", Examples: []string{"排查进度如何", "现在什么状态"}, RuleKeywords: []string{"状态", "进度"}},
+	{Code: InspectAlert, Name: "InspectAlert", Description: "排查某个告警", Examples: []string{"查一下 compute-01", "看看 switch-core-01"}, RuleKeywords: []string{}},
+	{Code: ListAlerts, Name: "ListAlerts", Description: "查看告警列表", Examples: []string{"有哪些告警", "列出所有告警"}, RuleKeywords: []string{"列表", "有哪些告警", "告警"}},
+	{Code: Unknown, Name: "Unknown", Description: "与告警运维无关", Examples: []string{}, RuleKeywords: []string{}},
 }
 
 var alarmRe = regexp.MustCompile(`(?i)alarm[-_ ]?\w*|(compute|web|db|storage|switch)-?0?\d*`)
@@ -41,30 +42,72 @@ func inspectAlertMatch(low string) bool {
 	return verb && alarmRe.MatchString(low)
 }
 
-// RuleMatch 规则优先：按 leaves 顺序匹配；InspectAlert 用内置复合规则，其余用 rule_keywords 子串命中。
-// leaves 为空时回退 SeedLeaves。
-func RuleMatch(leaves []model.LeafSpec, text string) Intent {
+// ScoredIntent 带置信度的意图识别结果。
+type ScoredIntent struct {
+	Intent     Intent
+	Confidence float64 // 0~1
+}
+
+// entityWords 实体词表（设备名 + 已知指标名）。
+var entityWords = func() map[string]bool {
+	m := make(map[string]bool)
+	for _, d := range mockdata.Devices() {
+		m[strings.ToLower(d.Name)] = true
+	}
+	for _, k := range []string{"cpu_usage", "disk_usage", "gpu_util", "mem_usage", "net_in"} {
+		m[k] = true
+	}
+	return m
+}()
+
+// isEntityWord 判断关键词是否为实体名（设备/指标/alarm id）。
+func isEntityWord(kw string) bool {
+	if entityWords[strings.ToLower(kw)] {
+		return true
+	}
+	return alarmRe.MatchString(kw)
+}
+
+// RuleScore 规则打分：按 leaves 顺序匹配，命中实体关键词 0.9、主题词/复合规则 0.6，无命中 Unknown(0)。
+// 选择语义与 RuleMatch 一致（同分时先出现者胜），仅附加置信度。
+func RuleScore(leaves []model.LeafSpec, text string) ScoredIntent {
 	if len(leaves) == 0 {
 		leaves = SeedLeaves
 	}
 	low := strings.ToLower(text)
+	best := ScoredIntent{Intent: Unknown, Confidence: 0}
 	for _, l := range leaves {
 		if l.Code == Unknown {
 			continue
 		}
 		if l.Code == InspectAlert {
-			if inspectAlertMatch(low) {
-				return InspectAlert
+			if inspectAlertMatch(low) && best.Confidence < 0.6 {
+				best = ScoredIntent{Intent: InspectAlert, Confidence: 0.6}
 			}
 			continue
 		}
 		for _, kw := range l.RuleKeywords {
-			if kw != "" && strings.Contains(low, strings.ToLower(kw)) {
-				return l.Code
+			if kw == "" || !strings.Contains(low, strings.ToLower(kw)) {
+				continue
+			}
+			conf := 0.6
+			if isEntityWord(kw) {
+				conf = 0.9
+			}
+			if conf > best.Confidence {
+				best = ScoredIntent{Intent: l.Code, Confidence: conf}
 			}
 		}
 	}
-	return Unknown
+	if best.Confidence < 0.4 {
+		return ScoredIntent{Intent: Unknown, Confidence: 0}
+	}
+	return best
+}
+
+// RuleMatch 规则优先：等价 RuleScore(...).Intent（向后兼容）。
+func RuleMatch(leaves []model.LeafSpec, text string) Intent {
+	return RuleScore(leaves, text).Intent
 }
 
 // ParseIntent 单意图规则识别（向后兼容，等价 RuleMatch(nil, text)）。
@@ -91,8 +134,9 @@ func RewriteAndSplit(ctx context.Context, text string, c ctxpkg.Completer) (rewr
 	return out.Rewritten, out.Subs, nil
 }
 
-// ClassifyWithLight 轻量 LLM 分类：闭集 = leaves 的 code+description；失败/非法映射 Unknown。
-func ClassifyWithLight(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer) Intent {
+// ClassifyWithLight 轻量 LLM 分类并自评分：闭集 = leaves 的 code+description+examples+path；
+// 返回 (Intent, confidence)；失败/非法映射 (Unknown, 0)。
+func ClassifyWithLight(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer) (Intent, float64) {
 	if len(leaves) == 0 {
 		leaves = SeedLeaves
 	}
@@ -102,46 +146,62 @@ func ClassifyWithLight(ctx context.Context, leaves []model.LeafSpec, text string
 		if desc == "" {
 			desc = l.Code
 		}
-		parts = append(parts, l.Code+"("+desc+")")
+		s := l.Code + "(" + desc
+		if len(l.Examples) > 0 {
+			s += "，示例：" + strings.Join(l.Examples, "、")
+		}
+		if l.Path != "" {
+			s += "，路径：" + l.Path
+		}
+		parts = append(parts, s+")")
 	}
-	system := "你是意图分类器。判断用户请求属于哪个意图，只输出 JSON：{\"intent\":\"<意图名>\"}。意图名必须是 " + strings.Join(parts, "、") + "。无法确定时返回 Unknown。"
+	system := "你是意图分类器。判断用户请求属于哪个意图，只输出 JSON：{\"intent\":\"<意图名>\",\"confidence\":<0到1之间的小数>}。意图名必须是 " + strings.Join(parts, "、") + "。无法确定时返回 {\"intent\":\"Unknown\",\"confidence\":0}。"
 	raw, err := c.Complete(ctx, system, text)
 	if err != nil || strings.TrimSpace(raw) == "" {
-		return Unknown
+		return Unknown, 0
 	}
 	var out struct {
-		Intent string `json:"intent"`
+		Intent     string  `json:"intent"`
+		Confidence float64 `json:"confidence"`
 	}
 	if err := llm.ParseJSON(raw, &out); err != nil {
-		return Unknown
+		return Unknown, 0
 	}
 	for _, l := range leaves {
 		if out.Intent == l.Code {
-			return l.Code
+			if out.Confidence < 0 || out.Confidence > 1 {
+				return Unknown, 0
+			}
+			return l.Code, out.Confidence
 		}
 	}
-	return Unknown
+	return Unknown, 0
 }
 
-// ParseIntentWithLight 规则优先；Unknown 用轻量 LLM 分类。
-func ParseIntentWithLight(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer) Intent {
-	if intent := RuleMatch(leaves, text); intent != Unknown {
-		return intent
+// ParseIntentWithLight 规则优先；规则分 <0.4 用轻量 LLM 分类；LLM 分 <0.4 落回 Unknown。
+func ParseIntentWithLight(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer) (Intent, float64) {
+	sc := RuleScore(leaves, text)
+	if sc.Confidence >= 0.4 {
+		return sc.Intent, sc.Confidence
 	}
 	if c == nil || ctxpkg.IsNilCompleter(c) {
-		return Unknown
+		return Unknown, 0
 	}
-	return ClassifyWithLight(ctx, leaves, text, c)
+	intent, conf := ClassifyWithLight(ctx, leaves, text, c)
+	if conf < 0.4 {
+		return Unknown, conf
+	}
+	return intent, conf
 }
 
 // ParseIntentSet 解析一条输入的全部意图：重写拆分 → 逐子问题 ParseIntentWithLight，截断到 maxSplit。
-func ParseIntentSet(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer, maxSplit int) []Intent {
+func ParseIntentSet(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer, maxSplit int) []ScoredIntent {
 	if c == nil || ctxpkg.IsNilCompleter(c) {
-		return []Intent{RuleMatch(leaves, text)}
+		return []ScoredIntent{RuleScore(leaves, text)}
 	}
 	_, subs, err := RewriteAndSplit(ctx, text, c)
 	if err != nil || len(subs) == 0 {
-		return []Intent{RuleMatch(leaves, text)}
+		return []ScoredIntent{RuleScore(leaves, text)}
 	}
 	if maxSplit <= 0 {
 		maxSplit = 3
@@ -149,9 +209,10 @@ func ParseIntentSet(ctx context.Context, leaves []model.LeafSpec, text string, c
 	if len(subs) > maxSplit {
 		subs = subs[:maxSplit]
 	}
-	out := make([]Intent, 0, len(subs))
+	out := make([]ScoredIntent, 0, len(subs))
 	for _, s := range subs {
-		out = append(out, ParseIntentWithLight(ctx, leaves, s, c))
+		intent, conf := ParseIntentWithLight(ctx, leaves, s, c)
+		out = append(out, ScoredIntent{Intent: intent, Confidence: conf})
 	}
 	return out
 }

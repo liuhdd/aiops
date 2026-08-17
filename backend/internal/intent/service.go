@@ -37,6 +37,7 @@ type CreateReq struct {
 	BindTarget   string           `json:"bind_target"`
 	RuleKeywords []string         `json:"rule_keywords"`
 	Description  string           `json:"description"`
+	Examples     []string         `json:"examples"`
 	SortOrder    int              `json:"sort_order"`
 }
 
@@ -49,6 +50,7 @@ type UpdateReq struct {
 	BindTarget   string           `json:"bind_target"`
 	RuleKeywords []string         `json:"rule_keywords"`
 	Description  string           `json:"description"`
+	Examples     []string         `json:"examples"`
 	SortOrder    int              `json:"sort_order"`
 }
 
@@ -57,7 +59,7 @@ func (s *Service) Create(ctx context.Context, operator string, req CreateReq) (*
 	n := model.IntentNode{
 		ID: model.NewID("node"), ParentID: req.ParentID, Name: req.Name, Kind: req.Kind,
 		Code: req.Code, BindTarget: req.BindTarget, RuleKeywords: req.RuleKeywords,
-		Description: req.Description, Enabled: true, SortOrder: req.SortOrder, CreatedAt: now, UpdatedAt: now,
+		Description: req.Description, Examples: req.Examples, Enabled: true, SortOrder: req.SortOrder, CreatedAt: now, UpdatedAt: now,
 	}
 	normalize(&n)
 	var created *model.IntentNode
@@ -95,6 +97,7 @@ func (s *Service) Update(ctx context.Context, operator string, id string, req Up
 		n.Name = req.Name
 		n.Code = req.Code
 		n.Description = req.Description
+		n.Examples = req.Examples
 		n.SortOrder = req.SortOrder
 		// 改 kind 联动清绑定
 		if req.Kind != n.Kind {
@@ -324,9 +327,32 @@ func ActiveLeavesFrom(nodes []model.IntentNode) []model.LeafSpec {
 		if !enabledToRoot(n) {
 			continue
 		}
-		out = append(out, model.LeafSpec{Code: n.Code, Name: n.Name, Description: n.Description, RuleKeywords: n.RuleKeywords})
+		out = append(out, model.LeafSpec{
+			Code: n.Code, Name: n.Name, Description: n.Description,
+			Examples: n.Examples, RuleKeywords: n.RuleKeywords, Path: nodePath(n, byID),
+		})
 	}
 	return out
+}
+
+func nodePath(n model.IntentNode, byID map[string]model.IntentNode) string {
+	var names []string
+	for {
+		if n.ParentID == "" {
+			break
+		}
+		p, ok := byID[n.ParentID]
+		if !ok {
+			break
+		}
+		names = append(names, p.Name)
+		n = p
+	}
+	// 倒序：顶层 → 叶子
+	for i, j := 0, len(names)-1; i < j; i, j = i+1, j-1 {
+		names[i], names[j] = names[j], names[i]
+	}
+	return strings.Join(names, "/")
 }
 
 func normalize(n *model.IntentNode) {
@@ -335,6 +361,7 @@ func normalize(n *model.IntentNode) {
 		n.BindTarget = ""
 		n.RuleKeywords = []string{}
 		n.Description = ""
+		n.Examples = []string{}
 		return
 	}
 	if n.Kind == model.KindSystem {
@@ -342,6 +369,9 @@ func normalize(n *model.IntentNode) {
 	}
 	if n.RuleKeywords == nil {
 		n.RuleKeywords = []string{}
+	}
+	if n.Examples == nil {
+		n.Examples = []string{}
 	}
 }
 

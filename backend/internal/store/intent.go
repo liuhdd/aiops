@@ -28,14 +28,14 @@ type IntentStore interface {
 
 type intentRepo struct{ db dbExec }
 
-const intentCols = `id, parent_id, name, kind, code, bind_target, rule_keywords, description, enabled, deleted, sort_order, created_at, updated_at`
+const intentCols = `id, parent_id, name, kind, code, bind_target, rule_keywords, description, examples, enabled, deleted, sort_order, created_at, updated_at`
 
 func scanIntentNode(scan func(dest ...any) error) (model.IntentNode, error) {
 	var n model.IntentNode
-	var kw string
+	var kw, ex string
 	var enabled, deleted int
 	if err := scan(&n.ID, &n.ParentID, &n.Name, &n.Kind, &n.Code, &n.BindTarget,
-		&kw, &n.Description, &enabled, &deleted, &n.SortOrder, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		&kw, &n.Description, &ex, &enabled, &deleted, &n.SortOrder, &n.CreatedAt, &n.UpdatedAt); err != nil {
 		return n, err
 	}
 	n.Enabled = enabled != 0
@@ -45,6 +45,12 @@ func scanIntentNode(scan func(dest ...any) error) (model.IntentNode, error) {
 	}
 	if n.RuleKeywords == nil {
 		n.RuleKeywords = []string{}
+	}
+	if ex != "" {
+		_ = json.Unmarshal([]byte(ex), &n.Examples)
+	}
+	if n.Examples == nil {
+		n.Examples = []string{}
 	}
 	return n, nil
 }
@@ -76,6 +82,7 @@ func (r *intentRepo) GetIntentNode(id string) (model.IntentNode, error) {
 
 func (r *intentRepo) InsertIntentNode(n model.IntentNode) error {
 	kw, _ := json.Marshal(n.RuleKeywords)
+	ex, _ := json.Marshal(n.Examples)
 	enabled, deleted := 0, 0
 	if n.Enabled {
 		enabled = 1
@@ -83,14 +90,15 @@ func (r *intentRepo) InsertIntentNode(n model.IntentNode) error {
 	if n.Deleted {
 		deleted = 1
 	}
-	_, err := r.db.Exec(`INSERT INTO intent_nodes (id, parent_id, name, kind, code, bind_target, rule_keywords, description, enabled, deleted, sort_order, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		n.ID, n.ParentID, n.Name, n.Kind, n.Code, n.BindTarget, string(kw), n.Description, enabled, deleted, n.SortOrder, n.CreatedAt, n.UpdatedAt)
+	_, err := r.db.Exec(`INSERT INTO intent_nodes (id, parent_id, name, kind, code, bind_target, rule_keywords, description, examples, enabled, deleted, sort_order, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		n.ID, n.ParentID, n.Name, n.Kind, n.Code, n.BindTarget, string(kw), n.Description, string(ex), enabled, deleted, n.SortOrder, n.CreatedAt, n.UpdatedAt)
 	return err
 }
 
 func (r *intentRepo) UpdateIntentNode(n model.IntentNode) error {
 	kw, _ := json.Marshal(n.RuleKeywords)
+	ex, _ := json.Marshal(n.Examples)
 	enabled, deleted := 0, 0
 	if n.Enabled {
 		enabled = 1
@@ -98,8 +106,8 @@ func (r *intentRepo) UpdateIntentNode(n model.IntentNode) error {
 	if n.Deleted {
 		deleted = 1
 	}
-	_, err := r.db.Exec(`UPDATE intent_nodes SET parent_id=?, name=?, kind=?, code=?, bind_target=?, rule_keywords=?, description=?, enabled=?, deleted=?, sort_order=?, updated_at=? WHERE id=?`,
-		n.ParentID, n.Name, n.Kind, n.Code, n.BindTarget, string(kw), n.Description, enabled, deleted, n.SortOrder, n.UpdatedAt, n.ID)
+	_, err := r.db.Exec(`UPDATE intent_nodes SET parent_id=?, name=?, kind=?, code=?, bind_target=?, rule_keywords=?, description=?, examples=?, enabled=?, deleted=?, sort_order=?, updated_at=? WHERE id=?`,
+		n.ParentID, n.Name, n.Kind, n.Code, n.BindTarget, string(kw), n.Description, string(ex), enabled, deleted, n.SortOrder, n.UpdatedAt, n.ID)
 	return err
 }
 
@@ -183,21 +191,22 @@ func (s *Store) seedIntents() error {
 	}
 	seeds := []struct {
 		code, desc string
-		kw         []string
+		kw, ex     []string
 		order      int
 	}{
-		{"AskRootCause", "询问根因", []string{"什么原因", "为什么", "根因"}, 0},
-		{"AskRecommendation", "询问处置建议", []string{"怎么处理", "怎么办", "建议", "处置"}, 1},
-		{"AskStatus", "询问状态/进度", []string{"状态", "进度"}, 2},
-		{"InspectAlert", "排查某个告警", []string{}, 3},
-		{"ListAlerts", "查看告警列表", []string{"列表", "有哪些告警", "告警"}, 4},
-		{"Unknown", "与告警运维无关", []string{}, 5},
+		{"AskRootCause", "询问根因", []string{"什么原因", "为什么", "根因"}, []string{"alarm-123 什么原因", "这台机器为什么告警"}, 0},
+		{"AskRecommendation", "询问处置建议", []string{"怎么处理", "怎么办", "建议", "处置"}, []string{"alarm-123 怎么处理", "磁盘满了怎么办"}, 1},
+		{"AskStatus", "询问状态/进度", []string{"状态", "进度"}, []string{"排查进度如何", "现在什么状态"}, 2},
+		{"InspectAlert", "排查某个告警", []string{}, []string{"查一下 compute-01", "看看 switch-core-01"}, 3},
+		{"ListAlerts", "查看告警列表", []string{"列表", "有哪些告警", "告警"}, []string{"有哪些告警", "列出所有告警"}, 4},
+		{"Unknown", "与告警运维无关", []string{}, []string{}, 5},
 	}
 	for _, sd := range seeds {
 		kw, _ := json.Marshal(sd.kw)
-		if _, err := s.db.Exec(`INSERT INTO intent_nodes (id, parent_id, name, kind, code, bind_target, rule_keywords, description, enabled, deleted, sort_order, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,1,0,?,?,?)`,
-			"leaf-"+sd.code, "grp-builtin", sd.code, string(model.KindSystem), sd.code, "", string(kw), sd.desc, sd.order, now, now); err != nil {
+		ex, _ := json.Marshal(sd.ex)
+		if _, err := s.db.Exec(`INSERT INTO intent_nodes (id, parent_id, name, kind, code, bind_target, rule_keywords, description, examples, enabled, deleted, sort_order, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,1,0,?,?,?)`,
+			"leaf-"+sd.code, "grp-builtin", sd.code, string(model.KindSystem), sd.code, "", string(kw), sd.desc, string(ex), sd.order, now, now); err != nil {
 			return err
 		}
 	}

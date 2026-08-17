@@ -29,6 +29,31 @@ func TestSeedIntents(t *testing.T) {
 	if len(byID["leaf-ListAlerts"].RuleKeywords) == 0 {
 		t.Fatal("ListAlerts 种子应有关键词")
 	}
+	if len(byID["leaf-AskRootCause"].Examples) == 0 {
+		t.Fatal("AskRootCause 种子应有示例")
+	}
+}
+
+func TestIntentExamplesRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	n := model.IntentNode{ID: "n2", ParentID: "grp-builtin", Name: "带示例", Kind: model.KindKB,
+		Code: "MyKB2", BindTarget: "kb-2", RuleKeywords: []string{"手册"},
+		Examples: []string{"怎么查手册", "手册在哪"}, Enabled: true, SortOrder: 10}
+	if err := s.WithIntentTx(func(tx IntentStore) error {
+		return tx.InsertIntentNode(n)
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	got, _ := s.ListIntentNodes()
+	for _, x := range got {
+		if x.ID == "n2" {
+			if len(x.Examples) != 2 || x.Examples[0] != "怎么查手册" {
+				t.Fatalf("examples roundtrip 失败: %+v", x.Examples)
+			}
+			return
+		}
+	}
+	t.Fatal("未找到插入节点")
 }
 
 func TestIntentNodeRoundTrip(t *testing.T) {

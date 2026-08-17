@@ -94,6 +94,7 @@ func (s *Store) migrate() error {
 		bind_target TEXT NOT NULL DEFAULT '',
 		rule_keywords TEXT NOT NULL DEFAULT '[]',
 		description TEXT NOT NULL DEFAULT '',
+		examples TEXT NOT NULL DEFAULT '[]',
 		enabled INTEGER NOT NULL DEFAULT 1,
 		deleted INTEGER NOT NULL DEFAULT 0,
 		sort_order INTEGER NOT NULL DEFAULT 0,
@@ -102,6 +103,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_intent_parent ON intent_nodes(parent_id, sort_order)`); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "intent_nodes", "examples", "examples TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS intent_audit (
