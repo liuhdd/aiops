@@ -229,7 +229,7 @@ func TestParseIntentWithLight(t *testing.T) {
 func TestParseIntentSet(t *testing.T) {
 	c := &scriptedLLM{raw: `{"rewritten":"有哪些告警？alarm-1什么原因？","sub_questions":["有哪些告警","alarm-1什么原因"]}`}
 	got := ParseIntentSet(context.Background(), nil, "有哪些告警？alarm-1什么原因？", c, 3)
-	if len(got) != 2 || got[0] != ListAlerts || got[1] != AskRootCause {
+	if len(got) != 2 || got[0].Intent != ListAlerts || got[1].Intent != AskRootCause {
 		t.Fatalf("ParseIntentSet = %v", got)
 	}
 }

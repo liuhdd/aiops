@@ -203,13 +203,13 @@ func ParseIntentWithLight(ctx context.Context, leaves []model.LeafSpec, text str
 }
 
 // ParseIntentSet 解析一条输入的全部意图：重写拆分 → 逐子问题 ParseIntentWithLight，截断到 maxSplit。
-func ParseIntentSet(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer, maxSplit int) []Intent {
+func ParseIntentSet(ctx context.Context, leaves []model.LeafSpec, text string, c ctxpkg.Completer, maxSplit int) []ScoredIntent {
 	if c == nil || ctxpkg.IsNilCompleter(c) {
-		return []Intent{RuleMatch(leaves, text)}
+		return []ScoredIntent{RuleScore(leaves, text)}
 	}
 	_, subs, err := RewriteAndSplit(ctx, text, c)
 	if err != nil || len(subs) == 0 {
-		return []Intent{RuleMatch(leaves, text)}
+		return []ScoredIntent{RuleScore(leaves, text)}
 	}
 	if maxSplit <= 0 {
 		maxSplit = 3
@@ -217,10 +217,10 @@ func ParseIntentSet(ctx context.Context, leaves []model.LeafSpec, text string, c
 	if len(subs) > maxSplit {
 		subs = subs[:maxSplit]
 	}
-	out := make([]Intent, 0, len(subs))
+	out := make([]ScoredIntent, 0, len(subs))
 	for _, s := range subs {
-		intent, _ := ParseIntentWithLight(ctx, leaves, s, c)
-		out = append(out, intent)
+		intent, conf := ParseIntentWithLight(ctx, leaves, s, c)
+		out = append(out, ScoredIntent{Intent: intent, Confidence: conf})
 	}
 	return out
 }
