@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"aiops/internal/config"
 	"aiops/internal/hub"
 	"aiops/internal/intent"
+	"aiops/internal/kb"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
 	"aiops/internal/simulator"
@@ -18,18 +20,19 @@ import (
 )
 
 type Server struct {
-	cfg config.Config
-	st  *store.Store
-	ag  *agent.Agent
-	eng *pipeline.Engine
-	hub *hub.Hub
-	sim *simulator.Simulator
-	svc *intent.Service
-	mux *http.ServeMux
+	cfg   config.Config
+	st    *store.Store
+	ag    *agent.Agent
+	eng   *pipeline.Engine
+	hub   *hub.Hub
+	sim   *simulator.Simulator
+	svc   *intent.Service
+	kbsvc *kb.Service
+	mux   *http.ServeMux
 }
 
-func NewServer(cfg config.Config, s *store.Store, ag *agent.Agent, eng *pipeline.Engine, h *hub.Hub, sim *simulator.Simulator, svc *intent.Service) http.Handler {
-	srv := &Server{cfg: cfg, st: s, ag: ag, eng: eng, hub: h, sim: sim, svc: svc, mux: http.NewServeMux()}
+func NewServer(cfg config.Config, s *store.Store, ag *agent.Agent, eng *pipeline.Engine, h *hub.Hub, sim *simulator.Simulator, svc *intent.Service, kbsvc *kb.Service) http.Handler {
+	srv := &Server{cfg: cfg, st: s, ag: ag, eng: eng, hub: h, sim: sim, svc: svc, kbsvc: kbsvc, mux: http.NewServeMux()}
 	srv.routes()
 	return withCORS(srv.mux)
 }
@@ -50,6 +53,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/intents/{id}", s.handleIntentUpdate)
 	s.mux.HandleFunc("DELETE /api/intents", s.handleIntentDelete)
 	s.mux.HandleFunc("POST /api/intents/status", s.handleIntentStatus)
+	s.mux.HandleFunc("GET /api/kb/docs", s.handleKbList)
+	s.mux.HandleFunc("GET /api/kb/docs/{id}", s.handleKbGet)
+	s.mux.HandleFunc("POST /api/kb/upload", s.handleKbUpload)
+	s.mux.HandleFunc("PATCH /api/kb/docs/{id}", s.handleKbUpdate)
+	s.mux.HandleFunc("DELETE /api/kb/docs/{id}", s.handleKbDelete)
 }
 
 func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +229,116 @@ func (s *Server) handleIntentStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleKbList(w http.ResponseWriter, r *http.Request) {
+	f := store.KbFilter{
+		Category:   r.URL.Query().Get("category"),
+		DeviceType: r.URL.Query().Get("device_type"),
+		Vendor:     r.URL.Query().Get("vendor"),
+		Model:      r.URL.Query().Get("model"),
+		Intent:     r.URL.Query().Get("intent"),
+		Q:          r.URL.Query().Get("q"),
+	}
+	list, err := s.kbsvc.List(r.Context(), f)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleKbGet(w http.ResponseWriter, r *http.Request) {
+	detail, err := s.kbsvc.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, kbStatus(err), map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleKbUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无法解析上传表单"})
+		return
+	}
+	f, hdr, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "缺少 file 字段"})
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	req := kb.UploadReq{
+		Title:       r.FormValue("title"),
+		Category:    model.KBCategory(r.FormValue("category")),
+		SourceFile:  hdr.Filename,
+		Data:        data,
+		DeviceTypes: splitCSV(r.FormValue("device_types")),
+		Vendor:      splitCSV(r.FormValue("vendor")),
+		Model:       splitCSV(r.FormValue("model")),
+		Metrics:     splitCSV(r.FormValue("metrics")),
+		Keywords:    splitCSV(r.FormValue("keywords")),
+		Intents:     splitCSV(r.FormValue("intents")),
+	}
+	doc, err := s.kbsvc.Upload(r.Context(), req)
+	if err != nil {
+		writeJSON(w, kbStatus(err), map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, doc)
+}
+
+func (s *Server) handleKbUpdate(w http.ResponseWriter, r *http.Request) {
+	var req kb.UpdateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad body"})
+		return
+	}
+	doc, err := s.kbsvc.Update(r.Context(), r.PathValue("id"), req)
+	if err != nil {
+		writeJSON(w, kbStatus(err), map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, doc)
+}
+
+func (s *Server) handleKbDelete(w http.ResponseWriter, r *http.Request) {
+	if err := s.kbsvc.Delete(r.Context(), r.PathValue("id")); err != nil {
+		writeJSON(w, kbStatus(err), map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func splitCSV(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func kbStatus(err error) int {
+	switch {
+	case errors.Is(err, kb.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, kb.ErrBadFile), errors.Is(err, kb.ErrEmptyContent), errors.Is(err, kb.ErrBadCategory):
+		return http.StatusBadRequest
+	default:
+		return http.StatusBadRequest
+	}
 }
 
 func withCORS(next http.Handler) http.Handler {

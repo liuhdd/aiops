@@ -12,6 +12,7 @@ import (
 	"aiops/internal/config"
 	"aiops/internal/hub"
 	"aiops/internal/intent"
+	"aiops/internal/kb"
 	"aiops/internal/store"
 )
 
@@ -21,7 +22,7 @@ func newIntentServer(t *testing.T) (*httptest.Server, *store.Store) {
 	t.Cleanup(func() { st.Close() })
 	ag := agent.New(st, nil, nil)
 	svc := intent.NewService(st, intent.NewMemCache())
-	srv := NewServer(config.Config{}, st, ag, nil, hub.New(), nil, svc)
+	srv := NewServer(config.Config{}, st, ag, nil, hub.New(), nil, svc, kb.NewService(st, nil))
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 	return ts, st

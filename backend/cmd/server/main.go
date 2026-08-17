@@ -12,6 +12,7 @@ import (
 	"aiops/internal/coordinator"
 	"aiops/internal/hub"
 	"aiops/internal/intent"
+	"aiops/internal/kb"
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
@@ -51,9 +52,24 @@ func main() {
 	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
 	eng.Publish = h.Publish
 
-	svc := intent.NewService(st, intent.NewMemCache())
+	intentsvc := intent.NewService(st, intent.NewMemCache())
+	kbsvc := kb.NewService(st, func() []model.LeafSpec {
+		leaves, _ := intentsvc.ActiveLeaves(context.Background())
+		return leaves
+	})
+	var seeds []kb.SeedDoc
+	for _, d := range mockdata.Docs() {
+		seeds = append(seeds, kb.SeedDoc{
+			Title: d.Title, Category: model.KBCase,
+			DeviceTypes: d.DeviceTypes, Metrics: d.Metrics, Keywords: d.Keywords, Content: d.Body,
+		})
+	}
+	if err := kbsvc.Seed(seeds); err != nil {
+		log.Printf("kb seed: %v", err)
+	}
+
 	ag := agent.NewWithLeaves(st, lc, light, eng, cs, cfg.TopK, cfg.MaxSplit, func() []model.LeafSpec {
-		leaves, _ := svc.ActiveLeaves(context.Background())
+		leaves, _ := intentsvc.ActiveLeaves(context.Background())
 		return leaves
 	})
 	sim := simulator.New(st, func(a model.Alert) {
@@ -64,7 +80,7 @@ func main() {
 	})
 	sim.Start(context.Background(), cfg.SimInterval)
 
-	handler := api.NewServer(cfg, st, ag, eng, h, sim, svc)
+	handler := api.NewServer(cfg, st, ag, eng, h, sim, intentsvc, kbsvc)
 	log.Printf("aiops backend listening on %s", cfg.Port)
 	if err := http.ListenAndServe(cfg.Port, handler); err != nil {
 		log.Fatal(err)
