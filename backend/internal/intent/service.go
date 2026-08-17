@@ -370,6 +370,9 @@ func normalize(n *model.IntentNode) {
 	if n.RuleKeywords == nil {
 		n.RuleKeywords = []string{}
 	}
+	if n.Examples == nil {
+		n.Examples = []string{}
+	}
 }
 
 func validateNode(n model.IntentNode, tx store.IntentStore) error {

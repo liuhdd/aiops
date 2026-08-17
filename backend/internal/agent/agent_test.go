@@ -264,6 +264,16 @@ func TestRuleScore(t *testing.T) {
 	if sc.Intent != "MyKB" || sc.Confidence != 0.9 {
 		t.Fatalf("实体命中应 0.9, got (%v,%v)", sc.Intent, sc.Confidence)
 	}
+	if sc := RuleScore(nil, "内置意图"); sc.Intent != Unknown {
+		t.Fatalf("path 词不应参与规则匹配, got %v", sc.Intent)
+	}
+	pathLeaves := []model.LeafSpec{{Code: "MyKB2", Name: "MyKB2", Description: "查知识库手册", Path: "内置意图"}}
+	if sc := RuleScore(pathLeaves, "内置意图"); sc.Intent != Unknown {
+		t.Fatalf("path 词不应参与规则匹配, got %v", sc.Intent)
+	}
+	if sc := RuleScore(pathLeaves, "查知识库手册"); sc.Intent != Unknown {
+		t.Fatalf("description 不应参与规则匹配, got %v", sc.Intent)
+	}
 }
 
 func TestRuleMatchFromLeaves(t *testing.T) {

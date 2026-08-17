@@ -98,14 +98,6 @@ func RuleScore(leaves []model.LeafSpec, text string) ScoredIntent {
 				best = ScoredIntent{Intent: l.Code, Confidence: conf}
 			}
 		}
-		for _, phrase := range []string{l.Description, l.Path} {
-			if phrase == "" {
-				continue
-			}
-			if strings.Contains(low, strings.ToLower(phrase)) && best.Confidence < 0.6 {
-				best = ScoredIntent{Intent: l.Code, Confidence: 0.6}
-			}
-		}
 	}
 	if best.Confidence < 0.4 {
 		return ScoredIntent{Intent: Unknown, Confidence: 0}

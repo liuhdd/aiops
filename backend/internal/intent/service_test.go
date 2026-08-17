@@ -179,6 +179,17 @@ func TestCreatePersistsExamples(t *testing.T) {
 	}
 }
 
+func TestCreateNormalizesNilExamples(t *testing.T) {
+	svc := newTestService(t)
+	n, err := svc.Create(context.Background(), "t", CreateReq{ParentID: "grp-builtin", Name: "无示例", Kind: model.KindKB, Code: "noex"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if n.Examples == nil || len(n.Examples) != 0 {
+		t.Fatalf("Examples 应为非 nil 空切片, got %#v", n.Examples)
+	}
+}
+
 func TestActiveLeavesPath(t *testing.T) {
 	svc := newTestService(t)
 	g, err := svc.Create(context.Background(), "t", CreateReq{Name: "告警排查", Kind: model.KindGroup})
