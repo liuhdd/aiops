@@ -15,14 +15,16 @@ export default function IntentEditor({
   const [bind, setBind] = useState(initial?.bind_target ?? '')
   const [kw, setKw] = useState((initial?.rule_keywords ?? []).join(', '))
   const [desc, setDesc] = useState(initial?.description ?? '')
+  const [ex, setEx] = useState((initial?.examples ?? []).join(', '))
   const [sort, setSort] = useState(String(initial?.sort_order ?? 0))
   const [parent, setParent] = useState(initial?.parent_id ?? '')
 
   const submit = () => {
+    const examples = ex.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
     onSubmit({
       parent_id: parent, name, kind, code, bind_target: bind,
       rule_keywords: kw.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
-      description: desc, sort_order: Number(sort) || 0,
+      description: desc, examples, sort_order: Number(sort) || 0,
     })
   }
 
@@ -46,6 +48,7 @@ export default function IntentEditor({
         {kind === 'MCP' && <label>mcpToolId <input style={input} value={bind} onChange={(e) => setBind(e.target.value)} /></label>}
         {kind !== 'GROUP' && <label>关键词(逗号分隔) <input style={input} value={kw} onChange={(e) => setKw(e.target.value)} /></label>}
         {kind !== 'GROUP' && <label>描述 <input style={input} value={desc} onChange={(e) => setDesc(e.target.value)} /></label>}
+        {kind !== 'GROUP' && <label>示例(逗号分隔) <input style={input} value={ex} onChange={(e) => setEx(e.target.value)} /></label>}
         <label>排序 <input style={input} value={sort} onChange={(e) => setSort(e.target.value)} /></label>
         <label>父节点
           <select style={input} value={parent} onChange={(e) => setParent(e.target.value)}>

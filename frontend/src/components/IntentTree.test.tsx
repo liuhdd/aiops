@@ -5,12 +5,12 @@ import type { IntentTreeNode } from '../types'
 
 const leaf = (id: string, name: string): IntentTreeNode => ({
   id, parent_id: 'g', name, kind: 'KB', code: name, bind_target: '', rule_keywords: [],
-  description: '', enabled: true, deleted: false, sort_order: 0, created_at: '', updated_at: '', children: [],
+  description: '', examples: [], enabled: true, deleted: false, sort_order: 0, created_at: '', updated_at: '', children: [],
 })
 
 const group: IntentTreeNode = {
   id: 'g', parent_id: '', name: '分组', kind: 'GROUP', code: '', bind_target: '', rule_keywords: [],
-  description: '', enabled: true, deleted: false, sort_order: 0, created_at: '', updated_at: '',
+  description: '', examples: [], enabled: true, deleted: false, sort_order: 0, created_at: '', updated_at: '',
   children: [leaf('a', '意图A'), leaf('b', '意图B')],
 }
 

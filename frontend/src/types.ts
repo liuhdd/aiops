@@ -64,6 +64,7 @@ export interface IntentNode {
   bind_target: string
   rule_keywords: string[]
   description: string
+  examples: string[]
   enabled: boolean
   deleted: boolean
   sort_order: number
@@ -83,5 +84,6 @@ export interface IntentUpsert {
   bind_target: string
   rule_keywords: string[]
   description: string
+  examples: string[]
   sort_order: number
 }
