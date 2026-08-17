@@ -23,4 +23,5 @@ type Query struct {
 	Stage    string
 	RunID    string
 	Keywords []string
+	Intents  []string
 }

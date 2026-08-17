@@ -10,9 +10,10 @@ import (
 const (
 	DefaultTopK      = 3
 	DefaultThreshold = 0.15
-	kwWeight         = 0.4
-	tagWeight        = 0.4
-	recencyWeight    = 0.2
+	kwWeight         = 0.3
+	tagWeight        = 0.3
+	intentWeight     = 0.25
+	recencyWeight    = 0.15
 	halfLifeMinutes  = 60.0
 )
 
@@ -56,7 +57,30 @@ func (Selector) Score(chunk Chunk, q Query, now time.Time) float64 {
 			recencyScore = math.Exp(-ageMin / halfLifeMinutes)
 		}
 	}
-	return kwWeight*kwScore + tagWeight*tagScore + recencyWeight*recencyScore
+	intentScore := 0.0
+	if len(q.Intents) > 0 && hitsIntent(q.Intents, chunk.Metadata["intents"]) {
+		intentScore = 1.0
+	}
+	return kwWeight*kwScore + tagWeight*tagScore + intentWeight*intentScore + recencyWeight*recencyScore
+}
+
+// hitsIntent 查询意图与块文档 intents 元数据（逗号分隔）是否有交集。
+func hitsIntent(query []string, meta string) bool {
+	if meta == "" {
+		return false
+	}
+	tokens := map[string]bool{}
+	for _, t := range strings.Split(meta, ",") {
+		if t = strings.TrimSpace(t); t != "" {
+			tokens[t] = true
+		}
+	}
+	for _, q := range query {
+		if tokens[q] {
+			return true
+		}
+	}
+	return false
 }
 
 func (Selector) Select(candidates []Chunk, q Query, topK int, threshold float64) []Chunk {

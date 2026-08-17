@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"aiops/internal/mockdata"
+	"aiops/internal/model"
 )
 
 type Assembled struct {
@@ -92,15 +92,49 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 			Content:  m.Role + ": " + m.Content,
 			Metadata: map[string]string{"created_at": m.CreatedAt.Format(time.RFC3339)}})
 	}
-	for _, d := range mockdata.Docs() {
+	kcs, err := a.cs.ListKnowledgeChunks()
+	if err != nil {
+		return nil, err
+	}
+	for _, kc := range kcs {
 		out = append(out, Chunk{Source: SourceKnowledge,
-			Content:  d.Title + ": " + d.Body,
-			Metadata: map[string]string{"metrics": strings.Join(d.Metrics, ","), "device_types": strings.Join(d.DeviceTypes, ",")}})
+			Content: knowledgeContent(kc),
+			Metadata: map[string]string{
+				"metrics":      strings.Join(kc.Metrics, ","),
+				"device_types": strings.Join(kc.DeviceTypes, ","),
+				"vendor":       strings.Join(kc.Vendor, ","),
+				"model":        strings.Join(kc.Model, ","),
+				"intents":      strings.Join(kc.Intents, ","),
+				"doc_title":    kc.Title,
+				"doc_id":       kc.DocID,
+				"created_at":   kc.CreatedAt.Format(time.RFC3339),
+			}})
 	}
 	for i := range out {
 		out[i].Score = a.sel.Score(out[i], q, now)
 	}
 	return out, nil
+}
+
+func knowledgeContent(kc model.KbKnowledgeChunk) string {
+	head := "[" + categoryName(kc.Category) + "] " + kc.Title
+	if kc.Heading != "" {
+		head += " §" + kc.Heading
+	}
+	return head + ": " + kc.Content
+}
+
+func categoryName(c model.KBCategory) string {
+	switch c {
+	case model.KBCase:
+		return "运维案例"
+	case model.KBManual:
+		return "产品手册"
+	case model.KBRunbook:
+		return "操作手册"
+	default:
+		return "其他"
+	}
 }
 
 func scratchpadSection(sel []Chunk) string {

@@ -42,3 +42,7 @@ func (cs *Store) ListLongTermMemory(device, metric string) ([]model.LongTermMemo
 func (cs *Store) RecentMessages(n int) ([]model.Message, error) {
 	return cs.st.RecentMessages(n)
 }
+
+func (cs *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
+	return cs.st.ListKnowledgeChunks()
+}

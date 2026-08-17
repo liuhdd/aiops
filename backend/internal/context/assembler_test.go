@@ -11,10 +11,30 @@ import (
 	"aiops/internal/store"
 )
 
+func seedKbDoc(t *testing.T, s *store.Store) {
+	t.Helper()
+	now := time.Now()
+	if err := s.WithKBTx(func(tx store.KBStore) error {
+		if err := tx.InsertKbDocument(model.KbDocument{
+			ID: "kbdoc-1", Title: "磁盘扩容预案", Category: model.KBCase,
+			DeviceTypes: []string{"server"}, Metrics: []string{"disk_usage"},
+			Keywords: []string{"扩容", "清理"}, Intents: []string{"AskRecommendation"},
+			Content: "磁盘使用率超过95%时扩容或清理日志。", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		return tx.InsertKbChunk(model.KbChunk{ID: "kbchunk-1", DocID: "kbdoc-1", Seq: 0,
+			Heading: "", Content: "磁盘使用率超过95%时扩容或清理日志。", CreatedAt: now})
+	}); err != nil {
+		t.Fatalf("seed kb: %v", err)
+	}
+}
+
 func TestAssembleSections(t *testing.T) {
 	mockdata.GenerateAll(42)
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
+	seedKbDoc(t, s)
 	cs := NewStore(s)
 	now := time.Now()
 	_ = cs.InsertScratchpad(model.ScratchpadEntry{ID: "sp1", RunID: "run-1", Step: "rca",
@@ -34,6 +54,9 @@ func TestAssembleSections(t *testing.T) {
 			t.Fatalf("missing section %s in:\n%s", sec, as.User)
 		}
 	}
+	if !strings.Contains(as.User, "磁盘扩容预案") {
+		t.Fatalf("知识库部分应含磁盘扩容预案:\n%s", as.User)
+	}
 	if len(as.Selected) == 0 {
 		t.Fatalf("no selected chunks")
 	}
@@ -51,5 +74,27 @@ func TestAssembleEmptySourcesNoSections(t *testing.T) {
 	}
 	if strings.Contains(as.User, "【临时笔记】") || strings.Contains(as.User, "【可用工具】") {
 		t.Fatalf("empty sources should not emit sections:\n%s", as.User)
+	}
+}
+
+func TestAssembleKnowledgeByIntent(t *testing.T) {
+	mockdata.GenerateAll(42)
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	seedKbDoc(t, s)
+	cs := NewStore(s)
+	asm := NewAssembler(cs, 3)
+	as, err := asm.Assemble(Query{Device: "db-01", Metric: "disk_usage", Intents: []string{"AskRecommendation"}}, false, nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	found := false
+	for _, c := range as.Selected {
+		if c.Source == SourceKnowledge && strings.Contains(c.Content, "磁盘扩容预案") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("应命中意图对应知识块:\n%s", as.User)
 	}
 }

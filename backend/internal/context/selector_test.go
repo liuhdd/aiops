@@ -78,3 +78,23 @@ func TestSelectFiltersBelowThreshold(t *testing.T) {
 		t.Fatalf("expected filtered out, got %d", len(got))
 	}
 }
+
+func TestScoreIntentBoost(t *testing.T) {
+	sel := Selector{}
+	now := time.Now()
+	base := func(intents string) Chunk {
+		return chunk(SourceKnowledge, "磁盘扩容预案正文", map[string]string{
+			"metrics": "disk_usage", "intents": intents, "created_at": now.Format(time.RFC3339),
+		})
+	}
+	hit := base("AskRootCause,AskRecommendation")
+	miss := base("OtherIntent")
+	q := Query{Metric: "disk_usage", Intents: []string{"AskRootCause"}}
+	if sel.Score(hit, q, now) <= sel.Score(miss, q, now) {
+		t.Fatalf("意图命中应加分: hit=%f miss=%f", sel.Score(hit, q, now), sel.Score(miss, q, now))
+	}
+	q2 := Query{Metric: "disk_usage"}
+	if sel.Score(hit, q2, now) != sel.Score(miss, q2, now) {
+		t.Fatalf("无意图查询应同分: %f vs %f", sel.Score(hit, q2, now), sel.Score(miss, q2, now))
+	}
+}
