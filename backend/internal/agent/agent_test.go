@@ -194,30 +194,35 @@ func TestRewriteAndSplit(t *testing.T) {
 }
 
 func TestClassifyWithLight(t *testing.T) {
-	c := &scriptedLLM{raw: `{"intent":"AskRootCause"}`}
-	if got := ClassifyWithLight(context.Background(), nil, "为什么磁盘满了", c); got != AskRootCause {
-		t.Fatalf("ClassifyWithLight = %v, want AskRootCause", got)
+	c := &scriptedLLM{raw: `{"intent":"AskRootCause","confidence":0.9}`}
+	got, conf := ClassifyWithLight(context.Background(), nil, "为什么磁盘满了", c)
+	if got != AskRootCause || conf != 0.9 {
+		t.Fatalf("ClassifyWithLight = (%v,%v), want (AskRootCause,0.9)", got, conf)
 	}
-	bad := &scriptedLLM{raw: `{"intent":"Nope"}`}
-	if got := ClassifyWithLight(context.Background(), nil, "x", bad); got != Unknown {
+	bad := &scriptedLLM{raw: `{"intent":"Nope","confidence":0.9}`}
+	if got, _ := ClassifyWithLight(context.Background(), nil, "x", bad); got != Unknown {
 		t.Fatalf("非法意图应为 Unknown, got %v", got)
 	}
 	fail := &scriptedLLM{err: errors.New("boom")}
-	if got := ClassifyWithLight(context.Background(), nil, "x", fail); got != Unknown {
+	if got, _ := ClassifyWithLight(context.Background(), nil, "x", fail); got != Unknown {
 		t.Fatalf("LLM 出错应为 Unknown, got %v", got)
 	}
 }
 
 func TestParseIntentWithLight(t *testing.T) {
-	c := &scriptedLLM{raw: `{"intent":"Nope"}`}
-	if got := ParseIntentWithLight(context.Background(), nil, "alarm-1什么原因", c); got != AskRootCause {
+	c := &scriptedLLM{raw: `{"intent":"Nope","confidence":0.9}`}
+	if got, _ := ParseIntentWithLight(context.Background(), nil, "alarm-1什么原因", c); got != AskRootCause {
 		t.Fatalf("规则命中应为 AskRootCause, got %v", got)
 	}
-	if got := ParseIntentWithLight(context.Background(), nil, "帮我看看今天天气", &scriptedLLM{raw: `{"intent":"ListAlerts"}`}); got != ListAlerts {
+	if got, _ := ParseIntentWithLight(context.Background(), nil, "帮我看看今天天气", &scriptedLLM{raw: `{"intent":"ListAlerts","confidence":0.9}`}); got != ListAlerts {
 		t.Fatalf("LLM 分类应为 ListAlerts, got %v", got)
 	}
-	if got := ParseIntentWithLight(context.Background(), nil, "今天天气如何", nil); got != Unknown {
+	if got, _ := ParseIntentWithLight(context.Background(), nil, "今天天气如何", nil); got != Unknown {
 		t.Fatalf("nil completer 应回退 Unknown, got %v", got)
+	}
+	// LLM 低置信度 → 拦截为 Unknown
+	if got, conf := ParseIntentWithLight(context.Background(), nil, "帮我看看今天天气", &scriptedLLM{raw: `{"intent":"ListAlerts","confidence":0.2}`}); got != Unknown || conf != 0.2 {
+		t.Fatalf("低置信度应拦截为 Unknown, got (%v,%v)", got, conf)
 	}
 }
 

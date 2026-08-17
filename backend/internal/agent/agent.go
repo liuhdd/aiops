@@ -173,7 +173,7 @@ func (a *Agent) answerOne(ctx context.Context, sub string) string {
 
 // answerOneStatus 单个子问题：规则意图优先，Unknown 用轻量 LLM 分类；返回内容与状态。
 func (a *Agent) answerOneStatus(ctx context.Context, sub string) (string, string) {
-	intent := ParseIntentWithLight(ctx, a.activeLeaves(), sub, a.lightLLM)
+	intent, _ := ParseIntentWithLight(ctx, a.activeLeaves(), sub, a.lightLLM)
 	switch intent {
 	case ListAlerts:
 		return a.listAlertsReply(), "success"
