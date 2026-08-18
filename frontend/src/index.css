@@ -38,3 +38,15 @@ body {
   border-radius: 8px;
   background: #1c2333;
 }
+
+.chat-bubble {
+  max-width: 80%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #2a3346;
+  color: #fff;
+  white-space: pre-wrap;
+}
+.chat-bubble-user {
+  background: #1677ff;
+}
