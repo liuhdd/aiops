@@ -1,6 +1,5 @@
-import { useState } from 'react'
-import { Button, Form, Input, Modal, Select } from 'antd'
-import type { IntentTreeNode, IntentKind, IntentUpsert } from '../types'
+import { Form, Input, Modal, Select } from 'antd'
+import type { IntentTreeNode, IntentUpsert } from '../types'
 
 export function parseExamples(str: string): string[] {
   return str.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
@@ -19,13 +18,14 @@ export default function IntentEditor({
   onCancel: () => void
 }) {
   const [form] = Form.useForm<IntentUpsert>()
-  const [kind, setKind] = useState<IntentKind>(initial?.kind ?? 'GROUP')
+  const kind = Form.useWatch('kind', form) ?? initial?.kind ?? 'GROUP'
 
   const submit = async () => {
     const values = await form.validateFields().catch(() => undefined)
     if (!values) return
     onSubmit({
       ...values,
+      sort_order: Number(values.sort_order) || 0,
       rule_keywords: Array.isArray(values.rule_keywords)
         ? values.rule_keywords
         : parseKeywords(values.rule_keywords ?? ''),
@@ -71,7 +71,6 @@ export default function IntentEditor({
               { value: 'KB', label: '知识库' },
               { value: 'MCP', label: 'MCP工具' },
             ]}
-            onChange={(v: IntentKind) => setKind(v)}
           />
         </Form.Item>
         {kind !== 'GROUP' && (
