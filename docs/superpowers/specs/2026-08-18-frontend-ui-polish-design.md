@@ -86,7 +86,7 @@
 
 ### 测试适配（关键风险点）
 
-- antd v5 在 jsdom 下需要 `window.matchMedia` polyfill：vitest 配置加 `setupFiles`（新建 `src/setupTests.ts`），内含 `matchMedia` 与 `ResizeObserver` stub
+- antd v5/v6 在 jsdom 下需要 `window.matchMedia` polyfill：vitest 配置加 `setupFiles`（新建 `src/setupTests.ts`），内含 `matchMedia` 与 `ResizeObserver` stub
 - 现有 6 个组件测试断言基于渲染文本/占位符，改组件后大部分断言不变，个别需按新结构微调（如 `getByPlaceholderText('输入消息...')`、`getByText('发送')`）
 - 新增测试：统计卡片派生计算、告警表选中高亮、时间线空态
 - 验证命令：`npm run build`（tsc + vite）与 `npx vitest run` 全绿
@@ -104,7 +104,7 @@
 
 ## 设计决策与取舍
 
-1. **AntD v5 而非 v4/Tailwind/纯 CSS**：用户明确选择组件库；v5 与 React 18 兼容、自带暗色算法、CSS-in-JS 无需额外构建配置，与 Vite 开箱即用。
+1. **AntD（v6，实施时实测）而非 v4/Tailwind/纯 CSS**：用户明确选择组件库；antd v6 与 React 18 兼容、自带暗色算法、CSS-in-JS 无需额外构建配置，与 Vite 开箱即用。
 2. **不引入路由库**：现有 `view` state 切换已足够，Sider 菜单仅映射到 state，避免为三个页面引入 react-router 的额外复杂度。
 3. **不新增后端接口**：统计卡片全部由现有 `alerts` 列表前端派生，符合「外部数据源均已 mock、改动最小」的约定。
 4. **一次性全量迁移**：避免暗色原生控件与 AntD 组件并存的割裂观感，不留双体系债务。

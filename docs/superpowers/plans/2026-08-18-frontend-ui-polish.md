@@ -6,7 +6,7 @@
 
 **Architecture:** `main.tsx` 用 `ConfigProvider`（darkAlgorithm + 自定义 token）建全局主题；`App.tsx` 重构为 `Layout`（Header + 可折叠 Sider + Content）；各页面组件改用 antd 组件（Table/Card/Timeline/Tree/Modal/Form/Upload/Drawer），移除全部 inline style 中的视觉样式（功能性的如 `flex` 布局保留或迁移到类名）。不改后端、不改 `types.ts`、不改 `api/client.ts`。
 
-**Tech Stack:** React 18、antd v5、@ant-design/icons、Vite 6、Vitest + jsdom + @testing-library/react。
+**Tech Stack:** React 18、antd v6（计划写作时以 v5 语义编写，Task 1 已实测 v6 兼容全部所用 API）、@ant-design/icons、Vite 6、Vitest + jsdom + @testing-library/react。
 
 ## Global Constraints
 
@@ -14,7 +14,7 @@
 - 不新增后端接口、不改 `src/types.ts`、不改 `src/api/client.ts`。
 - 现有组件 props 契约尽量保持；`AlertList` 增加 `selectedId` 可选 prop（行高亮用）。
 - 提交信息中文 + `feat:`/`test:`/`refactor:`/`docs:` 前缀。
-- 测试必须在 jsdom 下通过；antd v5 需要 `window.matchMedia`/`ResizeObserver` stub（Task 1 已建好，后续任务直接用）。
+- 测试必须在 jsdom 下通过；antd v5/v6 需要 `window.matchMedia`/`ResizeObserver` stub（Task 1 已建好，后续任务直接用）。
 - 每个任务结束必须 `npx vitest run` 通过（或说明失败项），最后 `npm run build` 通过。
 - 视觉样式统一走 `src/index.css` 的类名 + antd token；不再出现散落的 inline 视觉样式（`color`/`background`/`border` 等）。功能性 inline 样式（`display:flex`、`flex:2`、`width:360`）可保留。
 
@@ -1251,7 +1251,7 @@ export default function IntentEditor({
       onCancel={onCancel}
       okText="保存"
       cancelText="取消"
-      destroyOnClose
+      destroyOnHidden
     >
       <Form
         form={form}
