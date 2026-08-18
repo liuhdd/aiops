@@ -1,4 +1,4 @@
-import { Alert, Button, ConfigProvider, Popconfirm, Space, Tag, Tree } from 'antd'
+import { Alert, Button, Popconfirm, Space, Tag, Tree } from 'antd'
 import type { TreeDataNode } from 'antd'
 import type { IntentTreeNode } from '../types'
 
@@ -57,15 +57,13 @@ export default function IntentTree({
     })
 
   return (
-    <ConfigProvider button={{ autoInsertSpace: false }}>
-      <div>
-        {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
-        {nodes.length === 0 ? (
-          <div style={{ color: 'rgba(255,255,255,0.45)', padding: 16 }}>暂无意图节点</div>
-        ) : (
-          <Tree treeData={toData(nodes)} defaultExpandAll showLine blockNode />
-        )}
-      </div>
-    </ConfigProvider>
+    <div>
+      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
+      {nodes.length === 0 ? (
+        <div style={{ color: 'rgba(255,255,255,0.45)', padding: 16 }}>暂无意图节点</div>
+      ) : (
+        <Tree treeData={toData(nodes)} defaultExpandAll showLine blockNode />
+      )}
+    </div>
   )
 }

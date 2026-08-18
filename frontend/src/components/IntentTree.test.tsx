@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent } from '../test-utils'
 import IntentTree, { collectIds } from './IntentTree'
 import type { IntentTreeNode } from '../types'
 
