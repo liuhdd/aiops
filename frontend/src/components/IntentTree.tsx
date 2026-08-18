@@ -58,7 +58,7 @@ export default function IntentTree({
 
   return (
     <div>
-      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
+      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 8 }} />}
       {nodes.length === 0 ? (
         <div style={{ color: 'rgba(255,255,255,0.45)', padding: 16 }}>暂无意图节点</div>
       ) : (

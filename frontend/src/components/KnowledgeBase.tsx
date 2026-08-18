@@ -128,7 +128,7 @@ export default function KnowledgeBase() {
   return (
     <div>
       <Typography.Title level={4}>知识库</Typography.Title>
-      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
+      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 8 }} />}
 
       <Space wrap style={{ marginBottom: 16 }}>
         <Select
@@ -195,7 +195,9 @@ export default function KnowledgeBase() {
         {detail && (
           <>
             <Space wrap style={{ marginBottom: 8 }}>
-              <Button onClick={() => onDelete(detail.id)} danger>删除文档</Button>
+              <Popconfirm title="确认删除？" okText="确定" onConfirm={() => onDelete(detail.id)}>
+                <Button danger>删除文档</Button>
+              </Popconfirm>
               <Button onClick={() => onSaveMeta(detail.id, {
                 title: detail.title, category: detail.category,
                 device_types: detail.device_types, vendor: detail.vendor, model: detail.model,

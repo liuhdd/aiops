@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Space, Typography } from 'antd'
+import { Alert, Typography } from 'antd'
 import IntentTree from './IntentTree'
 import IntentEditor from './IntentEditor'
 import { fetchIntentTree, createIntent, updateIntent, deleteIntents, setIntentStatus } from '../api/client'
@@ -69,7 +69,7 @@ export default function IntentManager() {
   return (
     <div>
       <Typography.Title level={4}>意图管理</Typography.Title>
-      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
+      {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 8 }} />}
       <IntentTree
         nodes={nodes}
         onToggle={toggle}
