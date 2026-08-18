@@ -333,6 +333,31 @@ func TestHandleMultiIntentAggregation(t *testing.T) {
 	}
 }
 
+func TestHandleRootCauseQuestionNotDegradedByRewrite(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	now := time.Now()
+	_ = s.SaveAlert(model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage",
+		Severity: "critical", FiredAt: now, CreatedAt: now})
+	_ = s.SaveRun(model.PipelineRun{ID: "run-alarm-1", AlertID: "alarm-1", Status: model.StatusCompleted, Iteration: 0, MaxIteration: 2, CreatedAt: now, UpdatedAt: now})
+	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-alarm-1", StageID: "rca", StageName: "根因分析",
+		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
+	// 轻量 LLM 重写把单意图根因问题拆成碎片子问题，丢失 "什么原因" 关键词
+	// （碎片含 "告警" → 规则误判为 ListAlerts）。修复前会返回告警列表。
+	light := &scriptedLLM{raw: `{"rewritten":"告警alarm-1由什么原因引起？","sub_questions":["告警alarm-1的告警内容是什么？","告警alarm-1可能由哪些原因导致？"]}`}
+	ag := NewWithLight(s, nil, light, nil, nil, 3, 3)
+	msg, err := ag.Handle(context.Background(), "alarm-1 什么原因")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(msg.Content, "磁盘空间不足") {
+		t.Fatalf("根因问题应返回根因而非告警列表, got %q", msg.Content)
+	}
+	if strings.Contains(msg.Content, "当前告警列表") {
+		t.Fatalf("根因问题不应退化为告警列表, got %q", msg.Content)
+	}
+}
+
 func TestHandleUnknownGuidance(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()

@@ -96,6 +96,12 @@ func (a *Agent) answer(ctx context.Context, userText string) string {
 	if err != nil || len(subs) == 0 {
 		return a.answerSingle(ctx, userText)
 	}
+	// 原文已有明确的规则意图，但重写拆分出的子问题全部丢失该意图（LLM 常把单意图
+	// 问题拆成含"告警"等宽泛词的碎片，被规则误判为 ListAlerts）→ 回退单意图路径，
+	// 以原文为准，避免"什么原因"被重写成告警列表。
+	if sc := RuleScore(a.activeLeaves(), userText); sc.Confidence >= 0.4 && !a.subsKeepIntent(subs, sc.Intent) {
+		return a.answerSingle(ctx, userText)
+	}
 	if len(subs) == 1 {
 		return a.answerOne(ctx, subs[0])
 	}
@@ -113,6 +119,16 @@ func (a *Agent) answer(ctx context.Context, userText string) string {
 		fmt.Fprintf(&b, "[%d] %s → %s\n%s\n", i+1, sub, status, content)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// subsKeepIntent 返回拆分出的子问题中是否有任一命中目标意图（规则）。
+func (a *Agent) subsKeepIntent(subs []string, intent Intent) bool {
+	for _, s := range subs {
+		if RuleScore(a.activeLeaves(), s).Intent == intent {
+			return true
+		}
+	}
+	return false
 }
 
 // activeLeaves 返回当前活跃叶子（provider 为空/返回空时回退 SeedLeaves）。
