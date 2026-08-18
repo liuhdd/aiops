@@ -12,6 +12,7 @@ export default function AlertList({
 }: {
   alerts: Alert[]
   onSelect: (id: string) => void
+  selectedId?: string | null
 }) {
   if (alerts.length === 0) {
     return <div style={{ padding: 16, color: '#888' }}>暂无告警</div>
