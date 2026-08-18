@@ -1,3 +1,4 @@
+import { Alert, Card, Descriptions, Empty, Space, Tag, Timeline, Typography } from 'antd'
 import type { AlertDetail, StageResult } from '../types'
 
 interface RCAOutput {
@@ -22,31 +23,46 @@ function parseEvidence(out: string): EvidenceOutput {
 const statusLabel: Record<string, string> = {
   running: '进行中', completed: '完成', failed: '失败', skipped: '跳过', pending: '待执行',
 }
+const statusColor: Record<string, string> = {
+  running: 'processing', completed: 'success', failed: 'error', skipped: 'default', pending: 'default',
+}
+const runStatusMap: Record<string, { color: string; text: string }> = {
+  running: { color: 'processing', text: '运行中' },
+  completed: { color: 'success', text: '完成' },
+  failed: { color: 'error', text: '失败' },
+  skipped: { color: 'default', text: '跳过' },
+  degraded: { color: 'warning', text: '降级' },
+}
 
 function StageRow({ s }: { s: StageResult }) {
   const rca = s.stage_id === 'rca' ? parseRCA(s.output) : null
   const ev = s.stage_id === 'evidence' ? parseEvidence(s.output) : null
   return (
-    <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 8, marginBottom: 8 }}>
-      <div>
-        <strong>{s.stage_name}</strong>
-        {s.iteration > 0 && <span style={{ color: '#f57c00' }}> 第{s.iteration}轮</span>}
-        <span style={{ color: s.status === 'completed' ? '#2e7d32' : '#f57c00' }}>
-          {' '}[{statusLabel[s.status] ?? s.status}]
-        </span>
-      </div>
-      {s.error && <div style={{ color: '#d32f2f' }}>{s.error}</div>}
+    <div className="stage-row">
+      <Space wrap>
+        <Typography.Text strong>{s.stage_name}</Typography.Text>
+        {s.iteration > 0 && <Tag color="orange">第{s.iteration}轮</Tag>}
+        <Tag color={statusColor[s.status] ?? 'default'}>{statusLabel[s.status] ?? s.status}</Tag>
+      </Space>
+      {s.error && <div style={{ color: '#ff7875', marginTop: 4 }}>{s.error}</div>}
       {rca?.root_cause && (
-        <div>
-          <div>根因：{rca.root_cause}（置信度 {Math.round((rca.confidence ?? 0) * 100)}%）</div>
-          <ul>{rca.evidence_chain?.map((e, i) => <li key={i}>{e}</li>)}</ul>
-          {rca.gaps && rca.gaps.length > 0 && (
-            <div style={{ color: '#f57c00' }}>待补充：{rca.gaps.join('、')}</div>
-          )}
-        </div>
+        <Descriptions size="small" column={1} style={{ marginTop: 8 }}>
+          <Descriptions.Item label="根因">{rca.root_cause}</Descriptions.Item>
+          <Descriptions.Item label="置信度">
+            {Math.round((rca.confidence ?? 0) * 100)}%
+          </Descriptions.Item>
+          <Descriptions.Item label="证据链">
+            {rca.evidence_chain?.length ? (
+              <ul style={{ margin: 0, paddingLeft: 16 }}>{rca.evidence_chain.map((e, i) => <li key={i}>{e}</li>)}</ul>
+            ) : '—'}
+          </Descriptions.Item>
+        </Descriptions>
+      )}
+      {rca?.gaps && rca.gaps.length > 0 && (
+        <Alert type="warning" showIcon style={{ marginTop: 8 }} title={`待补充：${rca.gaps.join('、')}`} />
       )}
       {ev && (
-        <div style={{ color: '#555' }}>
+        <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.65)' }}>
           指标点 {ev.metrics?.length ?? 0} 个，日志 {ev.logs?.length ?? 0} 条
         </div>
       )}
@@ -55,13 +71,27 @@ function StageRow({ s }: { s: StageResult }) {
 }
 
 export default function PipelineTimeline({ detail }: { detail: AlertDetail }) {
+  const { alert, run, stages } = detail
+  const rs = runStatusMap[run.status] ?? { color: 'default', text: run.status ?? '未运行' }
   return (
-    <div>
-      <div style={{ marginBottom: 8 }}>
-        告警 {detail.alert.id} · 运行状态：{detail.run.status ?? '未运行'}
-      </div>
-      {detail.stages.length === 0 && <div style={{ color: '#888' }}>尚未开始排查</div>}
-      {detail.stages.map((s) => <StageRow key={s.id} s={s} />)}
-    </div>
+    <Card
+      title={(
+        <Space>
+          <span>告警 {alert.id}</span>
+          <Tag color={rs.color}>{rs.text}</Tag>
+        </Space>
+      )}
+      size="small"
+    >
+      {stages.length === 0 && <Empty description="尚未开始排查" />}
+      {stages.length > 0 && (
+        <Timeline
+          items={stages.map((s) => ({
+            color: s.status === 'completed' ? 'green' : s.status === 'failed' ? 'red' : 'blue',
+            content: <StageRow s={s} />,
+          }))}
+        />
+      )}
+    </Card>
   )
 }

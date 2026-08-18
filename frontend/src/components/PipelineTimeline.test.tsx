@@ -16,9 +16,27 @@ const detail: AlertDetail = {
 }
 
 describe('PipelineTimeline', () => {
-  it('renders rca root cause', () => {
+  it('渲染 rca 根因与运行状态', () => {
     render(<PipelineTimeline detail={detail} />)
     expect(screen.getByText(/磁盘空间不足/)).toBeTruthy()
     expect(screen.getByText('根因分析')).toBeTruthy()
+    expect(screen.getAllByText('完成').length).toBeGreaterThan(0)
+  })
+
+  it('无阶段时显示空态', () => {
+    render(<PipelineTimeline detail={{ ...detail, stages: [] }} />)
+    expect(screen.getByText('尚未开始排查')).toBeTruthy()
+  })
+
+  it('gaps 提示待补充', () => {
+    const d: AlertDetail = {
+      ...detail,
+      stages: [{
+        ...detail.stages[0],
+        output: '{"root_cause":"磁盘空间不足","gaps":["证据不足"],"confidence":0.5}',
+      }],
+    }
+    render(<PipelineTimeline detail={d} />)
+    expect(screen.getByText(/待补充：证据不足/)).toBeTruthy()
   })
 })
