@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Button, Card, Input, Space, Typography } from 'antd'
+import { SendOutlined } from '@ant-design/icons'
 import type { ChatMessage } from '../types'
 
 export default function ChatPanel({
@@ -23,31 +25,46 @@ export default function ChatPanel({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-        {messages.length === 0 && <div style={{ color: '#888' }}>开始对话，例如：查一下 alarm-100 什么原因</div>}
-        {messages.map((m) => (
-          <div key={m.id} style={{ textAlign: m.role === 'user' ? 'right' : 'left', margin: '6px 0' }}>
-            <span style={{
-              display: 'inline-block', maxWidth: '80%', padding: '6px 10px', borderRadius: 8,
-              background: m.role === 'user' ? '#1976d2' : '#e0e0e0',
-              color: m.role === 'user' ? '#fff' : '#111', whiteSpace: 'pre-wrap',
-            }}>
-              {m.content}
-            </span>
-          </div>
-        ))}
+    <Card title="智能助手" size="small" style={{ height: '100%' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div style={{ flex: 1, overflowY: 'auto', minHeight: 200 }}>
+          {messages.length === 0 && (
+            <Typography.Text type="secondary">开始对话，例如：查一下 alarm-100 什么原因</Typography.Text>
+          )}
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              style={{
+                display: 'flex',
+                justifyContent: m.role === 'user' ? 'flex-end' : 'flex-start',
+                margin: '6px 0',
+              }}
+            >
+              <div className={`chat-bubble${m.role === 'user' ? ' chat-bubble-user' : ''}`}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+        </div>
+        <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+          <Input.TextArea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onPressEnter={(e) => {
+              if (!e.shiftKey) {
+                e.preventDefault()
+                submit()
+              }
+            }}
+            placeholder="输入消息..."
+            autoSize={{ minRows: 1, maxRows: 4 }}
+            aria-label="输入消息"
+          />
+          <Button type="primary" icon={<SendOutlined />} onClick={submit} loading={sending}>
+            发送
+          </Button>
+        </Space.Compact>
       </div>
-      <div style={{ display: 'flex', gap: 8, padding: 8 }}>
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && submit()}
-          placeholder="输入消息..."
-          style={{ flex: 1, padding: 8 }}
-        />
-        <button onClick={submit} disabled={sending}>发送</button>
-      </div>
-    </div>
+    </Card>
   )
 }
