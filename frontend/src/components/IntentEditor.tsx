@@ -60,7 +60,7 @@ export default function IntentEditor({
           sort_order: initial?.sort_order ?? 0,
         }}
       >
-        <Form.Item name="name" label="名称" rules={[{ required: kind === 'GROUP', message: '请输入名称' }]}>
+        <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
           <Input />
         </Form.Item>
         <Form.Item name="kind" label="类型">

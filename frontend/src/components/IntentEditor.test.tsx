@@ -15,6 +15,7 @@ describe('IntentEditor', () => {
     render(<IntentEditor open groups={[]} onSubmit={onSubmit} onCancel={vi.fn()} />)
     fireEvent.mouseDown(screen.getByLabelText(/类型/))
     fireEvent.click(await screen.findByText('知识库'))
+    fireEvent.change(screen.getByLabelText(/名称/), { target: { value: '测试意图' } })
     fireEvent.change(screen.getByLabelText(/示例/), { target: { value: '怎么查手册, 手册在哪' } })
     fireEvent.click(screen.getByText('保存'))
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
