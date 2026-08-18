@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  Alert, Button, Card, Descriptions, Drawer, Empty, Input, Popconfirm, Select,
+  Space, Table, Tag, Typography, Upload,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import { UploadOutlined } from '@ant-design/icons'
+import {
   fetchKbDocs, fetchKbDoc, uploadKbDoc, updateKbDoc, deleteKbDoc, fetchIntentLeaves,
 } from '../api/client'
 import type { KbDocSummary, KbDocDetail, KbDocUpsert, KbFilter, IntentLeaf } from '../types'
@@ -12,6 +18,10 @@ const CATEGORIES: { value: string; label: string }[] = [
   { value: 'other', label: '其他' },
 ]
 
+const categoryColor: Record<string, string> = {
+  case: 'cyan', manual: 'blue', runbook: 'geekblue', other: 'default',
+}
+
 function tags(list: string[] | undefined): string {
   return (list ?? []).join(', ')
 }
@@ -23,7 +33,8 @@ export default function KnowledgeBase() {
   const [error, setError] = useState('')
   const [filter, setFilter] = useState<KbFilter>({})
   const [uploading, setUploading] = useState(false)
-  const [upload, setUpload] = useState({ file: null as File | null, category: '', title: '', vendor: '', model: '', intent: '' })
+  const [file, setFile] = useState<File | null>(null)
+  const [meta, setMeta] = useState({ category: '', title: '', vendor: '', model: '', intent: '' })
 
   const reload = useCallback(async () => {
     try {
@@ -41,23 +52,24 @@ export default function KnowledgeBase() {
   }, [])
 
   const onUpload = async () => {
-    if (!upload.file) { setError('请选择文件'); return }
+    if (!file) { setError('请选择文件'); return }
     const form = new FormData()
-    form.append('file', upload.file)
-    if (upload.category) form.append('category', upload.category)
-    if (upload.title) form.append('title', upload.title)
-    if (upload.vendor) form.append('vendor', upload.vendor)
-    if (upload.model) form.append('model', upload.model)
-    if (upload.intent) form.append('intents', upload.intent)
+    form.append('file', file)
+    if (meta.category) form.append('category', meta.category)
+    if (meta.title) form.append('title', meta.title)
+    if (meta.vendor) form.append('vendor', meta.vendor)
+    if (meta.model) form.append('model', meta.model)
+    if (meta.intent) form.append('intents', meta.intent)
     setUploading(true)
     try {
       await uploadKbDoc(form)
-      setUpload({ file: null, category: '', title: '', vendor: '', model: '', intent: '' })
-      setUploading(false)
+      setFile(null)
+      setMeta({ category: '', title: '', vendor: '', model: '', intent: '' })
       reload()
     } catch (e) {
-      setUploading(false)
       setError((e as Error).message)
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -89,93 +101,122 @@ export default function KnowledgeBase() {
     }
   }
 
+  const columns: ColumnsType<KbDocSummary> = [
+    { title: '标题', dataIndex: 'title', key: 'title' },
+    {
+      title: '分类', dataIndex: 'category', key: 'category',
+      render: (v: string) => <Tag color={categoryColor[v] ?? 'default'}>{CATEGORIES.find((c) => c.value === v)?.label ?? v}</Tag>,
+    },
+    { title: '设备类型', dataIndex: 'device_types', key: 'device_types', render: tags },
+    { title: '厂商', dataIndex: 'vendor', key: 'vendor', render: tags },
+    { title: '型号', dataIndex: 'model', key: 'model', render: tags },
+    { title: '块数', dataIndex: 'chunk_count', key: 'chunk_count', render: (v: number) => `${v} 块` },
+    { title: '来源', dataIndex: 'source_file', key: 'source_file' },
+    {
+      title: '操作', key: 'actions',
+      render: (_: unknown, d: KbDocSummary) => (
+        <Space>
+          <Button size="small" onClick={() => onOpen(d.id)}>详情</Button>
+          <Popconfirm title="确认删除？" okText="确定" onConfirm={() => onDelete(d.id)}>
+            <Button size="small" danger>删除</Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
+
   return (
-    <div style={{ padding: 16 }}>
-      <h2>知识库</h2>
-      {error && <div style={{ color: '#d32f2f', padding: 8 }}>{error}</div>}
+    <div>
+      <Typography.Title level={4}>知识库</Typography.Title>
+      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
 
-      <div style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <select aria-label="筛选分类" value={filter.category ?? ''}
-          onChange={(e) => setFilter({ ...filter, category: e.target.value || undefined })}>
-          {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-        </select>
-        <input placeholder="厂商" aria-label="厂商"
-          onChange={(e) => setFilter({ ...filter, vendor: e.target.value || undefined })} />
-        <input placeholder="型号" aria-label="型号"
-          onChange={(e) => setFilter({ ...filter, model: e.target.value || undefined })} />
-        <input placeholder="关键词" aria-label="关键词"
-          onChange={(e) => setFilter({ ...filter, q: e.target.value || undefined })} />
-      </div>
+      <Space wrap style={{ marginBottom: 16 }}>
+        <Select
+          aria-label="筛选分类"
+          placeholder="全部分类"
+          style={{ width: 160 }}
+          allowClear
+          options={CATEGORIES.filter((c) => c.value !== '').map((c) => ({ value: c.value, label: c.label }))}
+          onChange={(v?: string) => setFilter({ ...filter, category: v || undefined })}
+        />
+        <Input placeholder="厂商" aria-label="厂商"
+          onChange={(e) => setFilter({ ...filter, vendor: e.target.value || undefined })} style={{ width: 140 }} />
+        <Input placeholder="型号" aria-label="型号"
+          onChange={(e) => setFilter({ ...filter, model: e.target.value || undefined })} style={{ width: 140 }} />
+        <Input placeholder="关键词" aria-label="关键词"
+          onChange={(e) => setFilter({ ...filter, q: e.target.value || undefined })} style={{ width: 160 }} />
+      </Space>
 
-      <div style={{ marginBottom: 16, padding: 12, border: '1px solid #ddd', borderRadius: 8 }}>
-        <div>上传文档（.txt / .md / .docx）</div>
-        <input type="file" accept=".txt,.md,.docx" aria-label="上传文件"
-          onChange={(e) => setUpload({ ...upload, file: e.target.files?.[0] ?? null })} />
-        <select aria-label="上传分类" value={upload.category}
-          onChange={(e) => setUpload({ ...upload, category: e.target.value })}>
-          <option value="">默认：其他</option>
-          <option value="case">运维案例</option>
-          <option value="manual">产品手册</option>
-          <option value="runbook">操作手册</option>
-        </select>
-        <input placeholder="标题（留空用文件名）" aria-label="标题"
-          value={upload.title} onChange={(e) => setUpload({ ...upload, title: e.target.value })} />
-        <input placeholder="厂商（逗号分隔）" aria-label="上传厂商"
-          value={upload.vendor} onChange={(e) => setUpload({ ...upload, vendor: e.target.value })} />
-        <input placeholder="型号（逗号分隔）" aria-label="上传型号"
-          value={upload.model} onChange={(e) => setUpload({ ...upload, model: e.target.value })} />
-        <select aria-label="绑定意图" value={upload.intent}
-          onChange={(e) => setUpload({ ...upload, intent: e.target.value })}>
-          <option value="">不绑定意图</option>
-          {intents.map((i) => <option key={i.code} value={i.code}>{i.name || i.code}</option>)}
-        </select>
-        <button onClick={onUpload} disabled={uploading}>{uploading ? '上传中…' : '上传'}</button>
-      </div>
+      <Card title="上传文档" size="small" style={{ marginBottom: 16 }}>
+        <Space wrap>
+          <Upload
+            accept=".txt,.md,.docx"
+            maxCount={1}
+            beforeUpload={() => false}
+            onChange={(info) => {
+              const f = info.fileList[0]
+              setFile(f ? (f.originFileObj as File) ?? (f as unknown as File) : null)
+            }}
+            onRemove={() => setFile(null)}
+            fileList={file ? [{ uid: '-1', name: file.name, status: 'done' }] : []}
+          >
+            <Button icon={<UploadOutlined />}>选择文件</Button>
+          </Upload>
+          <Select aria-label="上传分类" placeholder="默认：其他" style={{ width: 140 }}
+            value={meta.category || undefined} allowClear
+            options={[
+              { value: 'case', label: '运维案例' },
+              { value: 'manual', label: '产品手册' },
+              { value: 'runbook', label: '操作手册' },
+            ]}
+            onChange={(v?: string) => setMeta({ ...meta, category: v ?? '' })} />
+          <Input placeholder="标题（留空用文件名）" aria-label="标题" value={meta.title}
+            onChange={(e) => setMeta({ ...meta, title: e.target.value })} style={{ width: 180 }} />
+          <Input placeholder="厂商（逗号分隔）" aria-label="上传厂商" value={meta.vendor}
+            onChange={(e) => setMeta({ ...meta, vendor: e.target.value })} style={{ width: 160 }} />
+          <Input placeholder="型号（逗号分隔）" aria-label="上传型号" value={meta.model}
+            onChange={(e) => setMeta({ ...meta, model: e.target.value })} style={{ width: 160 }} />
+          <Select aria-label="绑定意图" placeholder="不绑定意图" style={{ width: 140 }} allowClear
+            value={meta.intent || undefined}
+            options={intents.map((i) => ({ value: i.code, label: i.name || i.code }))}
+            onChange={(v?: string) => setMeta({ ...meta, intent: v ?? '' })} />
+          <Button type="primary" onClick={onUpload} disabled={uploading} loading={uploading}>上传</Button>
+        </Space>
+      </Card>
 
-      {detail && (
-        <div style={{ marginBottom: 16, padding: 12, border: '1px solid #ccc', borderRadius: 8 }}>
-          <h3>{detail.title}</h3>
-          <button onClick={() => setDetail(null)}>关闭</button>
-          <button onClick={() => onDelete(detail.id)}>删除文档</button>
-          <button onClick={() => onSaveMeta(detail.id, {
-            title: detail.title, category: detail.category,
-            device_types: detail.device_types, vendor: detail.vendor, model: detail.model,
-            metrics: detail.metrics, keywords: detail.keywords, intents: detail.intents,
-          })}>保存元数据</button>
-          <div>标签：{tags(detail.device_types)} / {tags(detail.vendor)} / {tags(detail.model)} / {tags(detail.intents)}</div>
-          {detail.chunks.map((c) => (
-            <div key={c.id} style={{ marginTop: 8, padding: 8, background: '#f6f6f6' }}>
-              {c.heading && <strong>{c.heading}</strong>}
-              <div>{c.content}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <Table rowKey="id" columns={columns} dataSource={docs} size="small" pagination={false} />
 
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th>标题</th><th>分类</th><th>设备类型</th><th>厂商</th><th>型号</th><th>块数</th><th>来源</th><th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {docs.map((d) => (
-            <tr key={d.id} style={{ borderTop: '1px solid #eee' }}>
-              <td>{d.title}</td>
-              <td>{d.category}</td>
-              <td>{tags(d.device_types)}</td>
-              <td>{tags(d.vendor)}</td>
-              <td>{tags(d.model)}</td>
-              <td>{d.chunk_count} 块</td>
-              <td>{d.source_file}</td>
-              <td>
-                <button onClick={() => onOpen(d.id)}>详情</button>
-                <button onClick={() => onDelete(d.id)}>删除</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <Drawer
+        open={detail !== null}
+        onClose={() => setDetail(null)}
+        width={640}
+        title={detail?.title ?? ''}
+      >
+        {detail && (
+          <>
+            <Space wrap style={{ marginBottom: 8 }}>
+              <Button onClick={() => onDelete(detail.id)} danger>删除文档</Button>
+              <Button onClick={() => onSaveMeta(detail.id, {
+                title: detail.title, category: detail.category,
+                device_types: detail.device_types, vendor: detail.vendor, model: detail.model,
+                metrics: detail.metrics, keywords: detail.keywords, intents: detail.intents,
+              })}>保存元数据</Button>
+            </Space>
+            <Descriptions column={1} size="small">
+              <Descriptions.Item label="标签">
+                {tags(detail.device_types)} / {tags(detail.vendor)} / {tags(detail.model)} / {tags(detail.intents)}
+              </Descriptions.Item>
+            </Descriptions>
+            {detail.chunks.length === 0 && <Empty description="暂无分块" />}
+            {detail.chunks.map((c) => (
+              <div key={c.id} style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#2a3346' }}>
+                {c.heading && <Typography.Text strong>{c.heading}</Typography.Text>}
+                <div>{c.content}</div>
+              </div>
+            ))}
+          </>
+        )}
+      </Drawer>
     </div>
   )
 }

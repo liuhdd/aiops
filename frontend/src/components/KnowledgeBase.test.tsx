@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '../test-utils'
 import KnowledgeBase from './KnowledgeBase'
-import { fetchKbDocs, uploadKbDoc, deleteKbDoc } from '../api/client'
+import { fetchKbDocs, fetchKbDoc, uploadKbDoc, deleteKbDoc } from '../api/client'
 import type { KbDocSummary } from '../types'
 
 vi.mock('../api/client', () => ({
@@ -40,20 +40,34 @@ describe('KnowledgeBase', () => {
   it('上传成功后刷新列表', async () => {
     vi.mocked(fetchKbDocs).mockResolvedValue([])
     vi.mocked(uploadKbDoc).mockResolvedValue({} as never)
-    render(<KnowledgeBase />)
+    const { container } = render(<KnowledgeBase />)
     const file = new File(['x'], 'a.md', { type: 'text/markdown' })
-    const input = await screen.findByLabelText('上传文件')
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })
+    await act(async () => {})
     fireEvent.click(screen.getByText('上传'))
     await waitFor(() => expect(uploadKbDoc).toHaveBeenCalled())
   })
 
-  it('删除后调用 deleteKbDoc 并刷新', async () => {
+  it('删除经确认后调用 deleteKbDoc 并刷新', async () => {
     vi.mocked(fetchKbDocs).mockResolvedValue([doc('d1', '交换机手册', 'manual')])
     vi.mocked(deleteKbDoc).mockResolvedValue({ status: 'ok' })
     render(<KnowledgeBase />)
     await screen.findByText('交换机手册')
     fireEvent.click(screen.getByText('删除'))
+    fireEvent.click(await screen.findByText('确定'))
     await waitFor(() => expect(deleteKbDoc).toHaveBeenCalledWith('d1'))
+  })
+
+  it('点击详情打开 Drawer', async () => {
+    vi.mocked(fetchKbDocs).mockResolvedValue([doc('d1', '交换机手册', 'manual')])
+    vi.mocked(fetchKbDoc).mockResolvedValue({
+      ...doc('d1', '交换机手册', 'manual'),
+      chunks: [{ id: 'c1', doc_id: 'd1', seq: 1, heading: '概述', content: '本手册介绍交换机', created_at: '' }],
+    })
+    render(<KnowledgeBase />)
+    await screen.findByText('交换机手册')
+    fireEvent.click(screen.getByText('详情'))
+    expect(await screen.findByText('本手册介绍交换机')).toBeTruthy()
   })
 })
