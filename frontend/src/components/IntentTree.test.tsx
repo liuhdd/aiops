@@ -26,6 +26,14 @@ describe('IntentTree', () => {
     expect(onToggle).toHaveBeenCalledWith(group, ['g', 'a', 'b'])
   })
 
+  it('删除需经 Popconfirm 确认', () => {
+    const onDelete = vi.fn()
+    render(<IntentTree nodes={[group]} onToggle={vi.fn()} onDelete={onDelete} onAddChild={vi.fn()} onEdit={vi.fn()} />)
+    fireEvent.click(screen.getAllByText('删除')[0])
+    fireEvent.click(screen.getAllByText('确定')[0])
+    expect(onDelete).toHaveBeenCalledWith(group, ['g', 'a', 'b'])
+  })
+
   it('显示错误信息', () => {
     render(<IntentTree nodes={[group]} onToggle={vi.fn()} onDelete={vi.fn()} onAddChild={vi.fn()} onEdit={vi.fn()}
       error="子树不完整：节点 分组(g) 的后代 [a] 未包含" />)

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { Alert, Button, ConfigProvider, Popconfirm, Space, Tag, Tree } from 'antd'
+import type { TreeDataNode } from 'antd'
 import type { IntentTreeNode } from '../types'
 
 export function collectIds(node: IntentTreeNode): string[] {
@@ -9,6 +10,9 @@ export function collectIds(node: IntentTreeNode): string[] {
 
 const kindBadge: Record<string, string> = {
   GROUP: '分组', SYSTEM: '内置', KB: '知识库', MCP: 'MCP',
+}
+const kindColor: Record<string, string> = {
+  GROUP: 'geekblue', SYSTEM: 'purple', KB: 'cyan', MCP: 'orange',
 }
 
 export default function IntentTree({
@@ -21,38 +25,47 @@ export default function IntentTree({
   onEdit: (node: IntentTreeNode) => void
   error?: string
 }) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-
-  const renderNode = (node: IntentTreeNode, depth: number): JSX.Element => {
-    const isGroup = node.kind === 'GROUP'
-    const isCollapsed = collapsed[node.id]
-    return (
-      <div key={node.id}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', paddingLeft: depth * 20 }}>
-          {isGroup && (
-            <button onClick={() => setCollapsed((c) => ({ ...c, [node.id]: !c[node.id] }))}>
-              {isCollapsed ? '+' : '-'}
-            </button>
-          )}
-          <span style={{ fontWeight: isGroup ? 700 : 400 }}>{node.name}</span>
-          <span style={{ color: '#888' }}>{kindBadge[node.kind]}</span>
-          {!isGroup && <span style={{ color: '#888' }}>{node.code}</span>}
-          <span style={{ color: node.enabled ? '#2e7d32' : '#999' }}>{node.enabled ? '启用' : '停用'}</span>
-          <button onClick={() => onToggle(node, collectIds(node))}>{node.enabled ? '停用' : '启用'}</button>
-          {isGroup && <button onClick={() => onAddChild(node)}>+子节点</button>}
-          <button onClick={() => onEdit(node)}>编辑</button>
-          <button onClick={() => onDelete(node, collectIds(node))}>删除</button>
-        </div>
-        {isGroup && !isCollapsed && node.children.map((c) => renderNode(c, depth + 1))}
-      </div>
-    )
-  }
+  const toData = (list: IntentTreeNode[]): TreeDataNode[] =>
+    list.map((n) => {
+      const isGroup = n.kind === 'GROUP'
+      return {
+        key: n.id,
+        title: (
+          <Space size={8} wrap>
+            <span style={{ fontWeight: isGroup ? 600 : 400 }}>{n.name}</span>
+            <Tag color={kindColor[n.kind]} style={{ marginInlineEnd: 0 }}>{kindBadge[n.kind]}</Tag>
+            {!isGroup && <span style={{ color: 'rgba(255,255,255,0.45)' }}>{n.code}</span>}
+            <Tag color={n.enabled ? 'success' : 'default'} style={{ marginInlineEnd: 0 }}>
+              {n.enabled ? '已启用' : '已停用'}
+            </Tag>
+            <Button size="small" onClick={() => onToggle(n, collectIds(n))}>
+              {n.enabled ? '停用' : '启用'}
+            </Button>
+            {isGroup && <Button size="small" onClick={() => onAddChild(n)}>+子节点</Button>}
+            <Button size="small" onClick={() => onEdit(n)}>编辑</Button>
+            <Popconfirm
+              title="确认删除？"
+              okText="确定"
+              onConfirm={() => onDelete(n, collectIds(n))}
+            >
+              <Button size="small" danger>删除</Button>
+            </Popconfirm>
+          </Space>
+        ),
+        children: n.children.length ? toData(n.children) : undefined,
+      }
+    })
 
   return (
-    <div>
-      {error && <div style={{ color: '#d32f2f', padding: 8 }}>{error}</div>}
-      {nodes.length === 0 && <div style={{ color: '#888', padding: 16 }}>暂无意图节点</div>}
-      {nodes.map((n) => renderNode(n, 0))}
-    </div>
+    <ConfigProvider button={{ autoInsertSpace: false }}>
+      <div>
+        {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
+        {nodes.length === 0 ? (
+          <div style={{ color: 'rgba(255,255,255,0.45)', padding: 16 }}>暂无意图节点</div>
+        ) : (
+          <Tree treeData={toData(nodes)} defaultExpandAll showLine blockNode />
+        )}
+      </div>
+    </ConfigProvider>
   )
 }
