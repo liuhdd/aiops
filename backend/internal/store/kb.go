@@ -87,7 +87,7 @@ func (r *kbRepo) ListKbChunksByDoc(docID string) ([]model.KbChunk, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.KbChunk
+	out := make([]model.KbChunk, 0)
 	for rows.Next() {
 		var c model.KbChunk
 		if err := rows.Scan(&c.ID, &c.DocID, &c.Seq, &c.Heading, &c.Content, &c.CreatedAt); err != nil {

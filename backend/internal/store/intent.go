@@ -61,7 +61,7 @@ func (r *intentRepo) ListIntentNodes() ([]model.IntentNode, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.IntentNode
+	out := make([]model.IntentNode, 0)
 	for rows.Next() {
 		n, err := scanIntentNode(rows.Scan)
 		if err != nil {
@@ -151,7 +151,7 @@ func (s *Store) ListIntentAudit() ([]model.IntentAudit, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.IntentAudit
+	out := make([]model.IntentAudit, 0)
 	for rows.Next() {
 		var a model.IntentAudit
 		if err := rows.Scan(&a.ID, &a.NodeID, &a.Action, &a.Operator, &a.BeforeJSON, &a.AfterJSON, &a.CreatedAt); err != nil {

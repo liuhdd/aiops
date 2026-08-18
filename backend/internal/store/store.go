@@ -206,7 +206,7 @@ func (s *Store) ListAlerts() ([]model.Alert, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Alert
+	out := make([]model.Alert, 0)
 	for rows.Next() {
 		var a model.Alert
 		if err := rows.Scan(&a.ID, &a.Device, &a.Metric, &a.Severity, &a.Message, &a.Status, &a.FiredAt, &a.CreatedAt); err != nil {
@@ -224,7 +224,7 @@ func (s *Store) ListAlertsByDevice(device string) ([]model.Alert, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Alert
+	out := make([]model.Alert, 0)
 	for rows.Next() {
 		var a model.Alert
 		if err := rows.Scan(&a.ID, &a.Device, &a.Metric, &a.Severity, &a.Message, &a.Status, &a.FiredAt, &a.CreatedAt); err != nil {
@@ -280,7 +280,7 @@ func (s *Store) ListStages(runID string) ([]model.StageResult, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.StageResult
+	out := make([]model.StageResult, 0)
 	for rows.Next() {
 		var st model.StageResult
 		if err := rows.Scan(&st.ID, &st.RunID, &st.StageID, &st.StageName, &st.Status, &st.Iteration, &st.Output, &st.Error, &st.StartedAt, &st.EndedAt); err != nil {
@@ -335,7 +335,7 @@ func (s *Store) ListMessages() ([]model.Message, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Message
+	out := make([]model.Message, 0)
 	for rows.Next() {
 		var m model.Message
 		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &m.AlertID, &m.CreatedAt); err != nil {
@@ -360,7 +360,7 @@ func (s *Store) ListScratchpad(runID string) ([]model.ScratchpadEntry, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.ScratchpadEntry
+	out := make([]model.ScratchpadEntry, 0)
 	for rows.Next() {
 		var e model.ScratchpadEntry
 		if err := rows.Scan(&e.ID, &e.RunID, &e.Step, &e.Content, &e.ToolName, &e.CreatedAt); err != nil {
@@ -383,7 +383,7 @@ func (s *Store) ListToolEvents(runID string) ([]model.ToolEvent, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.ToolEvent
+	out := make([]model.ToolEvent, 0)
 	for rows.Next() {
 		var ev model.ToolEvent
 		if err := rows.Scan(&ev.ID, &ev.RunID, &ev.ToolName, &ev.ArgsJSON, &ev.ResultJSON, &ev.Status, &ev.DurationMS, &ev.CreatedAt); err != nil {
@@ -406,7 +406,7 @@ func (s *Store) ListLongTermMemory(device, metric string) ([]model.LongTermMemor
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.LongTermMemory
+	out := make([]model.LongTermMemory, 0)
 	for rows.Next() {
 		var m model.LongTermMemory
 		if err := rows.Scan(&m.ID, &m.Device, &m.Metric, &m.RootCause, &m.Confidence, &m.ActionsJSON, &m.RunID, &m.CreatedAt); err != nil {

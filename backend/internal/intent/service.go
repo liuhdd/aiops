@@ -319,7 +319,7 @@ func ActiveLeavesFrom(nodes []model.IntentNode) []model.LeafSpec {
 			n = parent
 		}
 	}
-	var out []model.LeafSpec
+	out := make([]model.LeafSpec, 0)
 	for _, n := range nodes {
 		if n.Kind == model.KindGroup {
 			continue

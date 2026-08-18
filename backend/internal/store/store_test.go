@@ -81,6 +81,17 @@ func TestMessages(t *testing.T) {
 	}
 }
 
+func TestListMessagesEmptyReturnsEmptySlice(t *testing.T) {
+	s := newTestStore(t)
+	msgs, err := s.ListMessages()
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if msgs == nil {
+		t.Fatal("空表时 ListMessages 应返回非 nil 切片（否则 JSON 序列化为 null，前端 .length 崩溃）")
+	}
+}
+
 func TestAlertScopeColumnWritten(t *testing.T) {
 	s := newTestStore(t)
 	now := time.Now()
