@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Alert, Space, Typography } from 'antd'
 import IntentTree from './IntentTree'
 import IntentEditor from './IntentEditor'
 import { fetchIntentTree, createIntent, updateIntent, deleteIntents, setIntentStatus } from '../api/client'
@@ -51,8 +52,13 @@ export default function IntentManager() {
 
   const submit = async (v: IntentUpsert) => {
     try {
-      if (editing?.node) await updateIntent(editing.node.id, v)
-      else await createIntent({ ...v, parent_id: editing?.parentId ?? v.parent_id })
+      const body: IntentUpsert = {
+        ...v,
+        rule_keywords: Array.isArray(v.rule_keywords) ? v.rule_keywords : [],
+        examples: Array.isArray(v.examples) ? v.examples : [],
+      }
+      if (editing?.node) await updateIntent(editing.node.id, body)
+      else await createIntent({ ...body, parent_id: editing?.parentId ?? body.parent_id })
       setEditing(null)
       await reload()
     } catch (e) {
@@ -61,9 +67,9 @@ export default function IntentManager() {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2>意图管理</h2>
-      {error && <div style={{ color: '#d32f2f', padding: 8 }}>{error}</div>}
+    <div>
+      <Typography.Title level={4}>意图管理</Typography.Title>
+      {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 8 }} />}
       <IntentTree
         nodes={nodes}
         onToggle={toggle}
@@ -71,14 +77,13 @@ export default function IntentManager() {
         onAddChild={(n) => setEditing({ parentId: n.id })}
         onEdit={(n) => setEditing({ node: n })}
       />
-      {editing && (
-        <IntentEditor
-          initial={editing.node}
-          groups={collectGroups(nodes)}
-          onSubmit={submit}
-          onCancel={() => setEditing(null)}
-        />
-      )}
+      <IntentEditor
+        open={editing !== null}
+        initial={editing?.node}
+        groups={collectGroups(nodes)}
+        onSubmit={submit}
+        onCancel={() => setEditing(null)}
+      />
     </div>
   )
 }
