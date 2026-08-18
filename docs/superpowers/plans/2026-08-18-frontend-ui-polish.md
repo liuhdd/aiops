@@ -129,6 +129,18 @@ body {
   border-radius: 8px;
   background: #1c2333;
 }
+
+.chat-bubble {
+  max-width: 80%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #2a3346;
+  color: #fff;
+  white-space: pre-wrap;
+}
+.chat-bubble-user {
+  background: #1677ff;
+}
 ```
 
 - [ ] **Step 5: `index.html` 加 color-scheme**
@@ -669,10 +681,11 @@ const detail: AlertDetail = {
 }
 
 describe('PipelineTimeline', () => {
-  it('渲染 rca 根因', () => {
+  it('渲染 rca 根因与运行状态', () => {
     render(<PipelineTimeline detail={detail} />)
     expect(screen.getByText(/磁盘空间不足/)).toBeTruthy()
     expect(screen.getByText('根因分析')).toBeTruthy()
+    expect(screen.getByText('完成')).toBeTruthy()
   })
 
   it('无阶段时显示空态', () => {
@@ -700,7 +713,7 @@ describe('PipelineTimeline', () => {
 npx vitest run src/components/PipelineTimeline.test.tsx
 ```
 
-预期：FAIL（原实现无「尚未开始排查」文案，原空态是「尚未开始排查」——实际原实现已有此文案；失败点应在 gaps 用例与文案差异上。若测试部分通过，确认至少「待补充」用例失败后继续）。
+预期：FAIL——`getByText('完成')` 断言失败（旧实现渲染的是原生 `run.status` 值 `completed`，无「完成」文案），即测试能区分新旧实现。
 
 - [ ] **Step 3: 重写 `PipelineTimeline.tsx`**
 
@@ -854,6 +867,7 @@ describe('ChatPanel', () => {
       id: 'm3', role: 'assistant', content: 'ok', created_at: '',
     } as ChatMessage)
     render(<ChatPanel messages={msgs} onSend={onSend} />)
+    expect(screen.getByText('智能助手')).toBeTruthy()
     expect(screen.getByText('有哪些告警')).toBeTruthy()
     fireEvent.change(screen.getByPlaceholderText('输入消息...'), { target: { value: '你好' } })
     fireEvent.click(screen.getByText('发送'))
@@ -873,7 +887,7 @@ describe('ChatPanel', () => {
 npx vitest run src/components/ChatPanel.test.tsx
 ```
 
-预期：FAIL（原实现无 Card，空消息用例的文案在，但至少第一个用例会因无 Card/结构差异失败，或部分通过——确认「空消息显示引导语」用例若通过则无碍，确保新增用例断言被覆盖后继续）。
+预期：FAIL——`getByText('智能助手')` 断言失败（旧实现无 Card 标题文案），即测试能区分新旧实现。
 
 - [ ] **Step 3: 重写 `ChatPanel.tsx`**
 
@@ -922,16 +936,7 @@ export default function ChatPanel({
                 margin: '6px 0',
               }}
             >
-              <div
-                style={{
-                  maxWidth: '80%',
-                  padding: '6px 10px',
-                  borderRadius: 8,
-                  background: m.role === 'user' ? '#1677ff' : '#2a3346',
-                  color: '#fff',
-                  whiteSpace: 'pre-wrap',
-                }}
-              >
+              <div className={`chat-bubble${m.role === 'user' ? ' chat-bubble-user' : ''}`}>
                 {m.content}
               </div>
             </div>
