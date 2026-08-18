@@ -42,12 +42,12 @@
 
 ### 统计卡片（数据从 `alerts` 派生，无新接口）
 
-顶部一排 `Card` + `Statistic`：
+顶部一排 `Card` + `Statistic`（数据全部从 `alerts` 列表现有字段派生，alert 不含 run 状态，不做后端改动）：
 
 - 告警总数
-- 严重级别分布（critical / warning / info 分别计数，带主题色 Tag/图标）
-- 排查中（存在 run 且状态 running）
-- 未排查
+- 严重（critical 计数，红色）
+- 警告（warning 计数，橙色）
+- 提示（info 计数，蓝色）
 
 ### 告警列表（`AlertList` → `Table`）
 
