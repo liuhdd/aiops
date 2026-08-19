@@ -154,6 +154,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "conversation_id required"})
 		return
 	}
+	body.ConversationID = strings.TrimSpace(body.ConversationID)
 	if _, err := s.st.GetConversation(body.ConversationID); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "conversation not found"})
 		return

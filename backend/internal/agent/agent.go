@@ -58,6 +58,7 @@ func (a *Agent) memorySuffix(conversationID, device, metric string) string {
 	if as == nil || !strings.Contains(as.User, "【设备历史经验】") {
 		return ""
 	}
+	// 取长期记忆段落首行摘要
 	for _, line := range strings.Split(as.User, "\n") {
 		if strings.HasPrefix(line, "上次(") {
 			return "\n参考历史经验：" + line
@@ -272,6 +273,7 @@ func (a *Agent) kbReply(ctx context.Context, conversationID string, code string)
 		if c.Source != ctxpkg.SourceKnowledge {
 			continue
 		}
+		// 仅保留 intents 元数据与意图码精确相交的块，避免无关文档混入。
 		if !ctxpkg.MatchesIntent(c.Metadata["intents"], code) {
 			continue
 		}
@@ -358,6 +360,7 @@ func (a *Agent) answerFor(conversationID, alertID string, intent Intent) string 
 	if reply == "" {
 		reply = fmt.Sprintf("告警 %s：%s", alertID, rca.RootCause)
 	}
+	// 长期记忆附加
 	alert, err := a.store.GetAlert(alertID)
 	if err == nil {
 		reply += a.memorySuffix(conversationID, alert.Device, alert.Metric)
