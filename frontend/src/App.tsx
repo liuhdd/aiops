@@ -11,6 +11,7 @@ import PipelineTimeline from './components/PipelineTimeline'
 import IntentManager from './components/IntentManager'
 import KnowledgeBase from './components/KnowledgeBase'
 import StatsCards from './components/StatsCards'
+import ChatAssistant from './components/ChatAssistant'
 import { fetchAlerts, fetchAlert } from './api/client'
 import { subscribeWS } from './api/ws'
 import type { Alert, AlertDetail } from './types'
@@ -100,6 +101,7 @@ export default function App() {
         </Sider>
         <Content style={{ padding: 16, overflow: 'auto' }}>{main}</Content>
       </Layout>
+      <ChatAssistant />
     </Layout>
   )
 }
