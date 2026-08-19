@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -75,7 +76,7 @@ func TestMessages(t *testing.T) {
 	if err := s.SaveMessage(m); err != nil {
 		t.Fatalf("SaveMessage: %v", err)
 	}
-	msgs, err := s.ListMessages()
+	msgs, err := s.ListMessages("")
 	if err != nil || len(msgs) != 1 || msgs[0].Content != "hello" {
 		t.Fatalf("ListMessages: %v %+v", err, msgs)
 	}
@@ -83,7 +84,7 @@ func TestMessages(t *testing.T) {
 
 func TestListMessagesEmptyReturnsEmptySlice(t *testing.T) {
 	s := newTestStore(t)
-	msgs, err := s.ListMessages()
+	msgs, err := s.ListMessages("")
 	if err != nil {
 		t.Fatalf("ListMessages: %v", err)
 	}
@@ -185,5 +186,102 @@ func TestMigrateCreatesContextTables(t *testing.T) {
 	}
 	if n != 3 {
 		t.Fatalf("context tables = %d, want 3", n)
+	}
+}
+
+func TestConversationsCRUD(t *testing.T) {
+	s := newTestStore(t)
+	conv, err := s.CreateConversation("")
+	if err != nil || conv.ID == "" {
+		t.Fatalf("CreateConversation: %v %+v", err, conv)
+	}
+	if err := s.SetConversationTitle(conv.ID, "会话甲"); err != nil {
+		t.Fatalf("SetConversationTitle: %v", err)
+	}
+	got, err := s.GetConversation(conv.ID)
+	if err != nil || got.Title != "会话甲" {
+		t.Fatalf("GetConversation: %v %+v", err, got)
+	}
+	if _, err := s.GetConversation("nope"); err != ErrConversationNotFound {
+		t.Fatalf("不存在会话应返回 ErrConversationNotFound, got %v", err)
+	}
+	// 活跃排序：B 创建后 Touch，应排 A 前
+	a, _ := s.CreateConversation("A")
+	b, _ := s.CreateConversation("B")
+	if err := s.TouchConversation(b.ID); err != nil {
+		t.Fatalf("TouchConversation: %v", err)
+	}
+	list, err := s.ListConversations()
+	if err != nil || len(list) != 3 {
+		t.Fatalf("ListConversations: %v len=%d", err, len(list))
+	}
+	if list[0].ID != b.ID || list[1].ID != a.ID {
+		t.Fatalf("活跃排序错误: %+v", list)
+	}
+}
+
+func TestListMessagesByConversation(t *testing.T) {
+	s := newTestStore(t)
+	c1, _ := s.CreateConversation("")
+	c2, _ := s.CreateConversation("")
+	now := time.Now()
+	_ = s.SaveMessage(model.Message{ID: "m1", Role: model.RoleUser, Content: "in1", ConversationID: c1.ID, CreatedAt: now})
+	_ = s.SaveMessage(model.Message{ID: "m2", Role: model.RoleUser, Content: "in2", ConversationID: c1.ID, CreatedAt: now.Add(time.Minute)})
+	_ = s.SaveMessage(model.Message{ID: "m3", Role: model.RoleUser, Content: "other", ConversationID: c2.ID, CreatedAt: now})
+	msgs, err := s.ListMessages(c1.ID)
+	if err != nil || len(msgs) != 2 || msgs[0].ID != "m1" || msgs[1].ID != "m2" {
+		t.Fatalf("ListMessages(c1): %v %+v", err, msgs)
+	}
+	all, _ := s.ListMessages("")
+	if len(all) != 3 {
+		t.Fatalf("ListMessages(\"\") 应返回全部, got %d", len(all))
+	}
+}
+
+func TestRecentMessagesByConversation(t *testing.T) {
+	s := newTestStore(t)
+	c1, _ := s.CreateConversation("")
+	c2, _ := s.CreateConversation("")
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		_ = s.SaveMessage(model.Message{ID: model.NewID("msg"), Role: model.RoleUser, Content: "a" + string(rune('0'+i)), ConversationID: c1.ID, CreatedAt: now.Add(time.Duration(i) * time.Minute)})
+		_ = s.SaveMessage(model.Message{ID: model.NewID("msg"), Role: model.RoleUser, Content: "b" + string(rune('0'+i)), ConversationID: c2.ID, CreatedAt: now.Add(time.Duration(i) * time.Minute)})
+	}
+	got, err := s.RecentMessages(c1.ID, 2)
+	if err != nil || len(got) != 2 || got[0].Content != "a1" || got[1].Content != "a2" {
+		t.Fatalf("RecentMessages(c1,2): %v %+v", err, got)
+	}
+	// 空会话 → 空非 nil 切片
+	empty, _ := s.RecentMessages("nope", 5)
+	if empty == nil {
+		t.Fatal("空会话 RecentMessages 应返回非 nil 切片")
+	}
+}
+
+func TestMigrateBackfillsLegacyMessages(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE messages (id TEXT PRIMARY KEY, role TEXT, content TEXT, alert_id TEXT, created_at DATETIME)`); err != nil {
+		t.Fatalf("create legacy messages: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO messages (id, role, content, alert_id, created_at) VALUES ('old-1','user','hi',NULL,?)`, time.Now()); err != nil {
+		t.Fatalf("insert legacy: %v", err)
+	}
+	_ = db.Close()
+	s, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("migrate legacy db: %v", err)
+	}
+	defer s.Close()
+	convs, _ := s.ListConversations()
+	if len(convs) != 1 || convs[0].Title != "历史对话" {
+		t.Fatalf("回填应创建「历史对话」, got %+v", convs)
+	}
+	msgs, _ := s.ListMessages(convs[0].ID)
+	if len(msgs) != 1 || msgs[0].ID != "old-1" {
+		t.Fatalf("旧消息应回填进历史对话, got %+v", msgs)
 	}
 }

@@ -83,7 +83,7 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 				Metadata: map[string]string{"device": m.Device, "metric": m.Metric, "created_at": m.CreatedAt.Format(time.RFC3339)}})
 		}
 	}
-	msgs, err := a.cs.RecentMessages(10)
+	msgs, err := a.cs.RecentMessages(q.ConversationID, 10)
 	if err != nil {
 		return nil, err
 	}

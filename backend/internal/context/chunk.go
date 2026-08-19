@@ -17,11 +17,12 @@ type Chunk struct {
 }
 
 type Query struct {
-	Device   string
-	Metric   string
-	Severity string
-	Stage    string
-	RunID    string
-	Keywords []string
-	Intents  []string
+	Device         string
+	Metric         string
+	Severity       string
+	Stage          string
+	RunID          string
+	ConversationID string
+	Keywords       []string
+	Intents        []string
 }

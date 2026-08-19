@@ -98,7 +98,7 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
-	msgs, err := s.st.ListMessages()
+	msgs, err := s.st.ListMessages("")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

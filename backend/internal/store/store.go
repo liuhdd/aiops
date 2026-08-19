@@ -11,6 +11,8 @@ import (
 	"aiops/internal/model"
 )
 
+var ErrConversationNotFound = errors.New("conversation not found")
+
 type Store struct {
 	db *sql.DB
 }
@@ -152,6 +154,19 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id, seq)`); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS conversations (
+		id TEXT PRIMARY KEY,
+		title TEXT NOT NULL DEFAULT '',
+		created_at DATETIME,
+		updated_at DATETIME)`); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "messages", "conversation_id", "conversation_id TEXT"); err != nil {
+		return err
+	}
+	if err := s.backfillLegacyMessages(); err != nil {
+		return err
+	}
 	if err := s.seedIntents(); err != nil {
 		return err
 	}
@@ -180,6 +195,23 @@ func ensureColumn(db *sql.DB, table, column, ddl string) error {
 		return err
 	}
 	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, ddl))
+	return err
+}
+
+// backfillLegacyMessages 将存量无会话消息归入「历史对话」会话。
+func (s *Store) backfillLegacyMessages() error {
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM messages WHERE conversation_id IS NULL`).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	conv, err := s.CreateConversation("历史对话")
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE messages SET conversation_id = ? WHERE conversation_id IS NULL`, conv.ID)
 	return err
 }
 
@@ -323,14 +355,67 @@ func (s *Store) GetDeviceContext(deviceID string) (model.DeviceContext, error) {
 	return dc, err
 }
 
-func (s *Store) SaveMessage(m model.Message) error {
-	_, err := s.db.Exec(`INSERT INTO messages (id, role, content, alert_id, created_at) VALUES (?,?,?,?,?)`,
-		m.ID, m.Role, m.Content, m.AlertID, m.CreatedAt)
+// ---- 会话 ----
+
+func (s *Store) CreateConversation(title string) (model.Conversation, error) {
+	now := time.Now()
+	c := model.Conversation{ID: model.NewID("conv"), Title: title, CreatedAt: now, UpdatedAt: now}
+	_, err := s.db.Exec(`INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?,?,?,?)`,
+		c.ID, c.Title, c.CreatedAt, c.UpdatedAt)
+	return c, err
+}
+
+func (s *Store) ListConversations() ([]model.Conversation, error) {
+	rows, err := s.db.Query(`SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.Conversation, 0)
+	for rows.Next() {
+		var c model.Conversation
+		if err := rows.Scan(&c.ID, &c.Title, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetConversation(id string) (model.Conversation, error) {
+	var c model.Conversation
+	err := s.db.QueryRow(`SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?`, id).
+		Scan(&c.ID, &c.Title, &c.CreatedAt, &c.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, ErrConversationNotFound
+	}
+	return c, err
+}
+
+func (s *Store) SetConversationTitle(id, title string) error {
+	_, err := s.db.Exec(`UPDATE conversations SET title = ? WHERE id = ?`, title, id)
 	return err
 }
 
-func (s *Store) ListMessages() ([]model.Message, error) {
-	rows, err := s.db.Query(`SELECT id, role, content, alert_id, created_at FROM messages ORDER BY created_at ASC`)
+func (s *Store) TouchConversation(id string) error {
+	_, err := s.db.Exec(`UPDATE conversations SET updated_at = ? WHERE id = ?`, time.Now(), id)
+	return err
+}
+
+func (s *Store) SaveMessage(m model.Message) error {
+	_, err := s.db.Exec(`INSERT INTO messages (id, role, content, alert_id, conversation_id, created_at) VALUES (?,?,?,?,?,?)`,
+		m.ID, m.Role, m.Content, m.AlertID, m.ConversationID, m.CreatedAt)
+	return err
+}
+
+func (s *Store) ListMessages(conversationID string) ([]model.Message, error) {
+	var rows *sql.Rows
+	var err error
+	if conversationID == "" {
+		rows, err = s.db.Query(`SELECT id, role, content, alert_id, conversation_id, created_at FROM messages ORDER BY created_at ASC`)
+	} else {
+		rows, err = s.db.Query(`SELECT id, role, content, alert_id, conversation_id, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`, conversationID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -338,9 +423,13 @@ func (s *Store) ListMessages() ([]model.Message, error) {
 	out := make([]model.Message, 0)
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &m.AlertID, &m.CreatedAt); err != nil {
+		var convID sql.NullString
+		var alertID sql.NullString
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &alertID, &convID, &m.CreatedAt); err != nil {
 			return nil, err
 		}
+		m.AlertID = alertID.String
+		m.ConversationID = convID.String
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -417,8 +506,14 @@ func (s *Store) ListLongTermMemory(device, metric string) ([]model.LongTermMemor
 	return out, rows.Err()
 }
 
-func (s *Store) RecentMessages(n int) ([]model.Message, error) {
-	rows, err := s.db.Query(`SELECT id, role, content, alert_id, created_at FROM messages ORDER BY created_at DESC LIMIT ?`, n)
+func (s *Store) RecentMessages(conversationID string, n int) ([]model.Message, error) {
+	var rows *sql.Rows
+	var err error
+	if conversationID == "" {
+		rows, err = s.db.Query(`SELECT id, role, content, alert_id, conversation_id, created_at FROM messages ORDER BY created_at DESC LIMIT ?`, n)
+	} else {
+		rows, err = s.db.Query(`SELECT id, role, content, alert_id, conversation_id, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?`, conversationID, n)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -426,9 +521,13 @@ func (s *Store) RecentMessages(n int) ([]model.Message, error) {
 	var desc []model.Message
 	for rows.Next() {
 		var m model.Message
-		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &m.AlertID, &m.CreatedAt); err != nil {
+		var convID sql.NullString
+		var alertID sql.NullString
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &alertID, &convID, &m.CreatedAt); err != nil {
 			return nil, err
 		}
+		m.AlertID = alertID.String
+		m.ConversationID = convID.String
 		desc = append(desc, m)
 	}
 	// 反转回时间升序

@@ -66,11 +66,24 @@ func TestRecentMessagesOrder(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		_ = s.SaveMessage(model.Message{ID: model.NewID("msg"), Role: model.RoleUser, Content: "m" + string(rune('0'+i)), CreatedAt: now.Add(time.Duration(i) * time.Minute)})
 	}
-	got, err := cs.RecentMessages(3)
+	got, err := cs.RecentMessages("", 3)
 	if err != nil || len(got) != 3 {
 		t.Fatalf("RecentMessages = %d err=%v", len(got), err)
 	}
 	if got[0].Content != "m2" || got[2].Content != "m4" {
 		t.Fatalf("wrong window: %+v", got)
+	}
+}
+
+func TestRecentMessagesByConversationFilter(t *testing.T) {
+	cs, s := newTestStore(t)
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		_ = s.SaveMessage(model.Message{ID: model.NewID("msg"), Role: model.RoleUser, Content: "a" + string(rune('0'+i)), ConversationID: "c1", CreatedAt: now.Add(time.Duration(i) * time.Minute)})
+		_ = s.SaveMessage(model.Message{ID: model.NewID("msg"), Role: model.RoleUser, Content: "b" + string(rune('0'+i)), ConversationID: "c2", CreatedAt: now.Add(time.Duration(i) * time.Minute)})
+	}
+	got, err := cs.RecentMessages("c1", 2)
+	if err != nil || len(got) != 2 || got[0].Content != "a1" || got[1].Content != "a2" {
+		t.Fatalf("RecentMessages(c1,2): %v %+v", err, got)
 	}
 }
