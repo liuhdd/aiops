@@ -8,13 +8,12 @@ import {
 } from '@ant-design/icons'
 import AlertList from './components/AlertList'
 import PipelineTimeline from './components/PipelineTimeline'
-import ChatPanel from './components/ChatPanel'
 import IntentManager from './components/IntentManager'
 import KnowledgeBase from './components/KnowledgeBase'
 import StatsCards from './components/StatsCards'
-import { fetchAlerts, fetchAlert, fetchMessages, postChat } from './api/client'
+import { fetchAlerts, fetchAlert } from './api/client'
 import { subscribeWS } from './api/ws'
-import type { Alert, AlertDetail, ChatMessage } from './types'
+import type { Alert, AlertDetail } from './types'
 
 const { Header, Sider, Content } = Layout
 
@@ -30,7 +29,6 @@ export default function App() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<AlertDetail | null>(null)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [view, setView] = useState<View>('ops')
   const [collapsed, setCollapsed] = useState(false)
 
@@ -55,19 +53,6 @@ export default function App() {
     return () => { cancelled = true; unsub() }
   }, [selected])
 
-  useEffect(() => {
-    fetchMessages().then(setMessages).catch(() => {})
-    const unsub = subscribeWS((m) => { if (m.type === 'message') fetchMessages().then(setMessages).catch(() => {}) })
-    return unsub
-  }, [])
-
-  const handleSend = async (text: string) => {
-    const reply = await postChat(text)
-    const next = await fetchMessages()
-    setMessages(next)
-    return reply
-  }
-
   const ops =
     view === 'ops' ? (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -84,9 +69,6 @@ export default function App() {
                   <Empty description="请选择告警查看排查进度" />
                 </Card>
               )}
-          </div>
-          <div style={{ width: 360 }}>
-            <ChatPanel messages={messages} onSend={handleSend} />
           </div>
         </div>
       </div>

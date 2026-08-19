@@ -2,6 +2,7 @@ import type {
   Alert,
   AlertDetail,
   ChatMessage,
+  Conversation,
   IntentLeaf,
   IntentNode,
   IntentTreeNode,
@@ -34,12 +35,16 @@ export const fetchAlerts = () => req<Alert[]>('/alerts')
 export const fetchAlert = (id: string) => req<AlertDetail>(`/alerts/${id}`)
 export const inspectAlert = (id: string) =>
   req<{ status: string; alert_id: string }>(`/alerts/${id}/inspect`, { method: 'POST' })
-export const fetchMessages = () => req<ChatMessage[]>('/messages')
-export const postChat = (text: string) =>
+export const fetchConversations = () => req<Conversation[]>('/conversations')
+export const createConversation = () =>
+  req<Conversation>('/conversations', { method: 'POST' })
+export const fetchConversationMessages = (id: string) =>
+  req<ChatMessage[]>(`/conversations/${id}/messages`)
+export const postChat = (conversationId: string, text: string) =>
   req<ChatMessage>('/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, conversation_id: conversationId }),
   })
 export const wsUrl = () => {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'

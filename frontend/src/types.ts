@@ -32,11 +32,19 @@ export interface StageResult {
   ended_at: string
 }
 
+export interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   alert_id?: string
+  conversation_id?: string
   created_at: string
 }
 
