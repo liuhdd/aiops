@@ -8,16 +8,23 @@ import (
 	"aiops/internal/model"
 )
 
-// Cosine 计算两向量余弦相似度；维度不一致返回 0。
+// Cosine 计算两向量余弦相似度；维度不一致或存在零向量返回 0。
 func Cosine(a, b []float64) float64 {
 	if len(a) != len(b) || len(a) == 0 {
 		return 0
 	}
 	dot := 0.0
+	normA := 0.0
+	normB := 0.0
 	for i := range a {
 		dot += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
 	}
-	return dot
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 // Query 混合检索查询条件；空字段忽略。
@@ -75,7 +82,7 @@ func FieldScore(kc model.KbKnowledgeChunk, q Query) float64 {
 	return hits
 }
 
-// RecencyScore 时效衰减：60 分钟半衰期。
+// RecencyScore 时效衰减：60 分钟时间常数指数衰减。
 func RecencyScore(createdAt time.Time, now time.Time) float64 {
 	ageMin := now.Sub(createdAt).Minutes()
 	if ageMin < 0 {

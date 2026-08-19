@@ -18,6 +18,15 @@ func TestCosine(t *testing.T) {
 	if got := Cosine([]float64{1}, []float64{1, 0}); got != 0 {
 		t.Fatalf("维度不一致应为0, got %v", got)
 	}
+	if got := Cosine([]float64{2, 0}, []float64{3, 0}); math.Abs(got-1) > 1e-9 {
+		t.Fatalf("非单位向量同向应 1, got %v", got)
+	}
+	if got := Cosine([]float64{2, 0}, []float64{0, 3}); math.Abs(got) > 1e-9 {
+		t.Fatalf("非单位向量正交应 0, got %v", got)
+	}
+	if got := Cosine([]float64{0, 0}, []float64{1, 0}); got != 0 {
+		t.Fatalf("零向量应 0, got %v", got)
+	}
 }
 
 func TestLabelScore(t *testing.T) {
