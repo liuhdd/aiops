@@ -25,6 +25,8 @@ type KBStore interface {
 	ListKbChunksByDoc(docID string) ([]model.KbChunk, error)
 	DeleteKbChunks(docID string) error
 	DeleteKbDocument(id string) error
+	UpsertKbEmbedding(e model.KbEmbedding) error
+	DeleteKbEmbeddingsByDoc(docID string) error
 }
 
 type kbRepo struct{ db dbExec }
@@ -108,6 +110,72 @@ func (r *kbRepo) DeleteKbDocument(id string) error {
 	return err
 }
 
+// parseVec 反序列化 JSON 向量数组。
+func parseVec(s string) []float64 {
+	var v []float64
+	if s != "" {
+		_ = json.Unmarshal([]byte(s), &v)
+	}
+	return v
+}
+
+func (r *kbRepo) UpsertKbEmbedding(e model.KbEmbedding) error {
+	_, err := r.db.Exec(`INSERT INTO kb_embeddings (chunk_id, doc_id, embedding, model, created_at)
+		VALUES (?,?,?,?,?)
+		ON CONFLICT(chunk_id) DO UPDATE SET embedding=excluded.embedding, model=excluded.model, created_at=excluded.created_at`,
+		e.ChunkID, e.DocID, model.MustJSON(e.Embedding), e.Model, e.CreatedAt)
+	return err
+}
+
+func scanKbEmbedding(scan func(dest ...any) error) (model.KbEmbedding, error) {
+	var e model.KbEmbedding
+	var emb string
+	if err := scan(&e.ChunkID, &e.DocID, &emb, &e.Model, &e.CreatedAt); err != nil {
+		return e, err
+	}
+	e.Embedding = parseVec(emb)
+	return e, nil
+}
+
+func (r *kbRepo) GetKbEmbeddingsByDoc(docID string) ([]model.KbEmbedding, error) {
+	rows, err := r.db.Query(`SELECT chunk_id, doc_id, embedding, model, created_at FROM kb_embeddings WHERE doc_id = ?`, docID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.KbEmbedding, 0)
+	for rows.Next() {
+		e, err := scanKbEmbedding(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (r *kbRepo) ListKbEmbeddings() ([]model.KbEmbedding, error) {
+	rows, err := r.db.Query(`SELECT chunk_id, doc_id, embedding, model, created_at FROM kb_embeddings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.KbEmbedding, 0)
+	for rows.Next() {
+		e, err := scanKbEmbedding(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (r *kbRepo) DeleteKbEmbeddingsByDoc(docID string) error {
+	_, err := r.db.Exec(`DELETE FROM kb_embeddings WHERE doc_id = ?`, docID)
+	return err
+}
+
 // likeEscape 转义 LIKE 通配符，使筛选词按字面匹配。
 func likeEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
@@ -185,8 +253,20 @@ func (s *Store) ListKbChunksByDoc(docID string) ([]model.KbChunk, error) {
 	return (&kbRepo{db: s.db}).ListKbChunksByDoc(docID)
 }
 
+func (s *Store) GetKbEmbeddingsByDoc(docID string) ([]model.KbEmbedding, error) {
+	return (&kbRepo{db: s.db}).GetKbEmbeddingsByDoc(docID)
+}
+
+func (s *Store) ListKbEmbeddings() ([]model.KbEmbedding, error) {
+	return (&kbRepo{db: s.db}).ListKbEmbeddings()
+}
+
+func (s *Store) DeleteKbEmbeddingsByDoc(docID string) error {
+	return (&kbRepo{db: s.db}).DeleteKbEmbeddingsByDoc(docID)
+}
+
 func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
-	rows, err := s.db.Query(`SELECT c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, d.created_at
+	rows, err := s.db.Query(`SELECT c.id, c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, d.created_at
 		FROM kb_chunks c JOIN kb_documents d ON d.id = c.doc_id
 		ORDER BY d.created_at DESC, c.seq ASC`)
 	if err != nil {
@@ -197,7 +277,7 @@ func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 	for rows.Next() {
 		var k model.KbKnowledgeChunk
 		var dt, vd, md, mtr, kw, in string
-		if err := rows.Scan(&k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ChunkID, &k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.DeviceTypes = parseArr(dt)

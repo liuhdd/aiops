@@ -154,6 +154,17 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id, seq)`); err != nil {
 		return err
 	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS kb_embeddings (
+		chunk_id   TEXT PRIMARY KEY,
+		doc_id     TEXT NOT NULL,
+		embedding  TEXT NOT NULL,
+		model      TEXT NOT NULL,
+		created_at DATETIME)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kb_embeddings_doc ON kb_embeddings(doc_id)`); err != nil {
+		return err
+	}
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS conversations (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL DEFAULT '',

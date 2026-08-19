@@ -50,8 +50,18 @@ type KbDocSummary struct {
 	ChunkCount int `json:"chunk_count"`
 }
 
+// KbEmbedding 知识块向量（kb_embeddings 表）。
+type KbEmbedding struct {
+	ChunkID   string
+	DocID     string
+	Embedding []float64
+	Model     string
+	CreatedAt time.Time
+}
+
 // KbKnowledgeChunk 检索视图：块 + 所属文档元数据（RAG 联查返回）。
 type KbKnowledgeChunk struct {
+	ChunkID     string
 	DocID       string
 	Title       string
 	Category    KBCategory

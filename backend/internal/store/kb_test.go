@@ -158,3 +158,62 @@ func TestKbTablesCreated(t *testing.T) {
 		t.Fatalf("kb tables = %d %v, want 2", n, err)
 	}
 }
+
+func TestKbEmbeddingRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	_ = s.WithKBTx(func(tx KBStore) error {
+		_ = tx.InsertKbDocument(mkDoc("d1", "t", model.KBOther))
+		_ = tx.UpsertKbEmbedding(model.KbEmbedding{ChunkID: "c1", DocID: "d1", Embedding: []float64{0.1, 0.2, 0.3}, Model: "m", CreatedAt: now})
+		return tx.UpsertKbEmbedding(model.KbEmbedding{ChunkID: "c1", DocID: "d1", Embedding: []float64{0.9}, Model: "m2", CreatedAt: now})
+	})
+	byDoc, err := s.GetKbEmbeddingsByDoc("d1")
+	if err != nil || len(byDoc) != 1 || len(byDoc[0].Embedding) != 1 || byDoc[0].Embedding[0] != 0.9 {
+		t.Fatalf("GetKbEmbeddingsByDoc: %v %+v", err, byDoc)
+	}
+	all, err := s.ListKbEmbeddings()
+	if err != nil || len(all) != 1 || all[0].ChunkID != "c1" {
+		t.Fatalf("ListKbEmbeddings: %v %+v", err, all)
+	}
+}
+
+func TestKbEmbeddingCascadeDelete(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	_ = s.WithKBTx(func(tx KBStore) error {
+		_ = tx.InsertKbDocument(mkDoc("d1", "t", model.KBOther))
+		_ = tx.InsertKbChunk(model.KbChunk{ID: "c1", DocID: "d1", Seq: 0, Content: "x", CreatedAt: now})
+		_ = tx.UpsertKbEmbedding(model.KbEmbedding{ChunkID: "c1", DocID: "d1", Embedding: []float64{1}, Model: "m", CreatedAt: now})
+		return tx.DeleteKbEmbeddingsByDoc("d1")
+	})
+	got, err := s.ListKbEmbeddings()
+	if err != nil || len(got) != 0 {
+		t.Fatalf("删除后应无向量, got %v %+v", err, got)
+	}
+}
+
+func TestKbKnowledgeChunksJoinHasChunkID(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	_ = s.WithKBTx(func(tx KBStore) error {
+		_ = tx.InsertKbDocument(mkDoc("d1", "交换机手册", model.KBManual))
+		_ = tx.InsertKbChunk(model.KbChunk{ID: "c1", DocID: "d1", Seq: 0, Heading: "排查步骤", Content: "检查光模块", CreatedAt: now})
+		return tx.InsertKbChunk(model.KbChunk{ID: "c2", DocID: "d1", Seq: 1, Heading: "处理", Content: "更换光模块", CreatedAt: now})
+	})
+	kcs, err := s.ListKnowledgeChunks()
+	if err != nil || len(kcs) != 2 {
+		t.Fatalf("ListKnowledgeChunks: %v %+v", err, kcs)
+	}
+	if kcs[0].ChunkID != "c1" || kcs[1].ChunkID != "c2" {
+		t.Fatalf("chunk ids = %s,%s want c1,c2", kcs[0].ChunkID, kcs[1].ChunkID)
+	}
+}
+
+func TestKbEmbeddingTablesCreated(t *testing.T) {
+	s := newTestStore(t)
+	var n int
+	err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='kb_embeddings'`).Scan(&n)
+	if err != nil || n != 1 {
+		t.Fatalf("kb_embeddings table = %d %v, want 1", n, err)
+	}
+}
