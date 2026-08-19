@@ -41,24 +41,23 @@ func NewWithLeaves(s *store.Store, lc, light ctxpkg.Completer, eng *pipeline.Eng
 	return &Agent{store: s, llm: lc, lightLLM: light, maxSplit: maxSplit, eng: eng, ctxStore: cs, topK: topK, leaves: leaves}
 }
 
-func (a *Agent) buildAssembled(device, metric string, intents []string) *ctxpkg.Assembled {
+func (a *Agent) buildAssembled(conversationID, device, metric string, intents []string) *ctxpkg.Assembled {
 	if a.ctxStore == nil || device == "" || metric == "" {
 		return nil
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
-	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents, ConversationID: conversationID}, false, nil)
 	if err != nil {
 		return nil
 	}
 	return as
 }
 
-func (a *Agent) memorySuffix(device, metric string) string {
-	as := a.buildAssembled(device, metric, nil)
+func (a *Agent) memorySuffix(conversationID, device, metric string) string {
+	as := a.buildAssembled(conversationID, device, metric, nil)
 	if as == nil || !strings.Contains(as.User, "【设备历史经验】") {
 		return ""
 	}
-	// 取长期记忆段落首行摘要
 	for _, line := range strings.Split(as.User, "\n") {
 		if strings.HasPrefix(line, "上次(") {
 			return "\n参考历史经验：" + line
@@ -67,43 +66,54 @@ func (a *Agent) memorySuffix(device, metric string) string {
 	return ""
 }
 
-func (a *Agent) Handle(ctx context.Context, userText string) (model.Message, error) {
+func (a *Agent) Handle(ctx context.Context, conversationID string, userText string) (model.Message, error) {
 	userMsg := model.Message{
 		ID: model.NewID("msg"), Role: model.RoleUser,
-		Content: userText, CreatedAt: time.Now(),
+		Content: userText, ConversationID: conversationID, CreatedAt: time.Now(),
 	}
 	_ = a.store.SaveMessage(userMsg)
-
-	reply := a.answer(ctx, userText)
-
+	if conv, err := a.store.GetConversation(conversationID); err == nil && conv.Title == "" {
+		_ = a.store.SetConversationTitle(conversationID, titleFor(userText))
+	}
+	reply := a.answer(ctx, conversationID, userText)
 	assistantMsg := model.Message{
 		ID: model.NewID("msg"), Role: model.RoleAssistant,
-		Content: reply, CreatedAt: time.Now(),
+		Content: reply, ConversationID: conversationID, CreatedAt: time.Now(),
 	}
 	if alertID := extractAlertID(userText, a.store); alertID != "" {
 		assistantMsg.AlertID = alertID
 	}
 	_ = a.store.SaveMessage(assistantMsg)
+	_ = a.store.TouchConversation(conversationID)
 	return assistantMsg, nil
 }
 
+// titleFor 取首条消息前 20 个 rune 作为会话标题。
+func titleFor(text string) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) > 20 {
+		runes = runes[:20]
+	}
+	return string(runes)
+}
+
 // answer 多意图优先：有轻量 LLM 时重写拆分后逐子问题聚合；否则回退单意图规则路径。
-func (a *Agent) answer(ctx context.Context, userText string) string {
+func (a *Agent) answer(ctx context.Context, conversationID string, userText string) string {
 	if a.lightLLM == nil || ctxpkg.IsNilCompleter(a.lightLLM) {
-		return a.answerSingle(ctx, userText)
+		return a.answerSingle(ctx, conversationID, userText)
 	}
 	_, subs, err := RewriteAndSplit(ctx, userText, a.lightLLM)
 	if err != nil || len(subs) == 0 {
-		return a.answerSingle(ctx, userText)
+		return a.answerSingle(ctx, conversationID, userText)
 	}
 	// 原文已有明确的规则意图，但重写拆分出的子问题全部丢失该意图（LLM 常把单意图
 	// 问题拆成含"告警"等宽泛词的碎片，被规则误判为 ListAlerts）→ 回退单意图路径，
 	// 以原文为准，避免"什么原因"被重写成告警列表。
 	if sc := RuleScore(a.activeLeaves(), userText); sc.Confidence >= 0.4 && !a.subsKeepIntent(subs, sc.Intent) {
-		return a.answerSingle(ctx, userText)
+		return a.answerSingle(ctx, conversationID, userText)
 	}
 	if len(subs) == 1 {
-		return a.answerOne(ctx, subs[0])
+		return a.answerOne(ctx, conversationID, subs[0])
 	}
 	limit := a.maxSplit
 	if limit <= 0 {
@@ -115,7 +125,7 @@ func (a *Agent) answer(ctx context.Context, userText string) string {
 			fmt.Fprintf(&b, "[%d] %s → skipped（超出上限 %d）\n", i+1, sub, limit)
 			continue
 		}
-		content, status := a.answerOneStatus(ctx, sub)
+		content, status := a.answerOneStatus(ctx, conversationID, sub)
 		fmt.Fprintf(&b, "[%d] %s → %s\n%s\n", i+1, sub, status, content)
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -150,7 +160,7 @@ func (a *Agent) placeholderReply(code Intent) string {
 }
 
 // answerSingle 无轻量 LLM 时的单意图规则路径（原 Handle 逻辑）。
-func (a *Agent) answerSingle(ctx context.Context, userText string) string {
+func (a *Agent) answerSingle(ctx context.Context, conversationID string, userText string) string {
 	alertID := extractAlertID(userText, a.store)
 	intent := RuleMatch(a.activeLeaves(), userText)
 	switch intent {
@@ -171,14 +181,14 @@ func (a *Agent) answerSingle(ctx context.Context, userText string) string {
 			time.Sleep(50 * time.Millisecond)
 		}
 		if !ctxpkg.IsNilCompleter(a.llm) {
-			return a.answerWithLLM(ctx, alertID, intent, userText)
+			return a.answerWithLLM(ctx, conversationID, alertID, intent, userText)
 		}
-		return a.answerFor(alertID, intent)
+		return a.answerFor(conversationID, alertID, intent)
 	case AskStatus:
 		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, intent); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent); ok {
 				return content
 			}
 		}
@@ -187,13 +197,13 @@ func (a *Agent) answerSingle(ctx context.Context, userText string) string {
 }
 
 // answerOne 单子问题的回复（不带头部状态行）。
-func (a *Agent) answerOne(ctx context.Context, sub string) string {
-	content, _ := a.answerOneStatus(ctx, sub)
+func (a *Agent) answerOne(ctx context.Context, conversationID string, sub string) string {
+	content, _ := a.answerOneStatus(ctx, conversationID, sub)
 	return content
 }
 
 // answerOneStatus 单个子问题：规则意图优先，Unknown 用轻量 LLM 分类；返回内容与状态。
-func (a *Agent) answerOneStatus(ctx context.Context, sub string) (string, string) {
+func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub string) (string, string) {
 	intent, _ := ParseIntentWithLight(ctx, a.activeLeaves(), sub, a.lightLLM)
 	switch intent {
 	case ListAlerts:
@@ -216,12 +226,12 @@ func (a *Agent) answerOneStatus(ctx context.Context, sub string) (string, string
 			time.Sleep(50 * time.Millisecond)
 		}
 		if !ctxpkg.IsNilCompleter(a.llm) {
-			return a.answerWithLLM(ctx, alertID, intent, sub), "success"
+			return a.answerWithLLM(ctx, conversationID, alertID, intent, sub), "success"
 		}
-		return a.answerFor(alertID, intent), "success"
+		return a.answerFor(conversationID, alertID, intent), "success"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, intent); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent); ok {
 				return content, "success"
 			}
 			return a.placeholderReply(intent), statusFor(intent)
@@ -248,12 +258,12 @@ func isSystemIntent(code Intent) bool {
 }
 
 // kbReply 按意图 code 检索知识库并返回命中文档行；无命中返回 ok=false。
-func (a *Agent) kbReply(ctx context.Context, code string) (string, bool) {
+func (a *Agent) kbReply(ctx context.Context, conversationID string, code string) (string, bool) {
 	if a.ctxStore == nil {
 		return "", false
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
-	as, err := asm.Assemble(ctxpkg.Query{Stage: "chat", Intents: []string{code}}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Stage: "chat", Intents: []string{code}, ConversationID: conversationID}, false, nil)
 	if err != nil {
 		return "", false
 	}
@@ -262,7 +272,6 @@ func (a *Agent) kbReply(ctx context.Context, code string) (string, bool) {
 		if c.Source != ctxpkg.SourceKnowledge {
 			continue
 		}
-		// 仅保留 intents 元数据与意图码精确相交的块，避免无关文档混入。
 		if !ctxpkg.MatchesIntent(c.Metadata["intents"], code) {
 			continue
 		}
@@ -318,7 +327,7 @@ func extractAlertID(text string, s *store.Store) string {
 	return ""
 }
 
-func (a *Agent) answerFor(alertID string, intent Intent) string {
+func (a *Agent) answerFor(conversationID, alertID string, intent Intent) string {
 	run, err := a.store.GetRun("run-" + alertID)
 	if err != nil {
 		return fmt.Sprintf("告警 %s 尚未完成排查，请稍后再问。", alertID)
@@ -349,18 +358,17 @@ func (a *Agent) answerFor(alertID string, intent Intent) string {
 	if reply == "" {
 		reply = fmt.Sprintf("告警 %s：%s", alertID, rca.RootCause)
 	}
-	// 长期记忆附加
 	alert, err := a.store.GetAlert(alertID)
 	if err == nil {
-		reply += a.memorySuffix(alert.Device, alert.Metric)
+		reply += a.memorySuffix(conversationID, alert.Device, alert.Metric)
 	}
 	return reply
 }
 
-func (a *Agent) answerWithLLM(ctx context.Context, alertID string, intent Intent, userText string) string {
+func (a *Agent) answerWithLLM(ctx context.Context, conversationID, alertID string, intent Intent, userText string) string {
 	alert, err := a.store.GetAlert(alertID)
 	if err != nil {
-		return a.answerFor(alertID, intent)
+		return a.answerFor(conversationID, alertID, intent)
 	}
 	var rca model.RCA
 	var rec model.Recommendation
@@ -373,7 +381,7 @@ func (a *Agent) answerWithLLM(ctx context.Context, alertID string, intent Intent
 		}
 	}
 	ctxStr := ""
-	if as := a.buildAssembled(alert.Device, alert.Metric, []string{intent}); as != nil {
+	if as := a.buildAssembled(conversationID, alert.Device, alert.Metric, []string{intent}); as != nil {
 		ctxStr = as.User
 	}
 	system := "你是算力中心硬件运维助手。结合给定上下文与已有排查结论，用中文简明回答用户的根因或处置问题。"
@@ -381,7 +389,7 @@ func (a *Agent) answerWithLLM(ctx context.Context, alertID string, intent Intent
 		alertID, alert.Device, alert.Metric, rca.RootCause, strings.Join(rec.Actions, "；"), ctxStr, userText)
 	raw, cerr := a.llm.Complete(ctx, system, user)
 	if cerr != nil || strings.TrimSpace(raw) == "" {
-		return a.answerFor(alertID, intent)
+		return a.answerFor(conversationID, alertID, intent)
 	}
 	return raw
 }

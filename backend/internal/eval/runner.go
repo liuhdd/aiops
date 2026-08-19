@@ -140,7 +140,7 @@ func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task,
 	} else {
 		ag = agent.New(st, nil, eng)
 	}
-	msg, err := ag.Handle(ctx, t.ChatInput)
+	msg, err := ag.Handle(ctx, "", t.ChatInput)
 	if err != nil {
 		res.RunStatus = "chat-failed"
 		res.ErrMsg = err.Error()

@@ -58,14 +58,14 @@ func TestAgentInspectAlertTriggersRun(t *testing.T) {
 	_ = s.SaveAlert(a)
 	ag := New(s, nil, nil)
 	// 用 nil engine 时 Handle 直接基于 store 回复
-	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	msg, err := ag.Handle(context.Background(), "", "alarm-1什么原因")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if msg.Role != model.RoleAssistant || msg.Content == "" {
 		t.Fatalf("msg = %+v", msg)
 	}
-	msgs, _ := s.ListMessages()
+	msgs, _ := s.ListMessages("")
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
@@ -85,7 +85,7 @@ func TestAgentRuleAnswerIncludesLongTermMemory(t *testing.T) {
 	_ = s.SaveStage(model.StageResult{ID: "st1", RunID: "run-" + a.ID, StageID: "rca", StageName: "根因分析",
 		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
 	ag := NewWithContext(s, nil, nil, cs, 3)
-	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	msg, err := ag.Handle(context.Background(), "", "alarm-1什么原因")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestAgentLLMAnswerUsesAssembledContext(t *testing.T) {
 		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
 	fake := &fakeChatLLM{raw: "LLM回答：磁盘空间不足，建议清理日志"}
 	ag := NewWithContext(s, fake, nil, cs, 3)
-	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	msg, err := ag.Handle(context.Background(), "", "alarm-1什么原因")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestAgentLLMFallsBackToRule(t *testing.T) {
 	fake := &fakeChatLLM{err: errors.New("llm down")}
 	cs := ctxpkg.NewStore(s)
 	ag := NewWithContext(s, fake, nil, cs, 3)
-	msg, err := ag.Handle(context.Background(), "alarm-1什么原因")
+	msg, err := ag.Handle(context.Background(), "", "alarm-1什么原因")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestAgentRecognizesCustomLeaf(t *testing.T) {
 		return []model.LeafSpec{{Code: "MyKB", Name: "MyKB", Description: "查知识库", RuleKeywords: []string{"查手册"}}}
 	}
 	ag := NewWithLeaves(s, nil, nil, nil, nil, 3, 3, leaves)
-	msg, _ := ag.Handle(context.Background(), "帮我查手册")
+	msg, _ := ag.Handle(context.Background(), "", "帮我查手册")
 	if !strings.Contains(msg.Content, "尚未实现") {
 		t.Fatalf("KB 意图应输出占位语, got %q", msg.Content)
 	}
@@ -318,7 +318,7 @@ func TestHandleMultiIntentAggregation(t *testing.T) {
 		Status: model.StageCompleted, Output: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`, Iteration: 0, StartedAt: now, EndedAt: now})
 	light := &scriptedLLM{raw: `{"rewritten":"有哪些告警？alarm-1什么原因？","sub_questions":["有哪些告警","alarm-1什么原因"]}`}
 	ag := NewWithLight(s, nil, light, nil, nil, 3, 3)
-	msg, err := ag.Handle(context.Background(), "有哪些告警？alarm-1什么原因？")
+	msg, err := ag.Handle(context.Background(), "", "有哪些告警？alarm-1什么原因？")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestHandleRootCauseQuestionNotDegradedByRewrite(t *testing.T) {
 	// （碎片含 "告警" → 规则误判为 ListAlerts）。修复前会返回告警列表。
 	light := &scriptedLLM{raw: `{"rewritten":"告警alarm-1由什么原因引起？","sub_questions":["告警alarm-1的告警内容是什么？","告警alarm-1可能由哪些原因导致？"]}`}
 	ag := NewWithLight(s, nil, light, nil, nil, 3, 3)
-	msg, err := ag.Handle(context.Background(), "alarm-1 什么原因")
+	msg, err := ag.Handle(context.Background(), "", "alarm-1 什么原因")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestHandleUnknownGuidance(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
 	ag := New(s, nil, nil)
-	msg, _ := ag.Handle(context.Background(), "今天天气如何？")
+	msg, _ := ag.Handle(context.Background(), "", "今天天气如何？")
 	if !strings.Contains(msg.Content, "重新描述你的问题") {
 		t.Fatalf("Unknown 应输出新引导语, got %q", msg.Content)
 	}
@@ -381,7 +381,7 @@ func TestHandleAggregationUnknownAndSkipped(t *testing.T) {
 	// 触发轻量 LLM 分类：fake 返回原始 JSON，其 intent 字段为空 → Unknown。
 	light := &scriptedLLM{raw: `{"rewritten":"有哪些告警？alarm-1什么原因？随便说说？还有别的？","sub_questions":["有哪些告警","alarm-1什么原因","随便说说","还有别的"]}`}
 	ag := NewWithLight(s, nil, light, nil, nil, 3, 3)
-	msg, err := ag.Handle(context.Background(), "有哪些告警？alarm-1什么原因？随便说说？还有别的？")
+	msg, err := ag.Handle(context.Background(), "", "有哪些告警？alarm-1什么原因？随便说说？还有别的？")
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestAgentKBIntentReturnsKnowledge(t *testing.T) {
 	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, func() []model.LeafSpec {
 		return []model.LeafSpec{{Code: "DiskCleanup", Name: "DiskCleanup", Description: "磁盘清理", RuleKeywords: []string{"清理磁盘"}}}
 	})
-	msg, _ := ag.Handle(context.Background(), "怎么清理磁盘")
+	msg, _ := ag.Handle(context.Background(), "", "怎么清理磁盘")
 	if !strings.Contains(msg.Content, "磁盘清理手册") {
 		t.Fatalf("KB 意图应返回知识, got %q", msg.Content)
 	}
@@ -436,7 +436,7 @@ func TestAgentKBIntentFallsBackToPlaceholder(t *testing.T) {
 	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, func() []model.LeafSpec {
 		return []model.LeafSpec{{Code: "MCP1", Name: "MCP1", Description: "mcp", RuleKeywords: []string{"mcp命令"}}}
 	})
-	msg, _ := ag.Handle(context.Background(), "执行 mcp命令")
+	msg, _ := ag.Handle(context.Background(), "", "执行 mcp命令")
 	if !strings.Contains(msg.Content, "尚未实现") {
 		t.Fatalf("无命中知识应回退占位语, got %q", msg.Content)
 	}
@@ -474,11 +474,50 @@ func TestAgentKBReplyFiltersByIntent(t *testing.T) {
 	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, func() []model.LeafSpec {
 		return []model.LeafSpec{{Code: "DiskCleanup", Name: "DiskCleanup", Description: "磁盘清理", RuleKeywords: []string{"清理磁盘"}}}
 	})
-	msg, _ := ag.Handle(context.Background(), "怎么清理磁盘")
+	msg, _ := ag.Handle(context.Background(), "", "怎么清理磁盘")
 	if !strings.Contains(msg.Content, "清理日志与归档") {
 		t.Fatalf("KB 应返回匹配意图的块, got %q", msg.Content)
 	}
 	if strings.Contains(msg.Content, "GPU故障手册") {
 		t.Fatalf("KB 不应返回无关意图文档, got %q", msg.Content)
+	}
+}
+
+func TestHandleSavesMessagesInConversation(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	conv, _ := s.CreateConversation("")
+	ag := New(s, nil, nil)
+	_, err := ag.Handle(context.Background(), conv.ID, "有哪些告警")
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	msgs, _ := s.ListMessages(conv.ID)
+	if len(msgs) != 2 {
+		t.Fatalf("会话应落库 2 条消息, got %d", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.ConversationID != conv.ID {
+			t.Fatalf("消息 conversation_id = %q, want %q", m.ConversationID, conv.ID)
+		}
+	}
+	c, _ := s.GetConversation(conv.ID)
+	if c.Title == "" {
+		t.Fatal("首条消息后应自动命名会话标题")
+	}
+	if c.UpdatedAt.Before(conv.UpdatedAt) {
+		t.Fatal("消息后会话 updated_at 应更新")
+	}
+}
+
+func TestHandleTitlesConversationFromFirstMessage(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	conv, _ := s.CreateConversation("")
+	ag := New(s, nil, nil)
+	_, _ = ag.Handle(context.Background(), conv.ID, "这是一个很长的第一句话需要被截断到二十个字符以内")
+	c, _ := s.GetConversation(conv.ID)
+	if len([]rune(c.Title)) != 20 {
+		t.Fatalf("title=%q rune 数=%d, want 20", c.Title, len([]rune(c.Title)))
 	}
 }
