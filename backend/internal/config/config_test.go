@@ -102,3 +102,29 @@ func TestLoadFromEnvLightIntentOverride(t *testing.T) {
 		t.Fatalf("MaxSplit = %d, want 5", cfg.MaxSplit)
 	}
 }
+
+func TestLoadFromEnvEmbedDefaults(t *testing.T) {
+	env := map[string]string{"LLM_BASE_URL": "https://main.example.com/v1", "LLM_MODEL": "main-model"}
+	cfg := LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.LLMEmbedBaseURL != "https://main.example.com/v1" {
+		t.Fatalf("LLMEmbedBaseURL = %q, want 同 LLM_BASE_URL", cfg.LLMEmbedBaseURL)
+	}
+	if cfg.LLMEmbedModel != "text-embedding-3-small" {
+		t.Fatalf("LLMEmbedModel = %q, want text-embedding-3-small", cfg.LLMEmbedModel)
+	}
+}
+
+func TestLoadFromEnvEmbedOverride(t *testing.T) {
+	env := map[string]string{
+		"LLM_BASE_URL":       "https://main.example.com/v1",
+		"LLM_EMBED_MODEL":    "text-embedding-3-large",
+		"LLM_EMBED_BASE_URL": "https://embed.example.com/v1",
+	}
+	cfg := LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.LLMEmbedBaseURL != "https://embed.example.com/v1" {
+		t.Fatalf("LLMEmbedBaseURL = %q, want override", cfg.LLMEmbedBaseURL)
+	}
+	if cfg.LLMEmbedModel != "text-embedding-3-large" {
+		t.Fatalf("LLMEmbedModel = %q, want override", cfg.LLMEmbedModel)
+	}
+}

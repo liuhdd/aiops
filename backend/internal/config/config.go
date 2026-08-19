@@ -17,6 +17,8 @@ type Config struct {
 	TopK            int    // CONTEXT_TOP_K，每源上下文条数，默认 3
 	LLMLightBaseURL string // LLM_LIGHT_BASE_URL，轻量意图模型 BaseURL，默认同 LLM_BASE_URL
 	LLMLightModel   string // LLM_LIGHT_MODEL，轻量意图模型，默认同 LLM_MODEL
+	LLMEmbedBaseURL string // LLM_EMBED_BASE_URL，embedding 接口 BaseURL，默认同 LLM_BASE_URL
+	LLMEmbedModel   string // LLM_EMBED_MODEL，embedding 模型，默认 text-embedding-3-small
 	MaxSplit        int    // INTENT_MAX_SPLIT，单条输入多意图拆分上限，默认 3
 }
 
@@ -71,6 +73,14 @@ func LoadFromEnv(lookup func(string) string) Config {
 			maxSplit = n
 		}
 	}
+	embedBase := lookup("LLM_EMBED_BASE_URL")
+	if embedBase == "" {
+		embedBase = base
+	}
+	embedModel := lookup("LLM_EMBED_MODEL")
+	if embedModel == "" {
+		embedModel = "text-embedding-3-small"
+	}
 	return Config{
 		LLMAPIKey:       lookup("LLM_API_KEY"),
 		LLMBaseURL:      base,
@@ -82,6 +92,8 @@ func LoadFromEnv(lookup func(string) string) Config {
 		TopK:            topK,
 		LLMLightBaseURL: lightBase,
 		LLMLightModel:   lightModel,
+		LLMEmbedBaseURL: embedBase,
+		LLMEmbedModel:   embedModel,
 		MaxSplit:        maxSplit,
 	}
 }
