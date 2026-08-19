@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -54,11 +55,12 @@ func TestHealthzAndAlerts(t *testing.T) {
 func TestChatEndpoint(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
+	conv, _ := s.CreateConversation("")
 	h := hub.New()
 	ag := agent.New(s, nil, nil)
 	srv := NewServer(config.Config{}, s, ag, nil, h, nil, intent.NewService(s, intent.NewMemCache()), kb.NewService(s, nil))
 
-	body := strings.NewReader(`{"text":"有哪些告警"}`)
+	body := strings.NewReader(fmt.Sprintf(`{"text":"有哪些告警","conversation_id":%q}`, conv.ID))
 	req := httptest.NewRequest("POST", "/api/chat", body)
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, req)
@@ -69,8 +71,87 @@ func TestChatEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if m.Role != model.RoleAssistant {
-		t.Fatalf("role = %q", m.Role)
+	if m.Role != model.RoleAssistant || m.ConversationID != conv.ID {
+		t.Fatalf("msg = %+v", m)
+	}
+}
+
+func TestChatMissingConversationID(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	h := hub.New()
+	ag := agent.New(s, nil, nil)
+	srv := NewServer(config.Config{}, s, ag, nil, h, nil, intent.NewService(s, intent.NewMemCache()), kb.NewService(s, nil))
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(`{"text":"有哪些告警"}`))
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("缺 conversation_id 应 400, got %d", rr.Code)
+	}
+}
+
+func TestChatUnknownConversation(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	h := hub.New()
+	ag := agent.New(s, nil, nil)
+	srv := NewServer(config.Config{}, s, ag, nil, h, nil, intent.NewService(s, intent.NewMemCache()), kb.NewService(s, nil))
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(`{"text":"有哪些告警","conversation_id":"nope"}`))
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("会话不存在应 404, got %d", rr.Code)
+	}
+}
+
+func TestConversationsEndpoints(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	h := hub.New()
+	ag := agent.New(s, nil, nil)
+	srv := NewServer(config.Config{}, s, ag, nil, h, nil, intent.NewService(s, intent.NewMemCache()), kb.NewService(s, nil))
+
+	// 空列表非 null
+	req := httptest.NewRequest("GET", "/api/conversations", nil)
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list code = %d", rr.Code)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(rr.Body.String()), "[") {
+		t.Fatalf("空会话列表应为 [] 数组, got %s", rr.Body.String())
+	}
+
+	// 创建
+	req = httptest.NewRequest("POST", "/api/conversations", nil)
+	rr = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create code = %d", rr.Code)
+	}
+	var conv model.Conversation
+	if err := json.Unmarshal(rr.Body.Bytes(), &conv); err != nil || conv.ID == "" {
+		t.Fatalf("create conv: %v %+v", err, conv)
+	}
+
+	// 会话消息（空 → []）
+	req = httptest.NewRequest("GET", "/api/conversations/"+conv.ID+"/messages", nil)
+	rr = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("messages code = %d", rr.Code)
+	}
+	var msgs []model.Message
+	if err := json.Unmarshal(rr.Body.Bytes(), &msgs); err != nil || msgs == nil {
+		t.Fatalf("空会话消息应为 [] 非 null: %v", err)
+	}
+
+	// 不存在会话 404
+	req = httptest.NewRequest("GET", "/api/conversations/nope/messages", nil)
+	rr = httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("不存在会话消息应 404, got %d", rr.Code)
 	}
 }
 

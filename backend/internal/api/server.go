@@ -45,6 +45,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/alerts/{id}", s.handleGetAlert)
 	s.mux.HandleFunc("POST /api/alerts/{id}/inspect", s.handleInspect)
 	s.mux.HandleFunc("GET /api/messages", s.handleListMessages)
+	s.mux.HandleFunc("GET /api/conversations", s.handleListConversations)
+	s.mux.HandleFunc("POST /api/conversations", s.handleCreateConversation)
+	s.mux.HandleFunc("GET /api/conversations/{id}/messages", s.handleListConversationMessages)
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
 	s.mux.HandleFunc("GET /ws", s.handleWS)
 	s.mux.HandleFunc("GET /api/intents/tree", s.handleIntentTree)
@@ -106,15 +109,56 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, msgs)
 }
 
+func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request) {
+	list, err := s.st.ListConversations()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request) {
+	conv, err := s.st.CreateConversation("")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, conv)
+}
+
+func (s *Server) handleListConversationMessages(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := s.st.GetConversation(id); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "conversation not found"})
+		return
+	}
+	msgs, err := s.st.ListMessages(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, msgs)
+}
+
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Text string `json:"text"`
+		Text           string `json:"text"`
+		ConversationID string `json:"conversation_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad body"})
 		return
 	}
-	msg, err := s.ag.Handle(r.Context(), body.Text)
+	if strings.TrimSpace(body.ConversationID) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "conversation_id required"})
+		return
+	}
+	if _, err := s.st.GetConversation(body.ConversationID); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "conversation not found"})
+		return
+	}
+	msg, err := s.ag.Handle(r.Context(), body.ConversationID, body.Text)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
