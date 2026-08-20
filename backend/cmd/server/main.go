@@ -17,6 +17,7 @@ import (
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
+	"aiops/internal/retrieve"
 	"aiops/internal/simulator"
 	"aiops/internal/store"
 )
@@ -49,14 +50,20 @@ func main() {
 		reg.Register(t)
 	}
 
+	embedder, _ := retrieve.NewLLMEmbedder(cfg) // 无 key 时 nil，检索回退
+	searcher := retrieve.NewSearcher(st, embedder)
+
 	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
 	eng.Publish = h.Publish
+	eng.SetSearcher(searcher)
+	reg.Register(ctxpkg.NewSearchCaseTool(searcher))
+	reg.Register(ctxpkg.NewSearchManualTool(searcher))
 
 	intentsvc := intent.NewService(st, intent.NewMemCache())
-	kbsvc := kb.NewService(st, func() []model.LeafSpec {
+	kbsvc := kb.NewServiceWithEmbedder(st, func() []model.LeafSpec {
 		leaves, _ := intentsvc.ActiveLeaves(context.Background())
 		return leaves
-	})
+	}, embedder)
 	var seeds []kb.SeedDoc
 	for _, d := range mockdata.Docs() {
 		seeds = append(seeds, kb.SeedDoc{
@@ -72,6 +79,7 @@ func main() {
 		leaves, _ := intentsvc.ActiveLeaves(context.Background())
 		return leaves
 	})
+	ag.SetSearcher(searcher)
 	sim := simulator.New(st, func(a model.Alert) {
 		h.Publish("alert", a)
 		go func() {

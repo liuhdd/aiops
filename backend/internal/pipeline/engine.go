@@ -8,6 +8,7 @@ import (
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
 	"aiops/internal/model"
+	"aiops/internal/retrieve"
 	"aiops/internal/scope"
 	"aiops/internal/store"
 )
@@ -52,7 +53,11 @@ type Engine struct {
 	tools    *ctxpkg.Registry
 	react    bool
 	topK     int
+	searcher retrieve.Searcher
 }
+
+// SetSearcher 注入混合检索器（透传给每个 run 的上下文引擎）。
+func (e *Engine) SetSearcher(s retrieve.Searcher) { e.searcher = s }
 
 func NewEngine(s *store.Store, stages []Stage) *Engine {
 	return &Engine{store: s, stages: stages}
@@ -105,6 +110,9 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 	}
 	if e.ctxStore != nil {
 		st.Ctx = ctxpkg.NewEngine(e.ctxStore, e.tools, run.ID, alert.Device, alert.Metric, e.react, e.topK)
+		if e.searcher != nil {
+			st.Ctx.SetSearcher(e.searcher)
+		}
 	}
 	st.SuggestLogs = suggestLogs(alert.Metric)
 
