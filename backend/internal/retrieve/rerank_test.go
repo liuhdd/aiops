@@ -1,6 +1,7 @@
 package retrieve
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -37,10 +38,14 @@ func TestRankManualsBM25Dominates(t *testing.T) {
 
 func TestRankManualsNoRecency(t *testing.T) {
 	now := time.Now()
-	cands := []cand{mkCand("a", 1, 0, 0, 0.9), mkCand("b", 1, 0, 0, 0.1)}
+	// 时效与 BM25 相反：若时效参与融合，b 会因高 recency 反超 a；实际应仅由 BM25 定序。
+	cands := []cand{mkCand("a", 1.0, 0, 0, 0.1), mkCand("b", 0.5, 0, 0, 0.9)}
 	got := RankManuals(cands, now)
-	if got[0].Final != got[1].Final {
-		t.Fatalf("手册不应受时效影响: %f != %f", got[0].Final, got[1].Final)
+	if got[0].Chunk.ChunkID != "a" || got[0].Final <= got[1].Final {
+		t.Fatalf("手册应仅由BM25定序且不受时效影响: a=%+v b=%+v", got[0], got[1])
+	}
+	if math.Abs(got[0].Final-0.5) > 1e-9 || math.Abs(got[1].Final) > 1e-9 {
+		t.Fatalf("BM25 minmax 归一化后 a=0.5 b=0.0, got a=%f b=%f", got[0].Final, got[1].Final)
 	}
 }
 

@@ -43,6 +43,10 @@ type BM25Index struct {
 
 // BuildBM25 从知识块构建索引；ids 与 chunks 一一对应。
 func BuildBM25(chunks []model.KbKnowledgeChunk, ids []string) *BM25Index {
+	// 防御：ids 不足时截断 chunks，保证索引内 chunk 下标都能映射到合法 id。
+	if len(ids) < len(chunks) {
+		chunks = chunks[:len(ids)]
+	}
 	ix := &BM25Index{k1: 1.5, b: 0.75, df: map[string]int{}, tf: map[string]map[int]int{}, ids: ids}
 	totalLen := 0.0
 	for i, c := range chunks {

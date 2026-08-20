@@ -104,16 +104,21 @@ func TestAssembleKnowledgeByIntent(t *testing.T) {
 type mockSearcher struct {
 	cases   []retrieve.Result
 	manuals []retrieve.Result
+
+	lastCasesOpts   retrieve.Options
+	lastManualsOpts retrieve.Options
 }
 
-func (m mockSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+func (m *mockSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	m.lastCasesOpts = o
 	out := m.cases
 	if len(out) > o.TopK {
 		out = out[:o.TopK]
 	}
 	return out, nil
 }
-func (m mockSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+func (m *mockSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	m.lastManualsOpts = o
 	out := m.manuals
 	if len(out) > o.TopK {
 		out = out[:o.TopK]
@@ -126,24 +131,45 @@ func TestAssembleRoutesKnowledgeByStage(t *testing.T) {
 	defer s.Close()
 	cs := NewStore(s)
 	asm := NewAssembler(cs, 3)
-	asm.SetSearcher(mockSearcher{
-		cases:   []retrieve.Result{{DocID: "d1", Title: "GPU掉卡案例", Category: model.KBCase, Content: "掉卡根因与处置"}},
-		manuals: []retrieve.Result{{DocID: "d2", Title: "交换机手册", Category: model.KBManual, Content: "光模块更换步骤"}},
-	})
+	mock := &mockSearcher{
+		cases: []retrieve.Result{
+			{DocID: "d1", Title: "GPU掉卡案例1", Category: model.KBCase, Content: "掉卡根因与处置"},
+			{DocID: "d2", Title: "GPU掉卡案例2", Category: model.KBCase, Content: "掉卡根因与处置"},
+			{DocID: "d3", Title: "GPU掉卡案例3", Category: model.KBCase, Content: "掉卡根因与处置"},
+		},
+		manuals: []retrieve.Result{
+			{DocID: "m1", Title: "交换机手册1", Category: model.KBManual, Content: "光模块更换步骤"},
+			{DocID: "m2", Title: "交换机手册2", Category: model.KBManual, Content: "光模块更换步骤"},
+			{DocID: "m3", Title: "交换机手册3", Category: model.KBManual, Content: "光模块更换步骤"},
+		},
+	}
+	asm.SetSearcher(mock)
 	// rca：案例2 + 手册1
 	as, err := asm.Assemble(Query{Device: "db-01", Metric: "gpu_util", Stage: "rca"}, false, nil)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
-	if !strings.Contains(as.User, "GPU掉卡案例") {
+	if !strings.Contains(as.User, "GPU掉卡案例1") {
 		t.Fatalf("rca 应含案例:\n%s", as.User)
+	}
+	if mock.lastCasesOpts.TopK != 2 || mock.lastManualsOpts.TopK != 1 {
+		t.Fatalf("rca 配额应为 cases=2 manuals=1, got %+v %+v", mock.lastCasesOpts, mock.lastManualsOpts)
+	}
+	if strings.Contains(as.User, "GPU掉卡案例3") {
+		t.Fatalf("rca 案例 topK=2 不应出现第3个案例:\n%s", as.User)
 	}
 	// recommend：手册2 + 案例1
 	as, err = asm.Assemble(Query{Device: "db-01", Metric: "gpu_util", Stage: "recommend"}, false, nil)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
-	if !strings.Contains(as.User, "交换机手册") {
+	if !strings.Contains(as.User, "交换机手册1") {
 		t.Fatalf("recommend 应含手册:\n%s", as.User)
+	}
+	if mock.lastCasesOpts.TopK != 1 || mock.lastManualsOpts.TopK != 2 {
+		t.Fatalf("recommend 配额应为 cases=1 manuals=2, got %+v %+v", mock.lastCasesOpts, mock.lastManualsOpts)
+	}
+	if strings.Contains(as.User, "交换机手册3") {
+		t.Fatalf("recommend 手册 topK=2 不应出现第3个手册:\n%s", as.User)
 	}
 }

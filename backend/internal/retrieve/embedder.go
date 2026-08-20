@@ -28,7 +28,6 @@ type LLMEmbedder struct {
 	apiKey  string
 	model   string
 	client  *http.Client
-	dim     int
 }
 
 // NewLLMEmbedder 构造 LLMEmbedder；未配置 LLM_API_KEY 时返回 ErrNoEmbed。
@@ -88,13 +87,12 @@ func (e *LLMEmbedder) Embed(ctx context.Context, texts []string) ([][]float64, e
 	if len(parsed.Data) == 0 {
 		return nil, errors.New("embeddings 响应为空")
 	}
-	if e.dim == 0 {
-		e.dim = len(parsed.Data[0].Embedding)
-	}
+	// 每批以首条维度为基准校验，避免在结构体上缓存可变状态引发并发竞态。
+	dim := len(parsed.Data[0].Embedding)
 	out := make([][]float64, 0, len(parsed.Data))
 	for _, d := range parsed.Data {
-		if len(d.Embedding) != e.dim {
-			return nil, fmt.Errorf("embeddings 维度不一致: %d != %d", len(d.Embedding), e.dim)
+		if len(d.Embedding) != dim {
+			return nil, fmt.Errorf("embeddings 维度不一致: %d != %d", len(d.Embedding), dim)
 		}
 		out = append(out, Normalize(d.Embedding))
 	}

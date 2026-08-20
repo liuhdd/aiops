@@ -178,6 +178,10 @@ func (s *Service) embedChunks(ctx context.Context, docID string, chunks []ChunkR
 	if err != nil {
 		return nil
 	}
+	// 防御：向量数与块数不一致时只取一一对应的前缀，避免 ids 越界。
+	if len(vecs) > len(ids) {
+		vecs = vecs[:len(ids)]
+	}
 	out := make([]model.KbEmbedding, 0, len(chunks))
 	for i, v := range vecs {
 		if len(v) == 0 {
