@@ -11,6 +11,7 @@ import (
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
+	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
 
@@ -23,7 +24,11 @@ type Agent struct {
 	ctxStore *ctxpkg.Store
 	topK     int
 	leaves   func() []model.LeafSpec // 活跃叶子 provider；nil 回退 SeedLeaves
+	search   retrieve.Searcher       // 混合检索器；nil 时知识源回退库内全量扫描
 }
+
+// SetSearcher 注入混合检索器（供组装器知识源使用）。
+func (a *Agent) SetSearcher(s retrieve.Searcher) { a.search = s }
 
 func New(s *store.Store, lc ctxpkg.Completer, eng *pipeline.Engine) *Agent {
 	return NewWithLight(s, lc, lc, eng, nil, 3, 3)
@@ -46,6 +51,8 @@ func (a *Agent) buildAssembled(conversationID, device, metric string, intents []
 		return nil
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
+	asm.SetSearcher(a.search)
+	asm.SetLeaves(a.leaves)
 	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents, ConversationID: conversationID}, false, nil)
 	if err != nil {
 		return nil
@@ -264,6 +271,8 @@ func (a *Agent) kbReply(ctx context.Context, conversationID string, code string)
 		return "", false
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
+	asm.SetSearcher(a.search)
+	asm.SetLeaves(a.leaves)
 	as, err := asm.Assemble(ctxpkg.Query{Stage: "chat", Intents: []string{code}, ConversationID: conversationID}, false, nil)
 	if err != nil {
 		return "", false

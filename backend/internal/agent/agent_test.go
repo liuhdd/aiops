@@ -10,6 +10,7 @@ import (
 
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/model"
+	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
 
@@ -507,6 +508,29 @@ func TestHandleSavesMessagesInConversation(t *testing.T) {
 	}
 	if c.UpdatedAt.Before(conv.UpdatedAt) {
 		t.Fatal("消息后会话 updated_at 应更新")
+	}
+}
+
+type agentFakeSearcher struct{ res []retrieve.Result }
+
+func (f agentFakeSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	return f.res, nil
+}
+func (f agentFakeSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	return f.res, nil
+}
+
+func TestAgentBuildAssembledUsesSearcher(t *testing.T) {
+	st, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer st.Close()
+	cs := ctxpkg.NewStore(st)
+	ag := NewWithLeaves(st, nil, nil, nil, cs, 3, 3, nil)
+	ag.SetSearcher(agentFakeSearcher{
+		res: []retrieve.Result{{DocID: "d1", Title: "磁盘案例", Category: model.KBCase, Content: "磁盘扩容处置"}},
+	})
+	as := ag.buildAssembled("c1", "db-01", "disk_usage", []string{"AskRootCause"})
+	if as == nil || !strings.Contains(as.User, "磁盘案例") {
+		t.Fatalf("buildAssembled 应含案例知识:\n%v", as)
 	}
 }
 
