@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aiops/internal/mockdata"
+	"aiops/internal/model"
 	"aiops/internal/retrieve"
 )
 
@@ -129,7 +130,8 @@ func NewSearchManualTool(s retrieve.Searcher) Tool {
 				return nil, errors.New("knowledge searcher unavailable")
 			}
 			return s.SearchManuals(ctx, retrieve.Query{
-				Text: strArg(args, "query"), Metric: strArg(args, "metric"),
+				Text: strArg(args, "query"), Category: model.KBCategory(strArg(args, "category")),
+				Metric: strArg(args, "metric"),
 			}, retrieve.Options{TopK: intArg(args, "top_k", 3)})
 		},
 	}

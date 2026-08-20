@@ -76,17 +76,23 @@ func TestUnknownTool(t *testing.T) {
 	}
 }
 
-type fakeSearcher struct{ res []retrieve.Result }
+type fakeSearcher struct {
+	res        []retrieve.Result
+	lastCaseQ  retrieve.Query
+	lastManual retrieve.Query
+}
 
-func (f fakeSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+func (f *fakeSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	f.lastCaseQ = q
 	return f.res, nil
 }
-func (f fakeSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+func (f *fakeSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	f.lastManual = q
 	return f.res, nil
 }
 
 func TestSearchCaseTool(t *testing.T) {
-	svc := fakeSearcher{res: []retrieve.Result{{DocID: "d1", Title: "GPU掉卡案例", Category: model.KBCase, Content: "正文"}}}
+	svc := &fakeSearcher{res: []retrieve.Result{{DocID: "d1", Title: "GPU掉卡案例", Category: model.KBCase, Content: "正文"}}}
 	reg := NewRegistry()
 	reg.Register(NewSearchCaseTool(svc))
 	reg.Register(NewSearchManualTool(svc))
@@ -104,5 +110,26 @@ func TestSearchCaseTool(t *testing.T) {
 	outs, ok := res.([]retrieve.Result)
 	if !ok || len(outs) != 1 || outs[0].DocID != "d1" {
 		t.Fatalf("res = %#v", res)
+	}
+	if svc.lastCaseQ.Text != "GPU 掉卡" || svc.lastCaseQ.Metric != "gpu_util" {
+		t.Fatalf("search_case 查询透传错误: %+v", svc.lastCaseQ)
+	}
+}
+
+func TestSearchManualToolCategory(t *testing.T) {
+	svc := &fakeSearcher{res: []retrieve.Result{{DocID: "d3", Title: "交换机手册", Category: model.KBManual, Content: "正文"}}}
+	reg := NewRegistry()
+	reg.Register(NewSearchManualTool(svc))
+	res, err := reg.Execute(context.Background(), "search_manual",
+		map[string]any{"query": "光模块", "category": "manual", "metric": "net_in", "top_k": 5})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	outs, ok := res.([]retrieve.Result)
+	if !ok || len(outs) != 1 || outs[0].DocID != "d3" {
+		t.Fatalf("res = %#v", res)
+	}
+	if svc.lastManual.Category != model.KBManual || svc.lastManual.Text != "光模块" {
+		t.Fatalf("search_manual 应透传 category=manual, got %+v", svc.lastManual)
 	}
 }

@@ -22,8 +22,11 @@ func (fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float64, error
 			out[i] = []float64{1, 0}
 		case strings.Contains(t, "磁盘"), strings.Contains(t, "扩容"):
 			out[i] = []float64{0, 1}
+		case strings.Contains(t, "semantic"):
+			out[i] = []float64{1, 0}
 		default:
-			out[i] = []float64{0.7071, 0.7071}
+			// 无关文本映射到与种子向量正交的方向，保证余弦 ≈ 0，避免误判为向量相关。
+			out[i] = []float64{0, -1}
 		}
 	}
 	return out, nil
@@ -79,6 +82,22 @@ func TestSearchCasesOnlyCases(t *testing.T) {
 	}
 }
 
+func TestSearchCasesVectorOnlyMatch(t *testing.T) {
+	s := seedRetrieveStore(t)
+	se := NewSearcher(s, fakeEmbedder{})
+	// "semantic topic" 与任一案例无关键词/标签/意图重叠，仅与 c1 向量高度相似（余弦 1.0）。
+	res, err := se.SearchCases(context.Background(), Query{Text: "semantic topic"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases: %v", err)
+	}
+	if len(res) == 0 || res[0].DocID != "d1" {
+		t.Fatalf("纯语义匹配应命中 d1 居首: %+v", res)
+	}
+	if res[0].Score <= 0 {
+		t.Fatalf("纯语义命中的案例应有融合分: %+v", res[0])
+	}
+}
+
 func TestSearchManualsOnlyManuals(t *testing.T) {
 	s := seedRetrieveStore(t)
 	se := NewSearcher(s, fakeEmbedder{})
@@ -88,6 +107,25 @@ func TestSearchManualsOnlyManuals(t *testing.T) {
 	}
 	if len(res) != 1 || res[0].DocID != "d3" {
 		t.Fatalf("手册检索应命中 d3: %+v", res)
+	}
+}
+
+func TestSearchManualsCategoryFilter(t *testing.T) {
+	s := seedRetrieveStore(t)
+	se := NewSearcher(s, fakeEmbedder{})
+	res, err := se.SearchManuals(context.Background(), Query{Text: "光模块", Category: model.KBRunbook}, Options{TopK: 2})
+	if err != nil {
+		t.Fatalf("SearchManuals: %v", err)
+	}
+	if len(res) != 0 {
+		t.Fatalf("category=runbook 不应返回 manual 文档: %+v", res)
+	}
+	res, err = se.SearchManuals(context.Background(), Query{Text: "光模块", Category: model.KBManual}, Options{TopK: 2})
+	if err != nil {
+		t.Fatalf("SearchManuals: %v", err)
+	}
+	if len(res) != 1 || res[0].DocID != "d3" {
+		t.Fatalf("category=manual 应命中 d3: %+v", res)
 	}
 }
 
