@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aiops/internal/mockdata"
+	"aiops/internal/retrieve"
 )
 
 var ErrScratchpadHandled = errors.New("write_scratchpad 由引擎接管")
@@ -99,6 +100,38 @@ func DefaultTools() []Tool {
 			Execute: func(ctx context.Context, args map[string]any) (any, error) {
 				return nil, ErrScratchpadHandled
 			}},
+	}
+}
+
+// NewSearchCaseTool 检索相似历史运维案例（故障症状→根因→处置）。
+func NewSearchCaseTool(s retrieve.Searcher) Tool {
+	return Tool{
+		Name: "search_case", Description: "检索相似历史运维案例（故障症状→根因→处置）",
+		ParamSchema: map[string]string{"query": "问题或症状描述（必填）", "metric": "可选，指标名", "device": "可选，设备名", "top_k": "可选，返回条数（默认3）"},
+		Execute: func(ctx context.Context, args map[string]any) (any, error) {
+			if s == nil {
+				return nil, errors.New("knowledge searcher unavailable")
+			}
+			return s.SearchCases(ctx, retrieve.Query{
+				Text: strArg(args, "query"), Metric: strArg(args, "metric"), Device: strArg(args, "device"),
+			}, retrieve.Options{TopK: intArg(args, "top_k", 3)})
+		},
+	}
+}
+
+// NewSearchManualTool 检索产品手册/操作手册（规格、告警含义、操作步骤）。
+func NewSearchManualTool(s retrieve.Searcher) Tool {
+	return Tool{
+		Name: "search_manual", Description: "检索产品手册/操作手册（规格、告警含义、操作步骤）",
+		ParamSchema: map[string]string{"query": "要查的问题（必填）", "category": "可选，manual/runbook", "metric": "可选，指标名", "top_k": "可选，返回条数（默认3）"},
+		Execute: func(ctx context.Context, args map[string]any) (any, error) {
+			if s == nil {
+				return nil, errors.New("knowledge searcher unavailable")
+			}
+			return s.SearchManuals(ctx, retrieve.Query{
+				Text: strArg(args, "query"), Metric: strArg(args, "metric"),
+			}, retrieve.Options{TopK: intArg(args, "top_k", 3)})
+		},
 	}
 }
 

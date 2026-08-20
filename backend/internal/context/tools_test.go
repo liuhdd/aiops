@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"aiops/internal/mockdata"
+	"aiops/internal/model"
+	"aiops/internal/retrieve"
 )
 
 func TestDefaultToolsRegistered(t *testing.T) {
@@ -71,5 +73,36 @@ func TestUnknownTool(t *testing.T) {
 	_, err := reg.Execute(context.Background(), "nope", nil)
 	if err == nil {
 		t.Fatalf("expected error for unknown tool")
+	}
+}
+
+type fakeSearcher struct{ res []retrieve.Result }
+
+func (f fakeSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	return f.res, nil
+}
+func (f fakeSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	return f.res, nil
+}
+
+func TestSearchCaseTool(t *testing.T) {
+	svc := fakeSearcher{res: []retrieve.Result{{DocID: "d1", Title: "GPU掉卡案例", Category: model.KBCase, Content: "正文"}}}
+	reg := NewRegistry()
+	reg.Register(NewSearchCaseTool(svc))
+	reg.Register(NewSearchManualTool(svc))
+	if _, ok := reg.Lookup("search_case"); !ok {
+		t.Fatalf("search_case missing")
+	}
+	if _, ok := reg.Lookup("search_manual"); !ok {
+		t.Fatalf("search_manual missing")
+	}
+	res, err := reg.Execute(context.Background(), "search_case",
+		map[string]any{"query": "GPU 掉卡", "metric": "gpu_util", "top_k": 5})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	outs, ok := res.([]retrieve.Result)
+	if !ok || len(outs) != 1 || outs[0].DocID != "d1" {
+		t.Fatalf("res = %#v", res)
 	}
 }
