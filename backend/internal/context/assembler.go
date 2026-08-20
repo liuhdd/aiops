@@ -1,11 +1,13 @@
 package context
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
 
 	"aiops/internal/model"
+	"aiops/internal/retrieve"
 )
 
 type Assembled struct {
@@ -15,10 +17,15 @@ type Assembled struct {
 }
 
 type Assembler struct {
-	cs   *Store
-	sel  Selector
-	topK int
+	cs     *Store
+	sel    Selector
+	topK   int
+	search retrieve.Searcher
+	leaves func() []model.LeafSpec
 }
+
+func (a *Assembler) SetSearcher(s retrieve.Searcher)     { a.search = s }
+func (a *Assembler) SetLeaves(f func() []model.LeafSpec) { a.leaves = f }
 
 func NewAssembler(cs *Store, topK int) *Assembler {
 	if topK <= 0 {
@@ -92,25 +99,56 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 			Content:  m.Role + ": " + m.Content,
 			Metadata: map[string]string{"created_at": m.CreatedAt.Format(time.RFC3339)}})
 	}
-	kcs, err := a.cs.ListKnowledgeChunks()
-	if err != nil {
-		return nil, err
-	}
-	for _, kc := range kcs {
-		out = append(out, Chunk{Source: SourceKnowledge,
-			Content: knowledgeContent(kc),
-			Metadata: map[string]string{
-				"metrics":      strings.Join(kc.Metrics, ","),
-				"device_types": strings.Join(kc.DeviceTypes, ","),
-				"vendor":       strings.Join(kc.Vendor, ","),
-				"model":        strings.Join(kc.Model, ","),
-				"intents":      strings.Join(kc.Intents, ","),
-				"doc_title":    kc.Title,
-				"doc_id":       kc.DocID,
-				"created_at":   kc.CreatedAt.Format(time.RFC3339),
-			}})
+	if a.search != nil {
+		casesTopK, manualsTopK := retrieve.Router(q.Stage, q.Intents, a.leafList())
+		if casesTopK > 0 {
+			res, err := a.search.SearchCases(context.Background(), retrieve.Query{
+				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents,
+			}, retrieve.Options{TopK: casesTopK})
+			if err == nil {
+				for _, r := range res {
+					c := resultChunk(r)
+					c.Score = 1.0
+					out = append(out, c)
+				}
+			}
+		}
+		if manualsTopK > 0 {
+			res, err := a.search.SearchManuals(context.Background(), retrieve.Query{
+				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents,
+			}, retrieve.Options{TopK: manualsTopK})
+			if err == nil {
+				for _, r := range res {
+					c := resultChunk(r)
+					c.Score = 1.0
+					out = append(out, c)
+				}
+			}
+		}
+	} else {
+		kcs, err := a.cs.ListKnowledgeChunks()
+		if err != nil {
+			return nil, err
+		}
+		for _, kc := range kcs {
+			out = append(out, Chunk{Source: SourceKnowledge,
+				Content: knowledgeContent(kc),
+				Metadata: map[string]string{
+					"metrics":      strings.Join(kc.Metrics, ","),
+					"device_types": strings.Join(kc.DeviceTypes, ","),
+					"vendor":       strings.Join(kc.Vendor, ","),
+					"model":        strings.Join(kc.Model, ","),
+					"intents":      strings.Join(kc.Intents, ","),
+					"doc_title":    kc.Title,
+					"doc_id":       kc.DocID,
+					"created_at":   kc.CreatedAt.Format(time.RFC3339),
+				}})
+		}
 	}
 	for i := range out {
+		if out[i].Score > 0 {
+			continue // 检索结果已由 Searcher 排序，置满分以通过 Selector 阈值
+		}
 		out[i].Score = a.sel.Score(out[i], q, now)
 	}
 	return out, nil
@@ -221,4 +259,31 @@ func joinParams(schema map[string]string) string {
 		keys = append(keys, k)
 	}
 	return strings.Join(keys, ",")
+}
+
+func (a *Assembler) leafList() []model.LeafSpec {
+	if a.leaves != nil {
+		if l := a.leaves(); len(l) > 0 {
+			return l
+		}
+	}
+	return nil
+}
+
+// qText 组装检索文本：设备 + 指标 + 关键词。
+func qText(q Query) string {
+	return strings.Join(append([]string{q.Device, q.Metric}, q.Keywords...), " ")
+}
+
+// resultChunk 将检索结果块转成组装用 Chunk（复用 knowledgeContent 回显格式）。
+func resultChunk(r retrieve.Result) Chunk {
+	kc := model.KbKnowledgeChunk{
+		DocID: r.DocID, Title: r.Title, Category: r.Category,
+		Heading: r.Heading, Content: r.Content,
+	}
+	return Chunk{
+		Source:   SourceKnowledge,
+		Content:  knowledgeContent(kc),
+		Metadata: map[string]string{"doc_title": r.Title, "doc_id": r.DocID},
+	}
 }

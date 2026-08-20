@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"aiops/internal/model"
+	"aiops/internal/retrieve"
 	"aiops/internal/scope"
 )
 
@@ -32,6 +33,11 @@ func NewEngine(cs *Store, reg *Registry, runID, device, metric string, react boo
 
 func (e *Engine) RunID() string      { return e.runID }
 func (e *Engine) ReactEnabled() bool { return e.react }
+
+// SetSearcher 注入混合检索器（供组装器知识源使用）。
+func (e *Engine) SetSearcher(s retrieve.Searcher) {
+	e.asm.SetSearcher(s)
+}
 
 func (e *Engine) AddScratchpad(step, content, toolName string) error {
 	return e.scoped.AddScratchpad(step, content, toolName)
