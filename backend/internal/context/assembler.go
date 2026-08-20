@@ -105,10 +105,11 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 			res, err := a.search.SearchCases(context.Background(), retrieve.Query{
 				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents,
 			}, retrieve.Options{TopK: casesTopK})
+			// 单次检索失败静默降级为空知识（不阻断组装）；nil searcher 走下方全量扫描回退。
 			if err == nil {
 				for _, r := range res {
 					c := resultChunk(r)
-					c.Score = 1.0
+					c.Score = searcherChunkScore
 					out = append(out, c)
 				}
 			}
@@ -117,10 +118,11 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 			res, err := a.search.SearchManuals(context.Background(), retrieve.Query{
 				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents,
 			}, retrieve.Options{TopK: manualsTopK})
+			// 单次检索失败静默降级为空知识（不阻断组装）；nil searcher 走下方全量扫描回退。
 			if err == nil {
 				for _, r := range res {
 					c := resultChunk(r)
-					c.Score = 1.0
+					c.Score = searcherChunkScore
 					out = append(out, c)
 				}
 			}
@@ -270,10 +272,14 @@ func (a *Assembler) leafList() []model.LeafSpec {
 	return nil
 }
 
-// qText 组装检索文本：设备 + 指标 + 关键词。
+// qText 组装检索文本：自由文本 + 设备 + 指标 + 关键词。
 func qText(q Query) string {
-	return strings.Join(append([]string{q.Device, q.Metric}, q.Keywords...), " ")
+	return strings.Join(append([]string{q.Text, q.Device, q.Metric}, q.Keywords...), " ")
 }
+
+// searcherChunkScore 检索结果块固定满分。检索候选已由 Searcher 按相关性排序，
+// 直接置满分以绕过回退 Selector 的阈值过滤（否则部分排序靠后的低分候选会被丢弃）。
+const searcherChunkScore = 1.0
 
 // resultChunk 将检索结果块转成组装用 Chunk（复用 knowledgeContent 回显格式）。
 func resultChunk(r retrieve.Result) Chunk {
@@ -282,8 +288,12 @@ func resultChunk(r retrieve.Result) Chunk {
 		Heading: r.Heading, Content: r.Content,
 	}
 	return Chunk{
-		Source:   SourceKnowledge,
-		Content:  knowledgeContent(kc),
-		Metadata: map[string]string{"doc_title": r.Title, "doc_id": r.DocID},
+		Source:  SourceKnowledge,
+		Content: knowledgeContent(kc),
+		Metadata: map[string]string{
+			"doc_title": r.Title,
+			"doc_id":    r.DocID,
+			"intents":   strings.Join(r.Intents, ","),
+		},
 	}
 }

@@ -25,4 +25,5 @@ type Query struct {
 	ConversationID string
 	Keywords       []string
 	Intents        []string
+	Text           string // 自由文本（如用户原问句），参与检索文本组装
 }

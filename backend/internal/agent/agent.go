@@ -196,7 +196,7 @@ func (a *Agent) answerSingle(ctx context.Context, conversationID string, userTex
 		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, conversationID, intent); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent, userText); ok {
 				return content
 			}
 		}
@@ -239,7 +239,7 @@ func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub 
 		return a.answerFor(conversationID, alertID, intent), "success"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, conversationID, intent); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent, sub); ok {
 				return content, "success"
 			}
 			return a.placeholderReply(intent), statusFor(intent)
@@ -266,14 +266,15 @@ func isSystemIntent(code Intent) bool {
 }
 
 // kbReply 按意图 code 检索知识库并返回命中文档行；无命中返回 ok=false。
-func (a *Agent) kbReply(ctx context.Context, conversationID string, code string) (string, bool) {
+// question 作为检索文本，使 Searcher 的 BM25/向量/信号通道都能参与召回。
+func (a *Agent) kbReply(ctx context.Context, conversationID, code, question string) (string, bool) {
 	if a.ctxStore == nil {
 		return "", false
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
 	asm.SetSearcher(a.search)
 	asm.SetLeaves(a.leaves)
-	as, err := asm.Assemble(ctxpkg.Query{Stage: "chat", Intents: []string{code}, ConversationID: conversationID}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Text: question, Stage: "chat", Intents: []string{code}, ConversationID: conversationID}, false, nil)
 	if err != nil {
 		return "", false
 	}

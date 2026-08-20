@@ -484,6 +484,28 @@ func TestAgentKBReplyFiltersByIntent(t *testing.T) {
 	}
 }
 
+func TestAgentKBReplyWithSearcherReturnsContent(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, func() []model.LeafSpec {
+		return []model.LeafSpec{{Code: "DiskCleanup", Name: "DiskCleanup", Description: "磁盘清理", RuleKeywords: []string{"清理磁盘"}}}
+	})
+	// 注入 searcher：Result 携带 Intents 元数据；修复前该元数据缺失导致
+	// MatchesIntent("", code) 恒 false，所有知识块被丢弃、回退占位语。
+	ag.SetSearcher(agentFakeSearcher{res: []retrieve.Result{{
+		DocID: "d1", Title: "磁盘清理手册", Category: model.KBRunbook,
+		Content: "清理日志与归档。", Intents: []string{"DiskCleanup"},
+	}}})
+	msg, _ := ag.Handle(context.Background(), "", "怎么清理磁盘")
+	if !strings.Contains(msg.Content, "清理日志与归档") {
+		t.Fatalf("注入searcher后KB应返回匹配内容, got %q", msg.Content)
+	}
+	if strings.Contains(msg.Content, "尚未实现") {
+		t.Fatalf("注入searcher不应回退占位语, got %q", msg.Content)
+	}
+}
+
 func TestHandleSavesMessagesInConversation(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()

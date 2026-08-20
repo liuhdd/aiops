@@ -3,6 +3,7 @@ package retrieve
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"aiops/internal/model"
@@ -22,6 +23,7 @@ type Result struct {
 	Heading  string
 	Content  string
 	Score    float64
+	Intents  []string // 所属文档的意图码，供组装器/agent 按意图过滤
 }
 
 // Searcher 混合检索器接口：案例/手册两路检索入口。
@@ -34,17 +36,20 @@ type Searcher interface {
 type searcher struct {
 	st       *store.Store
 	embedder Embedder
+	mu       sync.Mutex // 保护 idx/docCount 的懒加载
 	idx      *BM25Index
 	docCount int
 }
 
 // NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。
-func NewSearcher(st *store.Store, embedder Embedder) *searcher {
+func NewSearcher(st *store.Store, embedder Embedder) Searcher {
 	return &searcher{st: st, embedder: embedder}
 }
 
-// ensureIndex 知识库文档数变化时重建 BM25 索引。
+// ensureIndex 知识库文档数变化时重建 BM25 索引（并发安全：check-then-act 加锁）。
 func (s *searcher) ensureIndex() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	n, err := s.st.CountKbDocuments()
 	if err != nil {
 		return err
@@ -109,6 +114,9 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 			if kc.Category != model.KBManual && kc.Category != model.KBRunbook {
 				continue
 			}
+			if q.Category != "" && kc.Category != q.Category {
+				continue
+			}
 		} else if kc.Category != cat {
 			continue
 		}
@@ -141,6 +149,7 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 		res = append(res, Result{
 			DocID: c.Chunk.DocID, Title: c.Chunk.Title, Category: c.Chunk.Category,
 			Heading: c.Chunk.Heading, Content: c.Chunk.Content, Score: c.Final,
+			Intents: c.Chunk.Intents,
 		})
 	}
 	return res, nil
@@ -198,11 +207,14 @@ func hasIntent(intents []string, code string) bool {
 	return false
 }
 
-// hasRelevance 是否存在相关候选：关键词(BM25)或信号命中即相关；
-// 向量分经 minmax 归一化后单候选会塌缩为 0，故不参与相关性判定。
+// vectorRelevanceFloor 向量通道的相关性门限：原始余弦 ≥ 该值视为语义相关。
+// 排名阶段向量分经 minmax 归一化后单候选会塌缩为 0，故相关性判定须用归一化前的原始余弦。
+const vectorRelevanceFloor = 0.5
+
+// hasRelevance 是否存在相关候选：关键词(BM25)、信号或纯语义向量(原始余弦≥门限)任一命中即相关。
 func hasRelevance(cands []cand) bool {
 	for _, c := range cands {
-		if c.BM25 > 0 || c.Signal > 0 {
+		if c.BM25 > 0 || c.Signal > 0 || c.Vec >= vectorRelevanceFloor {
 			return true
 		}
 	}
