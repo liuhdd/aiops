@@ -24,21 +24,27 @@ type Result struct {
 	Score    float64
 }
 
-// Searcher 混合检索引擎：BM25 + 向量 + 信号，按类型差异化融合。
-type Searcher struct {
+// Searcher 混合检索器接口：案例/手册两路检索入口。
+type Searcher interface {
+	SearchCases(ctx context.Context, q Query, opts Options) ([]Result, error)
+	SearchManuals(ctx context.Context, q Query, opts Options) ([]Result, error)
+}
+
+// searcher 混合检索引擎：BM25 + 向量 + 信号，按类型差异化融合。
+type searcher struct {
 	st       *store.Store
 	embedder Embedder
 	idx      *BM25Index
 	docCount int
 }
 
-// NewSearcher 构造 Searcher；embedder 可为 nil（向量通道回退）。
-func NewSearcher(st *store.Store, embedder Embedder) *Searcher {
-	return &Searcher{st: st, embedder: embedder}
+// NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。
+func NewSearcher(st *store.Store, embedder Embedder) *searcher {
+	return &searcher{st: st, embedder: embedder}
 }
 
 // ensureIndex 知识库文档数变化时重建 BM25 索引。
-func (s *Searcher) ensureIndex() error {
+func (s *searcher) ensureIndex() error {
 	n, err := s.st.CountKbDocuments()
 	if err != nil {
 		return err
@@ -60,16 +66,16 @@ func (s *Searcher) ensureIndex() error {
 }
 
 // SearchCases 检索相似运维案例（category='case'），语义为主。
-func (s *Searcher) SearchCases(ctx context.Context, q Query, opts Options) ([]Result, error) {
+func (s *searcher) SearchCases(ctx context.Context, q Query, opts Options) ([]Result, error) {
 	return s.search(ctx, q, model.KBCase, false, opts)
 }
 
 // SearchManuals 检索产品/操作手册（category IN manual/runbook），关键词为主。
-func (s *Searcher) SearchManuals(ctx context.Context, q Query, opts Options) ([]Result, error) {
+func (s *searcher) SearchManuals(ctx context.Context, q Query, opts Options) ([]Result, error) {
 	return s.search(ctx, q, "", true, opts)
 }
 
-func (s *Searcher) search(ctx context.Context, q Query, cat model.KBCategory, isManual bool, opts Options) ([]Result, error) {
+func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, isManual bool, opts Options) ([]Result, error) {
 	topK := opts.TopK
 	if topK <= 0 {
 		topK = 3
