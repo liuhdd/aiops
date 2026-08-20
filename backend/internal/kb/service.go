@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"aiops/internal/model"
+	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
 
@@ -62,10 +63,16 @@ type DocDetail struct {
 type Service struct {
 	st     *store.Store
 	leaves func() []model.LeafSpec
+	embed  retrieve.Embedder
 }
 
 func NewService(st *store.Store, leaves func() []model.LeafSpec) *Service {
-	return &Service{st: st, leaves: leaves}
+	return NewServiceWithEmbedder(st, leaves, nil)
+}
+
+// NewServiceWithEmbedder 构造 Service；embed 可为 nil（不上向量）。
+func NewServiceWithEmbedder(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder) *Service {
+	return &Service{st: st, leaves: leaves, embed: embed}
 }
 
 // Seed 表空时导入种子文档（幂等）。
@@ -91,7 +98,13 @@ func (s *Service) Seed(docs []SeedDoc) error {
 			DeviceTypes: d.DeviceTypes, Metrics: d.Metrics, Keywords: d.Keywords,
 			Content: d.Content, CreatedAt: now, UpdatedAt: now,
 		}
-		if err := s.insertDocAndChunks(doc, Chunk(d.Content), now); err != nil {
+		chunks := Chunk(d.Content)
+		ids := make([]string, len(chunks))
+		for i := range chunks {
+			ids[i] = model.NewID("kbchunk")
+		}
+		embs := s.embedChunks(context.Background(), doc.ID, chunks, ids, now)
+		if err := s.insertDocAndChunks(doc, chunks, ids, embs, now); err != nil {
 			return err
 		}
 	}
@@ -141,21 +154,60 @@ func (s *Service) Upload(ctx context.Context, req UploadReq) (*model.KbDocument,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	if err := s.insertDocAndChunks(doc, Chunk(content), now); err != nil {
+	chunks := Chunk(content)
+	ids := make([]string, len(chunks))
+	for i := range chunks {
+		ids[i] = model.NewID("kbchunk")
+	}
+	embs := s.embedChunks(ctx, doc.ID, chunks, ids, now)
+	if err := s.insertDocAndChunks(doc, chunks, ids, embs, now); err != nil {
 		return nil, err
 	}
 	return &doc, nil
 }
 
-func (s *Service) insertDocAndChunks(doc model.KbDocument, chunks []ChunkResult, now time.Time) error {
+func (s *Service) embedChunks(ctx context.Context, docID string, chunks []ChunkResult, ids []string, now time.Time) []model.KbEmbedding {
+	if s.embed == nil {
+		return nil
+	}
+	texts := make([]string, len(chunks))
+	for i, c := range chunks {
+		texts[i] = truncateRunes(c.Content, 8000)
+	}
+	vecs, err := s.embed.Embed(ctx, texts)
+	if err != nil {
+		return nil
+	}
+	out := make([]model.KbEmbedding, 0, len(chunks))
+	for i, v := range vecs {
+		if len(v) == 0 {
+			continue
+		}
+		out = append(out, model.KbEmbedding{ChunkID: ids[i], DocID: docID, Embedding: v, Model: s.embed.Model(), CreatedAt: now})
+	}
+	return out
+}
+
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+func (s *Service) insertDocAndChunks(doc model.KbDocument, chunks []ChunkResult, ids []string, embs []model.KbEmbedding, now time.Time) error {
 	return s.st.WithKBTx(func(tx store.KBStore) error {
 		if err := tx.InsertKbDocument(doc); err != nil {
 			return err
 		}
 		for i, c := range chunks {
-			if err := tx.InsertKbChunk(model.KbChunk{
-				ID: model.NewID("kbchunk"), DocID: doc.ID, Seq: i, Heading: c.Heading, Content: c.Content, CreatedAt: now,
-			}); err != nil {
+			if err := tx.InsertKbChunk(model.KbChunk{ID: ids[i], DocID: doc.ID, Seq: i, Heading: c.Heading, Content: c.Content, CreatedAt: now}); err != nil {
+				return err
+			}
+		}
+		for _, e := range embs {
+			if err := tx.UpsertKbEmbedding(e); err != nil {
 				return err
 			}
 		}
@@ -219,6 +271,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			return err
 		}
 		if err := tx.DeleteKbChunks(id); err != nil {
+			return err
+		}
+		if err := tx.DeleteKbEmbeddingsByDoc(id); err != nil {
 			return err
 		}
 		return tx.DeleteKbDocument(id)

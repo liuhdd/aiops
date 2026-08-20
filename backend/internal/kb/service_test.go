@@ -137,6 +137,73 @@ func TestUploadTitleFallbackAndIntentSuggestion(t *testing.T) {
 	}
 }
 
+type fakeEmbed struct{}
+
+func (fakeEmbed) Model() string { return "fake" }
+func (fakeEmbed) Embed(_ context.Context, texts []string) ([][]float64, error) {
+	out := make([][]float64, len(texts))
+	for i := range texts {
+		out[i] = []float64{float64(i + 1), 1}
+	}
+	return out, nil
+}
+
+func TestUploadGeneratesEmbeddings(t *testing.T) {
+	st := storeMust(t)
+	svc := NewServiceWithEmbedder(st, nil, fakeEmbed{})
+	doc, err := svc.Upload(context.Background(), UploadReq{
+		SourceFile: "case.md", Data: []byte("GPU 掉卡排查正文"), Category: model.KBCase,
+	})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	emb, err := st.ListKbEmbeddings()
+	if err != nil || len(emb) != 1 || len(emb[0].Embedding) != 2 {
+		t.Fatalf("应生成1条向量: %v %+v", err, emb)
+	}
+	if emb[0].DocID != doc.ID || emb[0].Model != "fake" {
+		t.Fatalf("向量元数据: %+v", emb[0])
+	}
+}
+
+func TestUploadEmbedFailDoesNotBlock(t *testing.T) {
+	st := storeMust(t)
+	svc := NewServiceWithEmbedder(st, nil, errEmbed{})
+	doc, err := svc.Upload(context.Background(), UploadReq{
+		SourceFile: "case.md", Data: []byte("正文内容"), Category: model.KBCase,
+	})
+	if err != nil {
+		t.Fatalf("embedding 失败不应阻断入库: %v", err)
+	}
+	emb, _ := st.ListKbEmbeddings()
+	if len(emb) != 0 {
+		t.Fatalf("embedding 失败应无向量: %+v", emb)
+	}
+	if doc.ID == "" {
+		t.Fatalf("文档应已入库")
+	}
+}
+
+type errEmbed struct{}
+
+func (errEmbed) Model() string { return "fake" }
+func (errEmbed) Embed(context.Context, []string) ([][]float64, error) {
+	return nil, errors.New("boom")
+}
+
+func TestDeleteCascadesEmbeddings(t *testing.T) {
+	st := storeMust(t)
+	svc := NewServiceWithEmbedder(st, nil, fakeEmbed{})
+	doc, _ := svc.Upload(context.Background(), UploadReq{SourceFile: "a.txt", Data: []byte("正文"), Category: model.KBCase})
+	if err := svc.Delete(context.Background(), doc.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	emb, _ := st.ListKbEmbeddings()
+	if len(emb) != 0 {
+		t.Fatalf("删除后应无向量, got %+v", emb)
+	}
+}
+
 func hasStr(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
