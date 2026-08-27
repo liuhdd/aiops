@@ -126,17 +126,60 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 构建实际库内 doc id 集合，用于缺失 id 警告（不阻断）
+	// 构建映射：mock 概念 id -> Title，以及 Title -> 真实库 id 与真实 id 集合
+	mockIDToTitle := map[string]string{}
+	for _, d := range mockdata.Docs() {
+		mockIDToTitle[d.ID] = d.Title
+	}
 	existing := map[string]bool{}
+	titleToRealID := map[string]string{}
 	if docs, err := s.ListKbDocuments(store.KbFilter{}); err == nil {
 		for _, d := range docs {
 			existing[d.ID] = true
+			titleToRealID[d.Title] = d.ID
 		}
 	}
-	// 同步 mock 概念 id 集合用于友好提示（doc-cpu-hot 等）
-	mockIDs := map[string]bool{}
-	for _, d := range mockdata.Docs() {
-		mockIDs[d.ID] = true
+	// 解析函数：若 id 已在库内则保留；否则若为 mock 概念 id 且对应 Title 在库内，则映射为真实 id；否则原样返回（后续触发 I-1 校验）
+	resolve := func(id string) string {
+		if existing[id] {
+			return id
+		}
+		if title, ok := mockIDToTitle[id]; ok {
+			if rid, ok2 := titleToRealID[title]; ok2 {
+				return rid
+			}
+		}
+		return id
+	}
+	// 对每个 GoldenItem 的 DocIDs 与 DistractorDocIDs 进行解析，并收集经解析后仍不在库内的缺失 id（严格校验，exit 非零）
+	missingSet := map[string]bool{}
+	for idx := range items {
+		resolved := make([]string, 0, len(items[idx].Expect.DocIDs))
+		for _, did := range items[idx].Expect.DocIDs {
+			rid := resolve(did)
+			resolved = append(resolved, rid)
+			if rid != "" && !existing[rid] {
+				missingSet[rid] = true
+			}
+		}
+		items[idx].Expect.DocIDs = resolved
+		resolvedDist := make([]string, 0, len(items[idx].Expect.DistractorDocIDs))
+		for _, did := range items[idx].Expect.DistractorDocIDs {
+			rid := resolve(did)
+			resolvedDist = append(resolvedDist, rid)
+			if rid != "" && !existing[rid] {
+				missingSet[rid] = true
+			}
+		}
+		items[idx].Expect.DistractorDocIDs = resolvedDist
+	}
+	if len(missingSet) > 0 {
+		var ids []string
+		for id := range missingSet {
+			ids = append(ids, id)
+		}
+		fmt.Fprintf(os.Stderr, "标注集引用了不存在的 doc_id: %s\n", strings.Join(ids, ", "))
+		os.Exit(1)
 	}
 
 	var embedder retrieve.Embedder
@@ -164,8 +207,6 @@ func main() {
 	resultsMap := map[string][]string{}
 	expectsMap := map[string]string{}
 
-	missingIDs := map[string]bool{}
-
 	for _, it := range items {
 		k := it.TopK
 		if k <= 0 {
@@ -184,16 +225,6 @@ func main() {
 		}
 		resultsMap[it.ID] = ranked
 		expectsMap[it.ID] = it.Expect.Behavior
-
-		// 缺失 id 警告收集（仅记录，不崩溃）
-		for _, did := range it.Expect.DocIDs {
-			if !existing[did] && !mockIDs[did] {
-				missingIDs[did] = true
-			} else if !existing[did] && mockIDs[did] {
-				// mock 概念 id 在 DB 中为随机 id，不直接存在，属预期占位，温和提示
-				missingIDs[did] = true
-			}
-		}
 
 		ag := perType[it.Type]
 		if ag == nil {
@@ -226,15 +257,6 @@ func main() {
 			overallHit.SumNDCG += ndcg
 			overallHit.SumRecall += rec
 		}
-	}
-
-	// 输出缺失 id 提示（不以非零退出，仅报告）
-	if len(missingIDs) > 0 {
-		var ids []string
-		for id := range missingIDs {
-			ids = append(ids, id)
-		}
-		fmt.Fprintf(os.Stderr, "[warn] 标注 doc_ids 在库内未直接命中（占位或随机 id 差异，已按空 relevant 处理）: %v\n", strings.Join(ids, ", "))
 	}
 
 	fmt.Printf("rageval: loaded %s (%d items)\n", goldenPath, len(items))
