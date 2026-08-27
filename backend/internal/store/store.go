@@ -181,6 +181,9 @@ func (s *Store) migrate() error {
 	if err := s.seedIntents(); err != nil {
 		return err
 	}
+	if err := ensureColumn(s.db, "kb_documents", "fingerprints", "fingerprints TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
 	return nil
 }
 

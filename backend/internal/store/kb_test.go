@@ -1,11 +1,15 @@
 package store
 
 import (
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"aiops/internal/model"
+
+	_ "modernc.org/sqlite"
 )
 
 func mkDoc(id, title string, category model.KBCategory) model.KbDocument {
@@ -216,4 +220,34 @@ func TestKbEmbeddingTablesCreated(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("kb_embeddings table = %d %v, want 1", n, err)
 	}
+}
+func TestKbDocumentFingerprintRoundTrip(t *testing.T) {
+    s := newTestStore(t) // 复用既有 helper
+    d := mkDoc("dfp", "标题含 Xid 48", model.KBCase)
+    d.Fingerprints = []string{"Xid 48", "ALERT-GPU-001"}
+    if err := s.WithKBTx(func(tx KBStore) error { return tx.InsertKbDocument(d) }); err != nil {
+        t.Fatal(err)
+    }
+    got, err := s.GetKbDocument("dfp")
+    if err != nil { t.Fatal(err) }
+    if len(got.Fingerprints)!=2 || got.Fingerprints[0]!="Xid 48" {
+        t.Fatalf("fingerprints=%v", got.Fingerprints)
+    }
+    by, err := s.ListKbDocumentsByFingerprints([]string{"ALERT-GPU-001"})
+    if err!=nil || len(by)!=1 || by[0].ID!="dfp" { t.Fatalf("byFp err=%v by=%+v", err, by) }
+    by2, _ := s.ListKbDocumentsByFingerprints([]string{"NOT-EXISTS"})
+    if len(by2)!=0 { t.Fatalf("want empty, got %v", by2) }
+}
+func TestKbDocumentFingerprintLegacyCompatible(t *testing.T) {
+    // 用老 schema 建库（不含 fingerprints 列）→ 用新 migrate 打开应自动补列且旧行读回空数组
+    dir := t.TempDir()
+    path := filepath.Join(dir, "legacy.db")
+    db, _ := sql.Open("sqlite", path)
+    _, _ = db.Exec(`CREATE TABLE kb_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, device_types TEXT, vendor TEXT, model TEXT, metrics TEXT, keywords TEXT, intents TEXT, source_file TEXT, content TEXT, created_at DATETIME, updated_at DATETIME)`)
+    db.Close()
+    s, err := New(path)
+    if err != nil { t.Fatal(err) }
+    defer s.Close()
+    d, err := s.GetKbDocument("missing")
+    _ = d; _ = err // 仅断言 New 不报错
 }

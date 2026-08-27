@@ -20,19 +20,20 @@ func IsKBCategory(c KBCategory) bool {
 }
 
 type KbDocument struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Category    KBCategory `json:"category"`
-	DeviceTypes []string   `json:"device_types"`
-	Vendor      []string   `json:"vendor"`
-	Model       []string   `json:"model"`
-	Metrics     []string   `json:"metrics"`
-	Keywords    []string   `json:"keywords"`
-	Intents     []string   `json:"intents"`
-	SourceFile  string     `json:"source_file"`
-	Content     string     `json:"content"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Category     KBCategory `json:"category"`
+	DeviceTypes  []string   `json:"device_types"`
+	Vendor       []string   `json:"vendor"`
+	Model        []string   `json:"model"`
+	Metrics      []string   `json:"metrics"`
+	Keywords     []string   `json:"keywords"`
+	Intents      []string   `json:"intents"`
+	SourceFile   string     `json:"source_file"`
+	Content      string     `json:"content"`
+	Fingerprints []string   `json:"fingerprints"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type KbChunk struct {
