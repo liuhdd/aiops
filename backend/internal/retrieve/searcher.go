@@ -2,10 +2,12 @@ package retrieve
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"aiops/internal/config"
 	"aiops/internal/model"
 	"aiops/internal/store"
 )
@@ -36,14 +38,47 @@ type Searcher interface {
 type searcher struct {
 	st       *store.Store
 	embedder Embedder
+	reranker Reranker
+	cfg      config.Config
 	mu       sync.Mutex // 保护 idx/docCount 的懒加载
 	idx      *BM25Index
 	docCount int
 }
 
-// NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。
+// NewSearcherWithConfig 构造混合检索器；reranker 可为 nil（精排跳过）。
+func NewSearcherWithConfig(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config) Searcher {
+	if cfg.RerankModel == "" {
+		cfg.RerankModel = "rerank"
+	}
+	if cfg.RerankFloor == 0 {
+		cfg.RerankFloor = 0.2
+	}
+	return &searcher{st: st, embedder: embedder, reranker: rr, cfg: cfg}
+}
+
+// NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。兼容旧构造，默认开关全开但无精排。
 func NewSearcher(st *store.Store, embedder Embedder) Searcher {
-	return &searcher{st: st, embedder: embedder}
+	return NewSearcherWithConfig(st, embedder, nil, config.Config{
+		RetrieveFingerprint: true,
+		RetrieveRRF:         true,
+		RerankModel:         "rerank",
+		RerankFloor:         0.2,
+	})
+}
+
+// isFingerprintEnabled 指纹快路径是否启用。
+func (s *searcher) isFingerprintEnabled() bool {
+	return s.cfg.RetrieveFingerprint
+}
+
+// isRRFEnabled RRF 融合是否启用。
+func (s *searcher) isRRFEnabled() bool {
+	return s.cfg.RetrieveRRF
+}
+
+// effectiveRerankFloor 返回生效的精排门限（已在构造时归一）。
+func (s *searcher) effectiveRerankFloor() float64 {
+	return s.cfg.RerankFloor
 }
 
 // ensureIndex 知识库文档数变化时重建 BM25 索引（并发安全：check-then-act 加锁）。
@@ -85,12 +120,121 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 	if topK <= 0 {
 		topK = 3
 	}
+	// 指纹快路径（无需 BM25 索引，失败静默降级为 miss）
+	if s.isFingerprintEnabled() {
+		if res, hit, err := s.fingerprintFastPath(q, cat, isManual, topK); hit {
+			return res, err
+		}
+	}
 	if err := s.ensureIndex(); err != nil {
 		return nil, err
 	}
+	cands := s.dualRecall(ctx, q, isManual, cat)
+	if s.isRRFEnabled() {
+		cands = FuseRRF(cands, isManual)
+	} else {
+		if isManual {
+			cands = RankManuals(cands, time.Now())
+		} else {
+			cands = RankCases(cands, time.Now())
+		}
+	}
+	if !hasRelevance(cands) {
+		return []Result{}, nil // 无相关候选：返回空（spec: 库空/无候选返回空数组）
+	}
+	cands = s.applyRerank(ctx, q.Text, cands)
+	if s.reranker != nil {
+		n := len(cands)
+		if n > 20 {
+			n = 20
+		}
+		if n > 0 {
+			head := gateB(cands[:n], s.effectiveRerankFloor())
+			cands = append(head, cands[n:]...)
+		}
+	}
+	if len(cands) > topK {
+		cands = cands[:topK]
+	}
+	res := make([]Result, 0, len(cands))
+	for _, c := range cands {
+		res = append(res, Result{
+			DocID: c.Chunk.DocID, Title: c.Chunk.Title, Category: c.Chunk.Category,
+			Heading: c.Chunk.Heading, Content: c.Chunk.Content, Score: c.Final,
+			Intents: c.Chunk.Intents,
+		})
+	}
+	return res, nil
+}
+
+// fingerprintFastPath 指纹快路径：命中返回 (results,true,nil)，未命中 (nil,false,nil)。
+func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual bool, topK int) ([]Result, bool, error) {
+	fps := extractFingerprints(q.Text)
+	if len(fps) == 0 {
+		return nil, false, nil
+	}
+	docs, err := s.st.ListKbDocumentsByFingerprints(fps)
+	if err != nil {
+		return nil, false, nil // 失败静默降级为未命中
+	}
+	// 按 cat/isManual 过滤
+	var filtered []model.KbDocSummary
+	for _, d := range docs {
+		if isManual {
+			if d.Category != model.KBManual && d.Category != model.KBRunbook {
+				continue
+			}
+			if q.Category != "" && d.Category != q.Category {
+				continue
+			}
+		} else {
+			if d.Category != cat {
+				continue
+			}
+		}
+		filtered = append(filtered, d)
+	}
+	if len(filtered) == 0 {
+		return nil, false, nil
+	}
+	if topK <= 0 {
+		topK = 3
+	}
+	var res []Result
+	for _, d := range filtered {
+		chunks, err := s.st.ListKbChunksByDoc(d.ID)
+		if err != nil {
+			continue // 单文档加载失败静默跳过
+		}
+		for _, c := range chunks {
+			res = append(res, Result{
+				DocID:    d.ID,
+				Title:    d.Title,
+				Category: d.Category,
+				Heading:  c.Heading,
+				Content:  c.Content,
+				Score:    1.0,
+				Intents:  d.Intents,
+			})
+			if len(res) >= topK {
+				break
+			}
+		}
+		if len(res) >= topK {
+			break
+		}
+	}
+	if len(res) == 0 {
+		return nil, false, nil
+	}
+	return res, true, nil
+}
+
+// dualRecall 双路召回：BM25 + 向量 + 信号 + 时效，返回未排序候选供融合阶段处理。
+func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat model.KBCategory) []cand {
 	kcs, err := s.st.ListKnowledgeChunks()
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	embeds := map[string][]float64{}
 	if s.embedder != nil {
@@ -100,7 +244,11 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 			}
 		}
 	}
-	bmScores := s.idx.Score(q.Text)
+	// idx 可能为 nil（如空库），此时 BM25 分数为 0
+	bmScores := map[string]float64{}
+	if s.idx != nil {
+		bmScores = s.idx.Score(q.Text)
+	}
 	var qVec []float64
 	if s.embedder != nil && q.Text != "" {
 		if vs, err := s.embedder.Embed(ctx, []string{q.Text}); err == nil && len(vs) > 0 {
@@ -133,26 +281,46 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 		}
 		cands = append(cands, c)
 	}
-	if isManual {
-		cands = RankManuals(cands, now)
-	} else {
-		cands = RankCases(cands, now)
+	return cands
+}
+
+// applyRerank 精排：取前 20 调 rerank，按分重排，失败原样返回。
+func (s *searcher) applyRerank(ctx context.Context, qText string, cands []cand) []cand {
+	if s.reranker == nil || len(cands) == 0 {
+		return cands
 	}
-	if !hasRelevance(cands) {
-		return []Result{}, nil // 无相关候选：返回空（spec: 库空/无候选返回空数组）
+	n := len(cands)
+	if n > 20 {
+		n = 20
 	}
-	if len(cands) > topK {
-		cands = cands[:topK]
+	docs := make([]string, n)
+	for i := 0; i < n; i++ {
+		docs[i] = cands[i].Chunk.Content
 	}
-	res := make([]Result, 0, len(cands))
+	scores, err := s.reranker.Rerank(ctx, qText, docs)
+	if err != nil || len(scores) != n {
+		return cands // 失败静默降级
+	}
+	for i := 0; i < n; i++ {
+		cands[i].Final = scores[i]
+	}
+	// 仅对前 n 个按精排分重排
+	sort.SliceStable(cands[:n], func(a, b int) bool { return cands[a].Final > cands[b].Final })
+	return cands
+}
+
+// gateB 精排分低于 floor 的剔除（无 rerank 时透传，由调用方确保仅在精排后调用）。
+func gateB(cands []cand, floor float64) []cand {
+	if floor <= 0 {
+		return cands
+	}
+	out := cands[:0]
 	for _, c := range cands {
-		res = append(res, Result{
-			DocID: c.Chunk.DocID, Title: c.Chunk.Title, Category: c.Chunk.Category,
-			Heading: c.Chunk.Heading, Content: c.Chunk.Content, Score: c.Final,
-			Intents: c.Chunk.Intents,
-		})
+		if c.Final >= floor {
+			out = append(out, c)
+		}
 	}
-	return res, nil
+	return out
 }
 
 // Router 依据阶段/意图返回案例与手册的 topK 配额 (casesTopK, manualsTopK)。

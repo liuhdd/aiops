@@ -62,6 +62,48 @@ func get(cands []cand, f func(cand) float64) []float64 {
 	return out
 }
 
+const rrfK = 60.0
+
+func rankMap(cands []cand, key func(cand) float64) map[string]int {
+	idx := make([]int, len(cands))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return key(cands[idx[a]]) > key(cands[idx[b]]) })
+	m := make(map[string]int, len(cands))
+	for r, i := range idx {
+		m[cands[i].Chunk.ChunkID] = r + 1 // 1-indexed
+	}
+	return m
+}
+
+// FuseRRF 按类型权重计算 RRF 加权和并重排（k=60）。isManual=false 为 case（语义权重高），true 为 manual（关键词权重高）。
+func FuseRRF(cands []cand, isManual bool) []cand {
+	if len(cands) == 0 {
+		return cands
+	}
+	rBM := rankMap(cands, func(c cand) float64 { return c.BM25 })
+	rVec := rankMap(cands, func(c cand) float64 { return c.Vec })
+	rSig := rankMap(cands, func(c cand) float64 { return c.Signal })
+	rRec := rankMap(cands, func(c cand) float64 { return c.Recency })
+	var wVec, wSig, wBM, wRec float64
+	if isManual {
+		wVec, wSig, wBM = 0.5, 0.8, 1.0
+	} else {
+		wVec, wSig, wBM, wRec = 1.0, 0.8, 0.5, 0.3
+	}
+	for i := range cands {
+		id := cands[i].Chunk.ChunkID
+		s := wVec/(rrfK+float64(rVec[id])) + wSig/(rrfK+float64(rSig[id])) + wBM/(rrfK+float64(rBM[id]))
+		if !isManual {
+			s += wRec / (rrfK + float64(rRec[id]))
+		}
+		cands[i].Final = s
+	}
+	sort.SliceStable(cands, func(a, b int) bool { return cands[a].Final > cands[b].Final })
+	return cands
+}
+
 // minmax 归一化到 [0,1]；最大值=最小值（含全 0）时全部置 0。
 func minmax(vals []float64) []float64 {
 	if len(vals) == 0 {

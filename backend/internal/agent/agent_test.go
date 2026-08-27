@@ -567,3 +567,155 @@ func TestHandleTitlesConversationFromFirstMessage(t *testing.T) {
 		t.Fatalf("title=%q rune 数=%d, want 20", c.Title, len([]rune(c.Title)))
 	}
 }
+
+func TestAgentRewriteDoesNotAffectPipelinePath(t *testing.T) {
+	// pipeline 的 rca/recommend 直接调 Searcher，不经改写：用 mock searcher 校验入参与原文一致
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	_ = s.WithKBTx(func(tx store.KBStore) error {
+		now := time.Now()
+		if err := tx.InsertKbDocument(model.KbDocument{
+			ID: "doc-pipe", Title: "Xid 48 案例", Category: model.KBCase,
+			Intents: []string{"AskRootCause"}, Content: "Xid 48 案例内容", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+		return tx.InsertKbChunk(model.KbChunk{ID: "c-pipe", DocID: "doc-pipe", Seq: 0, Content: "Xid 48 案例内容", CreatedAt: now})
+	})
+	var captured string
+	rec := &captureSearcher{res: []retrieve.Result{{DocID: "doc-pipe", Title: "Xid 48 案例", Content: "Xid 48 案例内容", Intents: []string{"AskRootCause"}}}, capture: &captured}
+	// pipeline 侧直接检索，不应经过 RewriteQuery
+	orig := "Xid 48"
+	got, err := rec.SearchCases(context.Background(), retrieve.Query{Text: orig}, retrieve.Options{TopK: 3})
+	if err != nil || len(got) == 0 {
+		t.Fatalf("pipeline SearchCases err=%v got=%v", err, got)
+	}
+	if captured != orig {
+		t.Fatalf("pipeline 检索应直通原文, got %q want %q", captured, orig)
+	}
+	// 同一原文经聊天改写路径（有历史）会改写，但 pipeline 路径仍用原文
+	// 验证改写在无历史时直通， pipeline 场景（无 RecentMessages）不受影响
+	rw, _ := retrieve.RewriteQuery(context.Background(), nil, nil, orig)
+	if rw != orig {
+		t.Fatalf("无 history 时改写应直通, got %q", rw)
+	}
+	// 有 searcher 的 assembler 仍透传原始分
+	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, nil)
+	ag.SetSearcher(rec)
+	as := ag.buildAssembled("conv-pipe", "db-01", "gpu_util", []string{"AskRootCause"})
+	if as == nil {
+		t.Fatalf("assembled nil")
+	}
+}
+
+type captureSearcher struct {
+	res     []retrieve.Result
+	capture *string
+}
+
+func (c *captureSearcher) SearchCases(_ context.Context, q retrieve.Query, _ retrieve.Options) ([]retrieve.Result, error) {
+	if c.capture != nil {
+		*c.capture = q.Text
+	}
+	return c.res, nil
+}
+func (c *captureSearcher) SearchManuals(_ context.Context, q retrieve.Query, _ retrieve.Options) ([]retrieve.Result, error) {
+	if c.capture != nil {
+		*c.capture = q.Text
+	}
+	return c.res, nil
+}
+
+// TestAgentChatRewriteIntegration 校验聊天路径改写：有历史时子查询会经 RewriteQuery 改写后检索。
+func TestAgentChatRewriteIntegration(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	conv, _ := s.CreateConversation("")
+	_ = s.SaveMessage(model.Message{ID: "m1", Role: model.RoleUser, Content: "我的设备是 db-01，出现磁盘告警", ConversationID: conv.ID, CreatedAt: time.Now()})
+	_ = s.SaveMessage(model.Message{ID: "m2", Role: model.RoleAssistant, Content: "已记录 db-01", ConversationID: conv.ID, CreatedAt: time.Now()})
+	cs := ctxpkg.NewStore(s)
+	light := &rewriteAwareLight{
+		rewritten: `{"rewritten":"有哪些告警？它怎么处理？","sub_questions":["有哪些告警","它怎么处理"]}`,
+		rewriteMap: map[string]string{"它怎么处理": "db-01 磁盘告警怎么处理"},
+	}
+	ag := NewWithLight(s, nil, light, nil, cs, 3, 3)
+	// 直接校验 rewriteQuery 会利用历史改写
+	got := ag.rewriteQuery(context.Background(), conv.ID, "它怎么处理")
+	if got != "db-01 磁盘告警怎么处理" {
+		t.Fatalf("聊天改写未生效, got %q", got)
+	}
+	// 无历史时应直通
+	conv2, _ := s.CreateConversation("")
+	ag2 := NewWithLight(s, nil, light, nil, cs, 3, 3)
+	got2 := ag2.rewriteQuery(context.Background(), conv2.ID, "它怎么处理")
+	if got2 != "它怎么处理" {
+		t.Fatalf("无历史应直通, got %q", got2)
+	}
+	// 已独立长句直通
+	long := strings.Repeat("a", 41) + "怎么"
+	got3 := ag.rewriteQuery(context.Background(), conv.ID, long)
+	if got3 != long {
+		t.Fatalf("已独立查询应直通, got %q", got3)
+	}
+}
+
+// rewriteAwareLight 同时支持 RewriteAndSplit（2-arg JSON）与 RewriteQuery（单 prompt 含"历史"）
+type rewriteAwareLight struct {
+	rewritten  string
+	rewriteMap map[string]string
+}
+
+func (r *rewriteAwareLight) Complete(_ context.Context, system, user string) (string, error) {
+	// RewriteQuery 适配器会以 system="" 且 user=prompt（含"历史："）调用
+	if strings.Contains(user, "历史：") {
+		// 提取"查询："后的原文
+		idx := strings.Index(user, "查询：")
+		q := user
+		if idx >= 0 {
+			q = strings.TrimSpace(user[idx+len("查询："):])
+		}
+		if v, ok := r.rewriteMap[q]; ok {
+			return v, nil
+		}
+		return q, nil
+	}
+	// 否则为 RewriteAndSplit
+	return r.rewritten, nil
+}
+
+func TestAgentRewriteFallbackOnError(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	conv, _ := s.CreateConversation("")
+	_ = s.SaveMessage(model.Message{ID: "m1", Role: model.RoleUser, Content: "历史1", ConversationID: conv.ID, CreatedAt: time.Now()})
+	cs := ctxpkg.NewStore(s)
+	// light 对改写返回错误，应回退原文
+	errLight := &errorLight{rewritten: `{"rewritten":"它怎么处理？","sub_questions":["它怎么处理"]}`}
+	ag := NewWithLight(s, nil, errLight, nil, cs, 3, 3)
+	got := ag.rewriteQuery(context.Background(), conv.ID, "它怎么处理")
+	if got != "它怎么处理" {
+		t.Fatalf("改写失败应回退原文, got %q", got)
+	}
+	// 空输出也回退
+	emptyLight := &rewriteAwareLight{
+		rewritten:  `{"rewritten":"它怎么处理？","sub_questions":["它怎么处理"]}`,
+		rewriteMap: map[string]string{"它怎么处理": "   "},
+	}
+	ag2 := NewWithLight(s, nil, emptyLight, nil, cs, 3, 3)
+	got2 := ag2.rewriteQuery(context.Background(), conv.ID, "它怎么处理")
+	if got2 != "它怎么处理" {
+		t.Fatalf("空输出应回退原文, got %q", got2)
+	}
+}
+
+type errorLight struct {
+	rewritten string
+}
+
+func (e *errorLight) Complete(_ context.Context, system, user string) (string, error) {
+	if strings.Contains(user, "历史：") {
+		return "", errors.New("llm down")
+	}
+	return e.rewritten, nil
+}

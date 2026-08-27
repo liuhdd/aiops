@@ -128,3 +128,22 @@ func TestLoadFromEnvEmbedOverride(t *testing.T) {
 		t.Fatalf("LLMEmbedModel = %q, want override", cfg.LLMEmbedModel)
 	}
 }
+
+func TestConfigRetrieveFlags(t *testing.T) {
+	cfg := LoadFromEnv(func(k string) string {
+		m := map[string]string{"RETRIEVE_FINGERPRINT": "0", "RETRIEVE_RRF": "0", "RERANK_BASE_URL": "https://r.example", "RERANK_API_KEY": "k", "RERANK_MODEL": "m", "RERANK_FLOOR": "0.35"}
+		return m[k]
+	})
+	if cfg.RetrieveFingerprint || cfg.RetrieveRRF {
+		t.Fatal("flags")
+	}
+	if cfg.RerankBaseURL != "https://r.example" || cfg.RerankModel != "m" || cfg.RerankFloor != 0.35 {
+		t.Fatalf("%+v", cfg)
+	}
+}
+func TestConfigDefaults(t *testing.T) {
+	cfg := LoadFromEnv(func(string) string { return "" })
+	if !cfg.RetrieveFingerprint || !cfg.RetrieveRRF || cfg.RerankFloor != 0.2 {
+		t.Fatalf("%+v", cfg)
+	}
+}

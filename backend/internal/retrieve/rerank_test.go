@@ -55,3 +55,15 @@ func TestRankEmpty(t *testing.T) {
 		t.Fatalf("空输入应空输出, got %v", got)
 	}
 }
+
+func TestFuseRRF_RespectsTypeWeights(t *testing.T) {
+	cands := []cand{{Chunk: model.KbKnowledgeChunk{ChunkID: "a"}, BM25: 0.1, Vec: 0.95, Signal: 0.5}, {Chunk: model.KbKnowledgeChunk{ChunkID: "b"}, BM25: 0.95, Vec: 0.1, Signal: 0.5}, {Chunk: model.KbKnowledgeChunk{ChunkID: "c"}, BM25: 0.5, Vec: 0.5, Signal: 0.5}}
+	got := FuseRRF(append([]cand(nil), cands...), false) // false=case, 语义权重高 → a 应排前
+	if got[0].Chunk.ChunkID != "a" {
+		t.Fatalf("case top want a got %v", got[0].Chunk.ChunkID)
+	}
+	gotM := FuseRRF(append([]cand(nil), cands...), true) // manual, 关键词权重高 → b 应排前
+	if gotM[0].Chunk.ChunkID != "b" {
+		t.Fatalf("manual top want b got %v", gotM[0].Chunk.ChunkID)
+	}
+}

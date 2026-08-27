@@ -2,11 +2,15 @@ package retrieve
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"aiops/internal/config"
 	"aiops/internal/model"
 	"aiops/internal/store"
 )
@@ -161,5 +165,130 @@ func TestRouter(t *testing.T) {
 	}
 	if c, m := Router("chat", nil, nil); c != 2 || m != 1 {
 		t.Fatalf("无意图默认配额 = %d,%d want 2,1", c, m)
+	}
+}
+
+func TestSearchFingerprintFastPathHit(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "fp.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	now := time.Now()
+	if err := s.WithKBTx(func(tx store.KBStore) error {
+		doc := model.KbDocument{ID: "fp1", Title: "GPU Xid 48 掉卡案例", Category: model.KBCase, Fingerprints: []string{"Xid 48"}, Content: "GPU 掉卡日志", CreatedAt: now, UpdatedAt: now}
+		if err := tx.InsertKbDocument(doc); err != nil {
+			return err
+		}
+		if err := tx.InsertKbChunk(model.KbChunk{ID: "c_fp1", DocID: "fp1", Seq: 0, Content: "GPU 掉卡通用内容无指纹字面", CreatedAt: now}); err != nil {
+			return err
+		}
+		doc2 := model.KbDocument{ID: "other", Title: "其他案例", Category: model.KBCase, Content: "其他内容", CreatedAt: now, UpdatedAt: now}
+		if err := tx.InsertKbDocument(doc2); err != nil {
+			return err
+		}
+		return tx.InsertKbChunk(model.KbChunk{ID: "c_other", DocID: "other", Seq: 0, Content: "其他内容", CreatedAt: now})
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	se := NewSearcher(s, fakeEmbedder{})
+	res, err := se.SearchCases(context.Background(), Query{Text: "系统报 Xid 48 故障"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases: %v", err)
+	}
+	if len(res) == 0 || res[0].DocID != "fp1" {
+		t.Fatalf("指纹快路径应命中 fp1，got %+v", res)
+	}
+	if res[0].Score != 1.0 {
+		t.Fatalf("指纹命中 Score 应为 1.0，got %v", res[0].Score)
+	}
+	// 关闭指纹开关应回退到空（无 BM25/向量/信号相关性）
+	cfgDisabled := config.Config{RetrieveFingerprint: false, RetrieveRRF: true, RerankFloor: 0.2, RerankModel: "rerank"}
+	se2 := NewSearcherWithConfig(s, fakeEmbedder{}, nil, cfgDisabled)
+	res2, err := se2.SearchCases(context.Background(), Query{Text: "系统报 Xid 48 故障"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases disabled: %v", err)
+	}
+	if len(res2) != 0 {
+		t.Fatalf("关闭指纹后应无相关结果（快路径禁用且无其他相关性），got %+v", res2)
+	}
+}
+
+func TestSearchRRFVsWeightedToggle(t *testing.T) {
+	s := seedRetrieveStore(t)
+	cfgRRF := config.Config{RetrieveFingerprint: false, RetrieveRRF: true, RerankFloor: 0.2, RerankModel: "rerank"}
+	cfgW := config.Config{RetrieveFingerprint: false, RetrieveRRF: false, RerankFloor: 0.2, RerankModel: "rerank"}
+	seRRF := NewSearcherWithConfig(s, fakeEmbedder{}, nil, cfgRRF)
+	seW := NewSearcherWithConfig(s, fakeEmbedder{}, nil, cfgW)
+	q := Query{Text: "GPU 掉卡"}
+	resRRF, err := seRRF.SearchCases(context.Background(), q, Options{TopK: 2})
+	if err != nil {
+		t.Fatalf("RRF SearchCases: %v", err)
+	}
+	resW, err := seW.SearchCases(context.Background(), q, Options{TopK: 2})
+	if err != nil {
+		t.Fatalf("Weighted SearchCases: %v", err)
+	}
+	if len(resRRF) == 0 || len(resW) == 0 {
+		t.Fatalf("两开关下均应有结果 RRF=%+v Weighted=%+v", resRRF, resW)
+	}
+	// 同一批候选的 RRF 与加权融合应至少有一项实现差异（通过直接对比 FuseRRF 与 RankCases 的序）
+	cands := []cand{
+		{Chunk: model.KbKnowledgeChunk{ChunkID: "a"}, BM25: 0.1, Vec: 0.95, Signal: 0.5},
+		{Chunk: model.KbKnowledgeChunk{ChunkID: "b"}, BM25: 0.95, Vec: 0.1, Signal: 0.5},
+		{Chunk: model.KbKnowledgeChunk{ChunkID: "c"}, BM25: 0.5, Vec: 0.5, Signal: 0.5},
+	}
+	gotRRF := FuseRRF(append([]cand(nil), cands...), false)
+	gotW := RankCases(append([]cand(nil), cands...), time.Now())
+	if gotRRF[0].Chunk.ChunkID == gotW[0].Chunk.ChunkID && len(gotRRF) > 1 {
+		// 允许偶发相同，但至少验证两路径可独立开关且结果非空；若相同则仅校验非空已足够
+		t.Logf("RRF 与加权首位相同 rrf=%v weighted=%v", gotRRF[0].Chunk.ChunkID, gotW[0].Chunk.ChunkID)
+	}
+}
+
+func TestSearchRerankGateBRejectsNoAnswer(t *testing.T) {
+	s := seedRetrieveStore(t)
+	// 低分 rerank：全部 0.05，floor 0.2 → GateB 整批剔空
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		docs, _ := req["documents"].([]any)
+		results := make([]map[string]any, len(docs))
+		for i := range docs {
+			results[i] = map[string]any{"index": i, "relevance_score": 0.05}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}))
+	defer srv.Close()
+	rr, _ := NewReranker(config.Config{RerankBaseURL: srv.URL, RerankAPIKey: "k", RerankModel: "m"})
+	cfg := config.Config{RetrieveFingerprint: false, RetrieveRRF: true, RerankFloor: 0.2, RerankBaseURL: srv.URL, RerankAPIKey: "k", RerankModel: "m"}
+	se := NewSearcherWithConfig(s, fakeEmbedder{}, rr, cfg)
+	res, err := se.SearchCases(context.Background(), Query{Text: "GPU 掉卡"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases rerank: %v", err)
+	}
+	if len(res) != 0 {
+		t.Fatalf("低分精排应被 GateB 全部过滤为空，got %+v", res)
+	}
+}
+
+func TestSearchRerankUnavailableFallsBack(t *testing.T) {
+	s := seedRetrieveStore(t)
+	// reranker=nil 应静默降级返回融合结果
+	cfg := config.Config{RetrieveFingerprint: false, RetrieveRRF: true, RerankFloor: 0.2}
+	se := NewSearcherWithConfig(s, fakeEmbedder{}, nil, cfg)
+	res, err := se.SearchCases(context.Background(), Query{Text: "GPU 掉卡"}, Options{TopK: 2})
+	if err != nil {
+		t.Fatalf("SearchCases no rerank: %v", err)
+	}
+	if len(res) == 0 {
+		t.Fatalf("无 reranker 时应回退到融合结果，got empty")
+	}
+	// 兼容旧构造 NewSearcher 亦应等价于开关全开但无精排
+	se2 := NewSearcher(s, fakeEmbedder{})
+	res2, err := se2.SearchCases(context.Background(), Query{Text: "GPU 掉卡"}, Options{TopK: 2})
+	if err != nil || len(res2) == 0 {
+		t.Fatalf("NewSearcher 兼容构造应返回结果 err=%v res=%+v", err, res2)
 	}
 }

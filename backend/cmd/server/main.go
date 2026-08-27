@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 
@@ -51,7 +52,16 @@ func main() {
 	}
 
 	embedder, _ := retrieve.NewLLMEmbedder(cfg) // 无 key 时 nil，检索回退
-	searcher := retrieve.NewSearcher(st, embedder)
+	reranker, err := retrieve.NewReranker(cfg)
+	if err != nil {
+		if errors.Is(err, retrieve.ErrNoRerank) {
+			log.Printf("rerank 不可用: %v", err)
+		} else {
+			log.Printf("rerank init 失败: %v", err)
+		}
+		reranker = nil
+	}
+	searcher := retrieve.NewSearcherWithConfig(st, embedder, reranker, cfg)
 
 	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
 	eng.Publish = h.Publish

@@ -31,7 +31,7 @@ type KBStore interface {
 
 type kbRepo struct{ db dbExec }
 
-const kbDocCols = `id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, created_at, updated_at`
+const kbDocCols = `id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, fingerprints, created_at, updated_at`
 
 func parseArr(s string) []string {
 	var out []string
@@ -46,8 +46,8 @@ func parseArr(s string) []string {
 
 func scanKbDoc(scan func(dest ...any) error) (model.KbDocument, error) {
 	var d model.KbDocument
-	var dt, vd, md, mtr, kw, in string
-	if err := scan(&d.ID, &d.Title, &d.Category, &dt, &vd, &md, &mtr, &kw, &in, &d.SourceFile, &d.Content, &d.CreatedAt, &d.UpdatedAt); err != nil {
+	var dt, vd, md, mtr, kw, in, fpStr string
+	if err := scan(&d.ID, &d.Title, &d.Category, &dt, &vd, &md, &mtr, &kw, &in, &d.SourceFile, &d.Content, &fpStr, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		return d, err
 	}
 	d.DeviceTypes = parseArr(dt)
@@ -56,20 +56,21 @@ func scanKbDoc(scan func(dest ...any) error) (model.KbDocument, error) {
 	d.Metrics = parseArr(mtr)
 	d.Keywords = parseArr(kw)
 	d.Intents = parseArr(in)
+	d.Fingerprints = parseArr(fpStr)
 	return d, nil
 }
 
 func (r *kbRepo) InsertKbDocument(d model.KbDocument) error {
-	_, err := r.db.Exec(`INSERT INTO kb_documents (id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := r.db.Exec(`INSERT INTO kb_documents (id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, fingerprints, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			title=excluded.title, category=excluded.category, device_types=excluded.device_types,
 			vendor=excluded.vendor, model=excluded.model, metrics=excluded.metrics,
 			keywords=excluded.keywords, intents=excluded.intents, source_file=excluded.source_file,
-			content=excluded.content, updated_at=excluded.updated_at`,
+			content=excluded.content, fingerprints=excluded.fingerprints, updated_at=excluded.updated_at`,
 		d.ID, d.Title, string(d.Category), model.MustJSON(d.DeviceTypes), model.MustJSON(d.Vendor),
 		model.MustJSON(d.Model), model.MustJSON(d.Metrics), model.MustJSON(d.Keywords),
-		model.MustJSON(d.Intents), d.SourceFile, d.Content, d.CreatedAt, d.UpdatedAt)
+		model.MustJSON(d.Intents), d.SourceFile, d.Content, model.MustJSON(d.Fingerprints), d.CreatedAt, d.UpdatedAt)
 	return err
 }
 
@@ -217,7 +218,7 @@ func (s *Store) ListKbDocuments(f KbFilter) ([]model.KbDocSummary, error) {
 	if len(conds) > 0 {
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
-	query := `SELECT d.id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, d.source_file, d.content, d.created_at, d.updated_at,
+	query := `SELECT d.id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, d.source_file, d.content, d.fingerprints, d.created_at, d.updated_at,
 		(SELECT count(*) FROM kb_chunks c WHERE c.doc_id = d.id) AS chunk_count
 		FROM kb_documents d` + where + ` ORDER BY d.updated_at DESC`
 	rows, err := s.db.Query(query, args...)
@@ -229,9 +230,9 @@ func (s *Store) ListKbDocuments(f KbFilter) ([]model.KbDocSummary, error) {
 	for rows.Next() {
 		// 注意：rows.Scan 每行只能调用一次，chunk_count 须与文档列一并扫描。
 		var s model.KbDocSummary
-		var dt, vd, md, mtr, kw, in string
+		var dt, vd, md, mtr, kw, in, fpStr string
 		if err := rows.Scan(&s.ID, &s.Title, &s.Category, &dt, &vd, &md, &mtr, &kw, &in,
-			&s.SourceFile, &s.Content, &s.CreatedAt, &s.UpdatedAt, &s.ChunkCount); err != nil {
+			&s.SourceFile, &s.Content, &fpStr, &s.CreatedAt, &s.UpdatedAt, &s.ChunkCount); err != nil {
 			return nil, err
 		}
 		s.DeviceTypes = parseArr(dt)
@@ -240,9 +241,40 @@ func (s *Store) ListKbDocuments(f KbFilter) ([]model.KbDocSummary, error) {
 		s.Metrics = parseArr(mtr)
 		s.Keywords = parseArr(kw)
 		s.Intents = parseArr(in)
+		s.Fingerprints = parseArr(fpStr)
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListKbDocumentsByFingerprints(fps []string) ([]model.KbDocSummary, error) {
+    if len(fps)==0 { return nil, nil }
+    var conds []string; var args []any
+    for _, fp := range fps {
+        conds = append(conds, `d.fingerprints LIKE '%'||?||'%' ESCAPE '\'`)
+        args = append(args, `"`+likeEscape(fp)+`"`)
+    }
+    q := `SELECT d.id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, d.source_file, d.content, d.fingerprints, d.created_at, d.updated_at, (SELECT count(*) FROM kb_chunks c WHERE c.doc_id=d.id) AS chunk_count FROM kb_documents d WHERE (`+strings.Join(conds," OR ")+`)`
+    rows, err := s.db.Query(q, args...)
+    if err!=nil { return nil,err }
+    defer rows.Close()
+    out := make([]model.KbDocSummary, 0)
+    for rows.Next() {
+        var s model.KbDocSummary
+        var dt, vd, md, mtr, kw, in, fpStr string
+        if err := rows.Scan(&s.ID, &s.Title, &s.Category, &dt, &vd, &md, &mtr, &kw, &in, &s.SourceFile, &s.Content, &fpStr, &s.CreatedAt, &s.UpdatedAt, &s.ChunkCount); err != nil {
+            return nil, err
+        }
+        s.DeviceTypes = parseArr(dt)
+        s.Vendor = parseArr(vd)
+        s.Model = parseArr(md)
+        s.Metrics = parseArr(mtr)
+        s.Keywords = parseArr(kw)
+        s.Intents = parseArr(in)
+        s.Fingerprints = parseArr(fpStr)
+        out = append(out, s)
+    }
+    return out, rows.Err()
 }
 
 func (s *Store) GetKbDocument(id string) (model.KbDocument, error) {

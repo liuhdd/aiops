@@ -120,8 +120,10 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 	if sc := RuleScore(a.activeLeaves(), userText); sc.Confidence >= 0.4 && !a.subsKeepIntent(subs, sc.Intent) {
 		return a.answerSingle(ctx, conversationID, userText)
 	}
+	history := a.fetchHistory(conversationID, userText)
 	if len(subs) == 1 {
-		return a.answerOne(ctx, conversationID, subs[0])
+		qText := a.rewriteWithHistory(ctx, history, subs[0])
+		return a.answerOne(ctx, conversationID, qText)
 	}
 	limit := a.maxSplit
 	if limit <= 0 {
@@ -133,7 +135,8 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 			fmt.Fprintf(&b, "[%d] %s → skipped（超出上限 %d）\n", i+1, sub, limit)
 			continue
 		}
-		content, status := a.answerOneStatus(ctx, conversationID, sub)
+		qText := a.rewriteWithHistory(ctx, history, sub)
+		content, status := a.answerOneStatus(ctx, conversationID, qText)
 		fmt.Fprintf(&b, "[%d] %s → %s\n%s\n", i+1, sub, status, content)
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -423,4 +426,80 @@ func extractQuery(text string, s *store.Store) (device, metric string) {
 		}
 	}
 	return device, metric
+}
+
+// fetchHistory 取近 6 条对话历史，排除当前轮的用户原文（Handle 已先落库）。
+func (a *Agent) fetchHistory(conversationID, currentUserText string) []string {
+	var msgs []model.Message
+	var err error
+	if a.store != nil {
+		msgs, err = a.store.RecentMessages(conversationID, 6)
+	} else if a.ctxStore != nil {
+		msgs, err = a.ctxStore.RecentMessages(conversationID, 6)
+	}
+	if err != nil || len(msgs) == 0 {
+		return nil
+	}
+	// RecentMessages 返回时间升序；末条若为当前轮原文则剔除
+	if len(msgs) > 0 && msgs[len(msgs)-1].Content == currentUserText {
+		msgs = msgs[:len(msgs)-1]
+	}
+	if len(msgs) > 6 {
+		msgs = msgs[len(msgs)-6:]
+	}
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		if strings.TrimSpace(m.Content) != "" {
+			out = append(out, m.Content)
+		}
+	}
+	return out
+}
+
+// rewriteWithHistory 用已取好的 history 调 retrieve.RewriteQuery，失败回退原文。
+func (a *Agent) rewriteWithHistory(ctx context.Context, history []string, q string) string {
+	if a.lightLLM == nil || ctxpkg.IsNilCompleter(a.lightLLM) {
+		return q
+	}
+	adapted := lightAdapter{c: a.lightLLM}
+	rw, err := retrieve.RewriteQuery(ctx, adapted, history, q)
+	if err != nil || strings.TrimSpace(rw) == "" {
+		return q
+	}
+	return rw
+}
+
+// rewriteQuery 对外保留的便捷包装（供测试直接调用，内部走 fetchHistory 简化）。
+func (a *Agent) rewriteQuery(ctx context.Context, conversationID, q string) string {
+	// 尝试按 conversation 维度取历史（不剔除 current，因为调用方已明确历史边界）
+	var history []string
+	if a.store != nil {
+		if msgs, err := a.store.RecentMessages(conversationID, 6); err == nil {
+			for _, m := range msgs {
+				if strings.TrimSpace(m.Content) != "" {
+					history = append(history, m.Content)
+				}
+			}
+		}
+	} else if a.ctxStore != nil {
+		if msgs, err := a.ctxStore.RecentMessages(conversationID, 6); err == nil {
+			for _, m := range msgs {
+				if strings.TrimSpace(m.Content) != "" {
+					history = append(history, m.Content)
+				}
+			}
+		}
+	}
+	// 若末条即为 q 本身（直接调用场景），视为空历史以保持直通语义与 answer 路径一致的过滤
+	if len(history) > 0 && history[len(history)-1] == q {
+		history = history[:len(history)-1]
+	}
+	return a.rewriteWithHistory(ctx, history, q)
+}
+
+// lightAdapter 将 ctxpkg.Completer(双参) 适配为 retrieve.Completer(单 prompt)。
+type lightAdapter struct{ c ctxpkg.Completer }
+
+func (l lightAdapter) Complete(ctx context.Context, prompt string) (string, error) {
+	return l.c.Complete(ctx, "", prompt)
 }
