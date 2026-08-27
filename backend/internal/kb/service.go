@@ -98,6 +98,7 @@ func (s *Service) Seed(docs []SeedDoc) error {
 			DeviceTypes: d.DeviceTypes, Metrics: d.Metrics, Keywords: d.Keywords,
 			Content: d.Content, CreatedAt: now, UpdatedAt: now,
 		}
+		doc.Fingerprints = ExtractFingerprints(doc.Title, doc.Content)
 		chunks := Chunk(d.Content)
 		ids := make([]string, len(chunks))
 		for i := range chunks {
@@ -154,6 +155,7 @@ func (s *Service) Upload(ctx context.Context, req UploadReq) (*model.KbDocument,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	doc.Fingerprints = ExtractFingerprints(doc.Title, doc.Content)
 	chunks := Chunk(content)
 	ids := make([]string, len(chunks))
 	for i := range chunks {

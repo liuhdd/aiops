@@ -204,6 +204,25 @@ func TestDeleteCascadesEmbeddings(t *testing.T) {
 	}
 }
 
+func TestUploadWritesFingerprints(t *testing.T) {
+	st := storeMust(t)
+	svc := NewService(st, nil)
+	doc, err := svc.Upload(context.Background(), UploadReq{SourceFile: "a.txt", Title: "GPU Xid 48", Category: model.KBCase, Data: []byte("日志：Xid 48 掉卡")})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	got, err := st.GetKbDocument(doc.ID)
+	if err != nil {
+		t.Fatalf("GetKbDocument: %v", err)
+	}
+	if len(got.Fingerprints) == 0 {
+		t.Fatalf("want fingerprints, got %v", got.Fingerprints)
+	}
+	if got.Fingerprints[0] != "Xid 48" {
+		t.Fatalf("got %v", got.Fingerprints)
+	}
+}
+
 func hasStr(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
