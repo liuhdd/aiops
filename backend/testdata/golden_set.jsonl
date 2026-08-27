@@ -1,0 +1,32 @@
+{"id":"q001","type":"fact","question":"CPU 使用率持续高于85%时如何排查？","expect":{"doc_ids":["doc-cpu-hot"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q002","type":"fact","question":"磁盘使用率超过95%时应该执行哪些步骤？","expect":{"doc_ids":["doc-disk-full"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q003","type":"fact","question":"GPU 利用率归零时如何处理 Xid 错误？","expect":{"doc_ids":["doc-gpu-xid"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q004","type":"fact","question":"GPU 温度超过90度有哪些处置措施？","expect":{"doc_ids":["doc-gpu-temp"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q005","type":"multi_doc","question":"单机 CPU 热点与多节点负载不均衡同时出现，如何综合处置？","expect":{"doc_ids":["doc-cpu-hot","doc-load-balance"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":5}
+{"id":"q006","type":"multi_doc","question":"存储节点磁盘告警且数据库表空间不足，如何联动处理？","expect":{"doc_ids":["doc-storage-full","doc-db-tablespace"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":5}
+{"id":"q007","type":"multi_doc","question":"GPU 掉卡同时伴随磁盘空间不足，可能的关联排查路径是什么？","expect":{"doc_ids":["doc-gpu-xid","doc-disk-full"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":5}
+{"id":"q008","type":"multi_doc","question":"内存 OOM 与网络链路中断并发告警，应如何排查？","expect":{"doc_ids":["doc-mem-oom","doc-net-link"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":5}
+{"id":"q009","type":"negative","question":"哪些情况不会导致磁盘空间不足告警？","expect":{"doc_ids":["doc-disk-full"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q010","type":"negative","question":"GPU 温度正常时哪些操作不需要执行？","expect":{"doc_ids":["doc-gpu-temp"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q011","type":"negative","question":"内存充足情况下不应出现哪种 OOM 现象？","expect":{"doc_ids":["doc-mem-oom"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q012","type":"negative","question":"网络链路正常时不会出现哪种日志？","expect":{"doc_ids":["doc-net-link"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q013","type":"ambiguous","question":"机器有点热怎么办？","expect":{"doc_ids":["doc-gpu-temp"],"distractor_doc_ids":["doc-cpu-hot"],"behavior":"hit"},"top_k":3}
+{"id":"q014","type":"ambiguous","question":"存储有点满怎么处理？","expect":{"doc_ids":["doc-storage-full"],"distractor_doc_ids":["doc-disk-full"],"behavior":"hit"},"top_k":3}
+{"id":"q015","type":"ambiguous","question":"性能有点差，可能是什么原因？","expect":{"doc_ids":["doc-cpu-hot"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q016","type":"ambiguous","question":"网络好像有点问题","expect":{"doc_ids":["doc-net-link"],"distractor_doc_ids":["doc-network-flap"],"behavior":"hit"},"top_k":3}
+{"id":"q017","type":"reasoning","question":"为什么 GPU 利用率归零但 CPU 正常，需要检查 NVLink 而非 CPU 调度？","expect":{"doc_ids":["doc-gpu-xid"],"distractor_doc_ids":["doc-cpu-hot"],"behavior":"hit"},"top_k":3}
+{"id":"q018","type":"reasoning","question":"内存使用率 90% 以上且 dmesg 出现 OOM，如何判断是泄漏还是瞬时峰值？","expect":{"doc_ids":["doc-mem-oom"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q019","type":"reasoning","question":"磁盘满但 df 显示仍有空间，可能是什么原因导致 InnoDB 分配失败？","expect":{"doc_ids":["doc-db-tablespace"],"distractor_doc_ids":["doc-disk-full"],"behavior":"hit"},"top_k":3}
+{"id":"q020","type":"reasoning","question":"多节点 CPU 负载差异大且邻居节点过载，推理负载不均衡根因是什么？","expect":{"doc_ids":["doc-load-balance"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q021","type":"no_answer","question":"C7000 机箱声卡蓝屏如何处置？","expect":{"doc_ids":[],"distractor_doc_ids":[],"behavior":"reject"},"top_k":3}
+{"id":"q022","type":"no_answer","question":"如何配置 Kubernetes 的声卡驱动？","expect":{"doc_ids":[],"distractor_doc_ids":[],"behavior":"reject"},"top_k":3}
+{"id":"q023","type":"no_answer","question":"Windows 11 蓝牙耳机连接失败如何处理？","expect":{"doc_ids":[],"distractor_doc_ids":[],"behavior":"reject"},"top_k":3}
+{"id":"q024","type":"no_answer","question":"如何修复打印机卡纸黑色条纹？","expect":{"doc_ids":[],"distractor_doc_ids":[],"behavior":"reject"},"top_k":3}
+{"id":"q025","type":"cross_object","question":"将 GPU 服务器的 NVLink 检查步骤用于存储节点的磁盘告警是否合适？正确做法是什么？","expect":{"doc_ids":["doc-storage-full"],"distractor_doc_ids":["doc-gpu-xid"],"behavior":"hit"},"top_k":3}
+{"id":"q026","type":"cross_object","question":"数据库表空间不足时能否套用 GPU 温度过高的散热方案？","expect":{"doc_ids":["doc-db-tablespace"],"distractor_doc_ids":["doc-gpu-temp"],"behavior":"hit"},"top_k":3}
+{"id":"q027","type":"cross_object","question":"将磁盘清理步骤用于 GPU 掉卡是否能解决问题？","expect":{"doc_ids":[],"distractor_doc_ids":["doc-gpu-xid","doc-disk-full"],"behavior":"reject"},"top_k":3}
+{"id":"q028","type":"cross_object","question":"用网络链路排查方法处理内存溢出是否有效？","expect":{"doc_ids":[],"distractor_doc_ids":["doc-mem-oom","doc-net-link"],"behavior":"reject"},"top_k":3}
+{"id":"q029","type":"misleading_premise","question":"为什么 GPU 温度 50 度就必须立即更换硬件？","expect":{"doc_ids":[],"distractor_doc_ids":["doc-gpu-temp"],"behavior":"reject"},"top_k":3}
+{"id":"q030","type":"misleading_premise","question":"既然磁盘使用率 50% 就算满，为什么需要立刻扩容？","expect":{"doc_ids":[],"distractor_doc_ids":["doc-disk-full"],"behavior":"reject"},"top_k":3}
+{"id":"q031","type":"misleading_premise","question":"为什么 GPU 掉卡一定是 NVLink 故障导致 CPU 过高？","expect":{"doc_ids":["doc-gpu-xid"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
+{"id":"q032","type":"misleading_premise","question":"存储节点磁盘告警一定是分布式存储副本数不足导致的吗？","expect":{"doc_ids":["doc-storage-full"],"distractor_doc_ids":[],"behavior":"hit"},"top_k":3}
