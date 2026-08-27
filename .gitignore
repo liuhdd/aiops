@@ -12,3 +12,4 @@ backend/bin/
 .superpowers/
 
 ragent/
+.playwright-mcp/
