@@ -47,57 +47,37 @@ type searcher struct {
 
 // NewSearcherWithConfig 构造混合检索器；reranker 可为 nil（精排跳过）。
 func NewSearcherWithConfig(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config) Searcher {
-	// 零值 Config 视为默认开启（兼容旧构造未传配置时行为）
-	if cfg == (config.Config{}) {
-		cfg.RetrieveFingerprint = true
-		cfg.RetrieveRRF = true
+	if cfg.RerankModel == "" {
+		cfg.RerankModel = "rerank"
+	}
+	if cfg.RerankFloor == 0 {
 		cfg.RerankFloor = 0.2
-		if cfg.RerankModel == "" {
-			cfg.RerankModel = "rerank"
-		}
-	} else {
-		if cfg.RerankFloor == 0 {
-			cfg.RerankFloor = 0.2
-		}
-		if cfg.RerankModel == "" {
-			cfg.RerankModel = "rerank"
-		}
 	}
 	return &searcher{st: st, embedder: embedder, reranker: rr, cfg: cfg}
 }
 
 // NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。兼容旧构造，默认开关全开但无精排。
 func NewSearcher(st *store.Store, embedder Embedder) Searcher {
-	cfg := config.Config{
+	return NewSearcherWithConfig(st, embedder, nil, config.Config{
 		RetrieveFingerprint: true,
 		RetrieveRRF:         true,
-		RerankFloor:         0.2,
 		RerankModel:         "rerank",
-	}
-	return NewSearcherWithConfig(st, embedder, nil, cfg)
+		RerankFloor:         0.2,
+	})
 }
 
-// isFingerprintEnabled 指纹快路径是否启用（零值 Config 视为 true）。
+// isFingerprintEnabled 指纹快路径是否启用。
 func (s *searcher) isFingerprintEnabled() bool {
-	if s.cfg == (config.Config{}) {
-		return true
-	}
 	return s.cfg.RetrieveFingerprint
 }
 
-// isRRFEnabled RRF 融合是否启用（零值 Config 视为 true）。
+// isRRFEnabled RRF 融合是否启用。
 func (s *searcher) isRRFEnabled() bool {
-	if s.cfg == (config.Config{}) {
-		return true
-	}
 	return s.cfg.RetrieveRRF
 }
 
-// effectiveRerankFloor 返回生效的精排门限（零值默认 0.2）。
+// effectiveRerankFloor 返回生效的精排门限（已在构造时归一）。
 func (s *searcher) effectiveRerankFloor() float64 {
-	if s.cfg.RerankFloor == 0 {
-		return 0.2
-	}
 	return s.cfg.RerankFloor
 }
 
@@ -164,7 +144,14 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 	}
 	cands = s.applyRerank(ctx, q.Text, cands)
 	if s.reranker != nil {
-		cands = gateB(cands, s.effectiveRerankFloor())
+		n := len(cands)
+		if n > 20 {
+			n = 20
+		}
+		if n > 0 {
+			head := gateB(cands[:n], s.effectiveRerankFloor())
+			cands = append(head, cands[n:]...)
+		}
 	}
 	if len(cands) > topK {
 		cands = cands[:topK]

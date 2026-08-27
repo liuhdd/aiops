@@ -11,6 +11,8 @@ var fpPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)ERR-[A-Z0-9_-]+`),
 }
 
+var spaceRe = regexp.MustCompile(`\s+`)
+
 func ExtractFingerprints(title, content string) []string {
 	text := strings.TrimSpace(title + "\n" + content)
 	if text == "" {
@@ -22,7 +24,7 @@ func ExtractFingerprints(title, content string) []string {
 		for _, m := range re.FindAllString(text, -1) {
 			m = strings.TrimSpace(m)
 			// 归一化 Xid 的空格
-			m = regexp.MustCompile(`\s+`).ReplaceAllString(m, " ")
+			m = spaceRe.ReplaceAllString(m, " ")
 			if !seen[m] {
 				seen[m] = true
 				out = append(out, m)

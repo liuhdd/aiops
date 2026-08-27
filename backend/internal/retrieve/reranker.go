@@ -26,7 +26,7 @@ func NewReranker(cfg config.Config) (Reranker, error) {
 	if strings.TrimSpace(cfg.RerankBaseURL) == "" {
 		return nil, ErrNoRerank
 	}
-	base := strings.TrimRight(cfg.RerankBaseURL, "/")
+	base := strings.TrimRight(strings.TrimSpace(cfg.RerankBaseURL), "/")
 	model := cfg.RerankModel
 	if model == "" {
 		model = "rerank"
@@ -65,7 +65,9 @@ func (c *rerankClient) Rerank(ctx context.Context, query string, docs []string) 
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
