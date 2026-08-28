@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"aiops/internal/config"
 	"aiops/internal/model"
 	"aiops/internal/retrieve"
 	"aiops/internal/store"
@@ -61,9 +62,11 @@ type DocDetail struct {
 }
 
 type Service struct {
-	st     *store.Store
-	leaves func() []model.LeafSpec
-	embed  retrieve.Embedder
+	st       *store.Store
+	leaves   func() []model.LeafSpec
+	embed    retrieve.Embedder
+	enrichLC Completer
+	cfg      config.Config
 }
 
 func NewService(st *store.Store, leaves func() []model.LeafSpec) *Service {
@@ -72,7 +75,12 @@ func NewService(st *store.Store, leaves func() []model.LeafSpec) *Service {
 
 // NewServiceWithEmbedder 构造 Service；embed 可为 nil（不上向量）。
 func NewServiceWithEmbedder(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder) *Service {
-	return &Service{st: st, leaves: leaves, embed: embed}
+	return NewServiceWithEnrich(st, leaves, embed, nil)
+}
+
+// NewServiceWithEnrich 构造 Service；lc 可为 nil（富化回退）。
+func NewServiceWithEnrich(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder, lc Completer) *Service {
+	return &Service{st: st, leaves: leaves, embed: embed, enrichLC: lc, cfg: config.Load()}
 }
 
 // Seed 表空时导入种子文档（幂等）。
@@ -99,20 +107,14 @@ func (s *Service) Seed(docs []SeedDoc) error {
 			Content: d.Content, CreatedAt: now, UpdatedAt: now,
 		}
 		doc.Fingerprints = ExtractFingerprints(doc.Title, doc.Content)
-		chunks := Chunk(d.Content)
-		ids := make([]string, len(chunks))
-		for i := range chunks {
-			ids[i] = model.NewID("kbchunk")
-		}
-		embs := s.embedChunks(context.Background(), doc.ID, chunks, ids, now)
-		if err := s.insertDocAndChunks(doc, chunks, ids, embs, now); err != nil {
+		if err := s.insertEnrichedDoc(context.Background(), doc, d.Content, now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// Upload 解析→打标（合并覆盖）→切块→事务入库。
+// Upload 解析→打标（合并覆盖）→切块→富化→嵌入→CDTA→事务入库。
 func (s *Service) Upload(ctx context.Context, req UploadReq) (*model.KbDocument, error) {
 	content, err := ParseDoc(req.SourceFile, req.Data)
 	if err != nil {
@@ -156,16 +158,361 @@ func (s *Service) Upload(ctx context.Context, req UploadReq) (*model.KbDocument,
 		UpdatedAt:   now,
 	}
 	doc.Fingerprints = ExtractFingerprints(doc.Title, doc.Content)
-	chunks := Chunk(content)
-	ids := make([]string, len(chunks))
-	for i := range chunks {
-		ids[i] = model.NewID("kbchunk")
-	}
-	embs := s.embedChunks(ctx, doc.ID, chunks, ids, now)
-	if err := s.insertDocAndChunks(doc, chunks, ids, embs, now); err != nil {
+	if err := s.insertEnrichedDoc(ctx, doc, content, now); err != nil {
 		return nil, err
 	}
 	return &doc, nil
+}
+
+func (s *Service) prepareEnriched(ctx context.Context, chunks []ChunkResult) []EnrichedChunk {
+	if !s.cfg.KBEnhance || IsNilCompleter(s.enrichLC) {
+		out := make([]EnrichedChunk, len(chunks))
+		for i, c := range chunks {
+			out[i] = EnrichedChunk{ChunkResult: c, EnhancedContent: c.Content}
+		}
+		return out
+	}
+	enriched := EnrichChunks(ctx, s.enrichLC, chunks)
+	if !s.cfg.KBEnhanceSummary {
+		for i := range enriched {
+			enriched[i].Summary = ""
+			enriched[i].EnhancedContent = enriched[i].ChunkResult.Content
+		}
+	}
+	if !s.cfg.KBEnhanceQuestions {
+		for i := range enriched {
+			enriched[i].Questions = nil
+		}
+	}
+	return enriched
+}
+
+func (s *Service) embedTexts(ctx context.Context, texts []string) [][]float64 {
+	if s.embed == nil || len(texts) == 0 {
+		return nil
+	}
+	trunc := make([]string, len(texts))
+	for i, t := range texts {
+		trunc[i] = truncateRunes(t, 8000)
+	}
+	vecs, err := s.embed.Embed(ctx, trunc)
+	if err != nil {
+		return nil
+	}
+	return vecs
+}
+
+func (s *Service) shouldUseCDTA(vecs [][]float64) bool {
+	if !s.cfg.KBEnhance || !s.cfg.KBEnhanceCDTA {
+		return false
+	}
+	if s.embed == nil || len(vecs) == 0 {
+		return false
+	}
+	return true
+}
+
+func containsStr(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+type pendingChunk struct {
+	id       string
+	seq      int
+	enriched EnrichedChunk
+	vec      []float64
+	qTexts   []string
+	qVecs    [][]float64
+}
+
+type mergeEntry struct {
+	oldChunk     model.KbChunk
+	newContents  []string
+	newQuestions []string
+	newQVecs     [][]float64
+}
+
+func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, content string, now time.Time) error {
+	chunks := Chunk(content)
+	enriched := s.prepareEnriched(ctx, chunks)
+	if len(enriched) == 0 {
+		// 空内容时仍需插入文档（无块）
+		return s.st.WithKBTx(func(tx store.KBStore) error {
+			return tx.InsertKbDocument(doc)
+		})
+	}
+	ids := make([]string, len(enriched))
+	for i := range ids {
+		ids[i] = model.NewID("kbchunk")
+	}
+	// 文本与向量
+	texts := make([]string, len(enriched))
+	for i, ec := range enriched {
+		texts[i] = ec.EnhancedContent
+	}
+	vecs := s.embedTexts(ctx, texts)
+	// 问题扁平
+	var qTextsFlat []string
+	qOffsets := make([]int, len(enriched))
+	qCounts := make([]int, len(enriched))
+	offset := 0
+	for i, ec := range enriched {
+		qOffsets[i] = offset
+		qCounts[i] = len(ec.Questions)
+		for _, q := range ec.Questions {
+			qTextsFlat = append(qTextsFlat, q)
+		}
+		offset += len(ec.Questions)
+	}
+	var qVecsFlat [][]float64
+	if len(qTextsFlat) > 0 {
+		qVecsFlat = s.embedTexts(ctx, qTextsFlat)
+	}
+	// 按块切分问题向量
+	perChunkQVecs := make([][][]float64, len(enriched))
+	for i := range enriched {
+		cnt := qCounts[i]
+		if cnt == 0 || qVecsFlat == nil {
+			continue
+		}
+		start := qOffsets[i]
+		end := start + cnt
+		if end > len(qVecsFlat) {
+			end = len(qVecsFlat)
+		}
+		slice := make([][]float64, 0, cnt)
+		for j := start; j < end; j++ {
+			if j < len(qVecsFlat) {
+				slice = append(slice, qVecsFlat[j])
+			} else {
+				slice = append(slice, nil)
+			}
+		}
+		perChunkQVecs[i] = slice
+	}
+	threshold := s.cfg.KBCdtaThreshold
+	if threshold == 0 {
+		threshold = 0.85
+	}
+	useCDTA := s.shouldUseCDTA(vecs)
+	// 旧库向量
+	oldEmbs := map[string][]float64{}
+	if useCDTA {
+		if embs, err := s.st.ListKbEmbeddings(); err == nil {
+			for _, e := range embs {
+				if strings.HasPrefix(e.ChunkID, "q_") {
+					continue
+				}
+				oldEmbs[e.ChunkID] = e.Embedding
+			}
+		} else {
+			useCDTA = false
+		}
+	}
+	var pendings []pendingChunk
+	merges := map[string]*mergeEntry{}
+	if !useCDTA {
+		// 全部作为新块
+		for i, ec := range enriched {
+			var v []float64
+			if i < len(vecs) {
+				v = vecs[i]
+			}
+			qTexts := ec.Questions
+			qVecs := perChunkQVecs[i]
+			pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs})
+		}
+	} else {
+		// CDTA 融合
+		for i, ec := range enriched {
+			var v []float64
+			if i < len(vecs) {
+				v = vecs[i]
+			}
+			qTexts := ec.Questions
+			qVecs := perChunkQVecs[i]
+			// 批内去重：与已 pending 的对比
+			mergedIntoPending := -1
+			if v != nil && len(v) > 0 {
+				for pIdx, p := range pendings {
+					if p.vec == nil || len(p.vec) == 0 {
+						continue
+					}
+					if retrieve.Cosine(v, p.vec) >= threshold {
+						mergedIntoPending = pIdx
+						break
+					}
+				}
+			}
+			if mergedIntoPending >= 0 {
+				// 合并到 pending
+				p := &pendings[mergedIntoPending]
+				p.enriched.EnhancedContent += "\n\n---\n\n" + ec.EnhancedContent
+				// 合并问题去重
+				for qi, q := range qTexts {
+					if containsStr(p.qTexts, q) {
+						continue
+					}
+					p.qTexts = append(p.qTexts, q)
+					if qi < len(qVecs) {
+						p.qVecs = append(p.qVecs, qVecs[qi])
+					} else {
+						p.qVecs = append(p.qVecs, nil)
+					}
+				}
+				continue
+			}
+			// 跨库去重
+			bestID := ""
+			bestScore := 0.0
+			if v != nil && len(v) > 0 {
+				for oldID, oldVec := range oldEmbs {
+					score := retrieve.Cosine(v, oldVec)
+					if score > bestScore {
+						bestScore = score
+						bestID = oldID
+					}
+				}
+			}
+			if bestScore >= threshold && bestID != "" {
+				// 命中旧块
+				if _, exists := merges[bestID]; !exists {
+					oc, err := s.st.GetKbChunk(bestID)
+					if err != nil {
+						// 拉取失败则当未命中
+						pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs})
+						continue
+					}
+					merges[bestID] = &mergeEntry{oldChunk: oc, newContents: []string{ec.EnhancedContent}, newQuestions: append([]string(nil), qTexts...), newQVecs: append([][]float64(nil), qVecs...)}
+				} else {
+					me := merges[bestID]
+					me.newContents = append(me.newContents, ec.EnhancedContent)
+					for qi, q := range qTexts {
+						if containsStr(me.newQuestions, q) {
+							continue
+						}
+						me.newQuestions = append(me.newQuestions, q)
+						if qi < len(qVecs) {
+							me.newQVecs = append(me.newQVecs, qVecs[qi])
+						} else {
+							me.newQVecs = append(me.newQVecs, nil)
+						}
+					}
+				}
+				continue
+			}
+			// 未命中，作为新块
+			pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs})
+		}
+	}
+	// 事务写入
+	return s.st.WithKBTx(func(tx store.KBStore) error {
+		if err := tx.InsertKbDocument(doc); err != nil {
+			return err
+		}
+		// 新块
+		for idx, p := range pendings {
+			chunk := model.KbChunk{
+				ID: p.id, DocID: doc.ID, Seq: idx, Heading: p.enriched.Heading,
+				Content: p.enriched.EnhancedContent, Summary: p.enriched.Summary,
+				SourceDocIDs: []string{doc.ID}, CreatedAt: now,
+			}
+			if err := tx.InsertKbChunk(chunk); err != nil {
+				return err
+			}
+			// 问题
+			for qi, q := range p.qTexts {
+				qID := model.NewID("q")
+				qq := model.KbChunkQuestion{ID: qID, ChunkID: p.id, DocID: doc.ID, Question: q, CreatedAt: now}
+				if err := tx.InsertKbChunkQuestion(qq); err != nil {
+					return err
+				}
+				if qi < len(p.qVecs) && p.qVecs[qi] != nil && len(p.qVecs[qi]) > 0 {
+					emb := model.KbEmbedding{ChunkID: "q_" + qID, DocID: doc.ID, Embedding: p.qVecs[qi], Model: s.embed.Model(), CreatedAt: now}
+					if err := tx.UpsertKbEmbedding(emb); err != nil {
+						return err
+					}
+				}
+			}
+			if p.vec != nil && len(p.vec) > 0 {
+				emb := model.KbEmbedding{ChunkID: p.id, DocID: doc.ID, Embedding: p.vec, Model: s.embed.Model(), CreatedAt: now}
+				if err := tx.UpsertKbEmbedding(emb); err != nil {
+					return err
+				}
+			}
+		}
+		// 合并到旧块
+		for oldID, me := range merges {
+			old := me.oldChunk
+			// 重新读取以保证事务内最新（若 tx 支持 GetKbChunk）
+			if getter, ok := tx.(interface {
+				GetKbChunk(string) (model.KbChunk, error)
+			}); ok {
+				if latest, err := getter.GetKbChunk(oldID); err == nil {
+					old = latest
+				}
+			}
+			newContent := old.Content
+			for _, c := range me.newContents {
+				newContent += "\n\n---\n\n" + c
+			}
+			// source_doc_ids 去重
+			srcIDs := append([]string(nil), old.SourceDocIDs...)
+			if len(srcIDs) == 0 {
+				// 兼容历史块为空时填充旧 DocID
+				if old.DocID != "" {
+					srcIDs = []string{old.DocID}
+				}
+			}
+			if !containsStr(srcIDs, doc.ID) {
+				srcIDs = append(srcIDs, doc.ID)
+			}
+			// 去重防重复
+			uniq := map[string]bool{}
+			var dedup []string
+			for _, id := range srcIDs {
+				if !uniq[id] {
+					uniq[id] = true
+					dedup = append(dedup, id)
+				}
+			}
+			updated := model.KbChunk{
+				ID: old.ID, DocID: old.DocID, Seq: old.Seq, Heading: old.Heading,
+				Content: newContent, Summary: old.Summary, SourceDocIDs: dedup, CreatedAt: old.CreatedAt,
+			}
+			if err := tx.UpdateKbChunk(updated); err != nil {
+				return err
+			}
+			// 已有问题去重
+			existingQs, _ := tx.ListKbChunkQuestionsByChunk(oldID)
+			existingSet := map[string]bool{}
+			for _, eq := range existingQs {
+				existingSet[eq.Question] = true
+			}
+			for qi, q := range me.newQuestions {
+				if existingSet[q] {
+					continue
+				}
+				qID := model.NewID("q")
+				qq := model.KbChunkQuestion{ID: qID, ChunkID: oldID, DocID: old.DocID, Question: q, CreatedAt: now}
+				if err := tx.InsertKbChunkQuestion(qq); err != nil {
+					return err
+				}
+				if qi < len(me.newQVecs) && me.newQVecs[qi] != nil && len(me.newQVecs[qi]) > 0 {
+					emb := model.KbEmbedding{ChunkID: "q_" + qID, DocID: old.DocID, Embedding: me.newQVecs[qi], Model: s.embed.Model(), CreatedAt: now}
+					if err := tx.UpsertKbEmbedding(emb); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Service) embedChunks(ctx context.Context, docID string, chunks []ChunkResult, ids []string, now time.Time) []model.KbEmbedding {
@@ -180,7 +527,6 @@ func (s *Service) embedChunks(ctx context.Context, docID string, chunks []ChunkR
 	if err != nil {
 		return nil
 	}
-	// 防御：向量数与块数不一致时只取一一对应的前缀，避免 ids 越界。
 	if len(vecs) > len(ids) {
 		vecs = vecs[:len(ids)]
 	}
@@ -277,6 +623,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			return err
 		}
 		if err := tx.DeleteKbChunks(id); err != nil {
+			return err
+		}
+		if err := tx.DeleteKbChunkQuestionsByDoc(id); err != nil {
 			return err
 		}
 		if err := tx.DeleteKbEmbeddingsByDoc(id); err != nil {

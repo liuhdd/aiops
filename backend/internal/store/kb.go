@@ -22,6 +22,8 @@ type KBStore interface {
 	InsertKbDocument(d model.KbDocument) error
 	InsertKbChunk(c model.KbChunk) error
 	GetKbDocument(id string) (model.KbDocument, error)
+	GetKbChunk(id string) (model.KbChunk, error)
+	UpdateKbChunk(c model.KbChunk) error
 	ListKbChunksByDoc(docID string) ([]model.KbChunk, error)
 	DeleteKbChunks(docID string) error
 	DeleteKbDocument(id string) error
@@ -93,6 +95,16 @@ func scanKbChunk(scan func(dest ...any) error) (model.KbChunk, error) {
 func (r *kbRepo) InsertKbChunk(c model.KbChunk) error {
 	_, err := r.db.Exec(`INSERT INTO kb_chunks (id, doc_id, seq, heading, content, summary, source_doc_ids, created_at) VALUES (?,?,?,?,?,?,?,?)`,
 		c.ID, c.DocID, c.Seq, c.Heading, c.Content, c.Summary, model.MustJSON(c.SourceDocIDs), c.CreatedAt)
+	return err
+}
+
+func (r *kbRepo) GetKbChunk(id string) (model.KbChunk, error) {
+	return scanKbChunk(r.db.QueryRow(`SELECT `+kbChunkCols+` FROM kb_chunks WHERE id = ?`, id).Scan)
+}
+
+func (r *kbRepo) UpdateKbChunk(c model.KbChunk) error {
+	_, err := r.db.Exec(`UPDATE kb_chunks SET content=?, summary=?, source_doc_ids=? WHERE id=?`,
+		c.Content, c.Summary, model.MustJSON(c.SourceDocIDs), c.ID)
 	return err
 }
 
@@ -344,6 +356,14 @@ func (s *Store) ListKbDocumentsByFingerprints(fps []string) ([]model.KbDocSummar
 
 func (s *Store) GetKbDocument(id string) (model.KbDocument, error) {
 	return (&kbRepo{db: s.db}).GetKbDocument(id)
+}
+
+func (s *Store) GetKbChunk(id string) (model.KbChunk, error) {
+	return (&kbRepo{db: s.db}).GetKbChunk(id)
+}
+
+func (s *Store) UpdateKbChunk(c model.KbChunk) error {
+	return (&kbRepo{db: s.db}).UpdateKbChunk(c)
 }
 
 func (s *Store) ListKbChunksByDoc(docID string) ([]model.KbChunk, error) {
