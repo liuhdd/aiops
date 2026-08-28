@@ -26,6 +26,11 @@ type Config struct {
 	RerankAPIKey         string  // RERANK_API_KEY，为空即不启用
 	RerankModel          string  // RERANK_MODEL，默认 rerank
 	RerankFloor          float64 // RERANK_FLOOR，默认 0.2
+	KBEnhance            bool    // KB_ENHANCE，默认 true
+	KBEnhanceSummary     bool    // KB_ENHANCE_SUMMARY，默认 true
+	KBEnhanceQuestions   bool    // KB_ENHANCE_QUESTIONS，默认 true
+	KBEnhanceCDTA        bool    // KB_ENHANCE_CDTA，默认 true
+	KBCdtaThreshold      float64 // KB_CDTA_THRESHOLD，默认 0.85
 }
 
 func Load() Config {
@@ -107,6 +112,28 @@ func LoadFromEnv(lookup func(string) string) Config {
 			rerankFloor = f
 		}
 	}
+	kbEnhance := true
+	if v := lookup("KB_ENHANCE"); v == "0" || v == "false" {
+		kbEnhance = false
+	}
+	kbSummary := true
+	if v := lookup("KB_ENHANCE_SUMMARY"); v == "0" || v == "false" {
+		kbSummary = false
+	}
+	kbQuestions := true
+	if v := lookup("KB_ENHANCE_QUESTIONS"); v == "0" || v == "false" {
+		kbQuestions = false
+	}
+	kbCDTA := true
+	if v := lookup("KB_ENHANCE_CDTA"); v == "0" || v == "false" {
+		kbCDTA = false
+	}
+	kbCdtaThreshold := 0.85
+	if v := lookup("KB_CDTA_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 && f < 1 {
+			kbCdtaThreshold = f
+		}
+	}
 	return Config{
 		LLMAPIKey:           lookup("LLM_API_KEY"),
 		LLMBaseURL:          base,
@@ -123,9 +150,14 @@ func LoadFromEnv(lookup func(string) string) Config {
 		MaxSplit:            maxSplit,
 		RetrieveFingerprint: retrieveFingerprint,
 		RetrieveRRF:         retrieveRRF,
-		RerankBaseURL:       rerankBaseURL,
-		RerankAPIKey:        rerankAPIKey,
-		RerankModel:         rerankModel,
-		RerankFloor:         rerankFloor,
+		RerankBaseURL:        rerankBaseURL,
+		RerankAPIKey:         rerankAPIKey,
+		RerankModel:          rerankModel,
+		RerankFloor:          rerankFloor,
+		KBEnhance:            kbEnhance,
+		KBEnhanceSummary:     kbSummary,
+		KBEnhanceQuestions:   kbQuestions,
+		KBEnhanceCDTA:        kbCDTA,
+		KBCdtaThreshold:      kbCdtaThreshold,
 	}
 }

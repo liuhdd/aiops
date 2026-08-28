@@ -251,3 +251,22 @@ func TestKbDocumentFingerprintLegacyCompatible(t *testing.T) {
     d, err := s.GetKbDocument("missing")
     _ = d; _ = err // 仅断言 New 不报错
 }
+func TestKbChunkEnrichColumns(t *testing.T) {
+    s := newTestStore(t)
+    c := model.KbChunk{ID: "c1", DocID: "d1", Seq: 0, Heading: "h", Content: "增强后", Summary: "摘要", SourceDocIDs: []string{"d1","d2"}, CreatedAt: time.Now()}
+    // 通过事务插入文档与块
+    _ = s.WithKBTx(func(tx KBStore) error {
+        _ = tx.InsertKbDocument(model.KbDocument{ID: "d1", Title: "t", Category: model.KBOther, Content: "x", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+        return tx.InsertKbChunk(c)
+    })
+    got, _ := s.ListKbChunksByDoc("d1")
+    if len(got)!=1 || got[0].Summary!="摘要" || len(got[0].SourceDocIDs)!=2 { t.Fatalf("%+v", got) }
+    // 历史库兼容：无列旧库自动补列
+}
+func TestKbChunkQuestionsCRUD(t *testing.T) {
+    s := newTestStore(t)
+    q := model.KbChunkQuestion{ID: "q1", ChunkID: "c1", DocID: "d1", Question: "如何排查 Xid 48？", CreatedAt: time.Now()}
+    _ = s.InsertKbChunkQuestion(q)
+    list, _ := s.ListKbChunkQuestionsByChunk("c1")
+    if len(list)!=1 || list[0].Question != q.Question { t.Fatalf("%+v", list) }
+}

@@ -184,6 +184,22 @@ func (s *Store) migrate() error {
 	if err := ensureColumn(s.db, "kb_documents", "fingerprints", "fingerprints TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
+	if err := ensureColumn(s.db, "kb_chunks", "summary", "summary TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_chunks", "source_doc_ids", "source_doc_ids TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS kb_chunk_questions (
+    id TEXT PRIMARY KEY, chunk_id TEXT NOT NULL, doc_id TEXT NOT NULL, question TEXT NOT NULL, created_at DATETIME)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kcq_chunk ON kb_chunk_questions(chunk_id)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kcq_doc ON kb_chunk_questions(doc_id)`); err != nil {
+		return err
+	}
 	return nil
 }
 

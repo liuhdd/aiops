@@ -37,11 +37,21 @@ type KbDocument struct {
 }
 
 type KbChunk struct {
+	ID           string    `json:"id"`
+	DocID        string    `json:"doc_id"`
+	Seq          int       `json:"seq"`
+	Heading      string    `json:"heading"`
+	Content      string    `json:"content"`
+	Summary      string    `json:"summary"`
+	SourceDocIDs []string  `json:"source_doc_ids"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type KbChunkQuestion struct {
 	ID        string    `json:"id"`
+	ChunkID   string    `json:"chunk_id"`
 	DocID     string    `json:"doc_id"`
-	Seq       int       `json:"seq"`
-	Heading   string    `json:"heading"`
-	Content   string    `json:"content"`
+	Question  string    `json:"question"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

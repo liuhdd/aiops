@@ -147,3 +147,12 @@ func TestConfigDefaults(t *testing.T) {
 		t.Fatalf("%+v", cfg)
 	}
 }
+func TestConfigKbEnhance(t *testing.T) {
+    cfg := LoadFromEnv(func(k string) string {
+        m := map[string]string{"KB_ENHANCE": "0", "KB_ENHANCE_SUMMARY": "false", "KB_CDTA_THRESHOLD": "0.9"}
+        return m[k]
+    })
+    if cfg.KBEnhance || cfg.KBEnhanceSummary { t.Fatalf("want false got %+v", cfg) }
+    if cfg.KBCdtaThreshold != 0.9 { t.Fatalf("threshold %v", cfg.KBCdtaThreshold) }
+    if !cfg.KBEnhanceQuestions || !cfg.KBEnhanceCDTA { t.Fatalf("default true") }
+}

@@ -27,11 +27,16 @@ type KBStore interface {
 	DeleteKbDocument(id string) error
 	UpsertKbEmbedding(e model.KbEmbedding) error
 	DeleteKbEmbeddingsByDoc(docID string) error
+	InsertKbChunkQuestion(q model.KbChunkQuestion) error
+	ListKbChunkQuestionsByChunk(chunkID string) ([]model.KbChunkQuestion, error)
+	ListKbChunkQuestions() ([]model.KbChunkQuestion, error)
+	DeleteKbChunkQuestionsByDoc(docID string) error
 }
 
 type kbRepo struct{ db dbExec }
 
 const kbDocCols = `id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, fingerprints, created_at, updated_at`
+const kbChunkCols = `id, doc_id, seq, heading, content, summary, source_doc_ids, created_at`
 
 func parseArr(s string) []string {
 	var out []string
@@ -74,9 +79,20 @@ func (r *kbRepo) InsertKbDocument(d model.KbDocument) error {
 	return err
 }
 
+func scanKbChunk(scan func(dest ...any) error) (model.KbChunk, error) {
+	var c model.KbChunk
+	var summary, sourceDocIDs string
+	if err := scan(&c.ID, &c.DocID, &c.Seq, &c.Heading, &c.Content, &summary, &sourceDocIDs, &c.CreatedAt); err != nil {
+		return c, err
+	}
+	c.Summary = summary
+	c.SourceDocIDs = parseArr(sourceDocIDs)
+	return c, nil
+}
+
 func (r *kbRepo) InsertKbChunk(c model.KbChunk) error {
-	_, err := r.db.Exec(`INSERT INTO kb_chunks (id, doc_id, seq, heading, content, created_at) VALUES (?,?,?,?,?,?)`,
-		c.ID, c.DocID, c.Seq, c.Heading, c.Content, c.CreatedAt)
+	_, err := r.db.Exec(`INSERT INTO kb_chunks (id, doc_id, seq, heading, content, summary, source_doc_ids, created_at) VALUES (?,?,?,?,?,?,?,?)`,
+		c.ID, c.DocID, c.Seq, c.Heading, c.Content, c.Summary, model.MustJSON(c.SourceDocIDs), c.CreatedAt)
 	return err
 }
 
@@ -85,15 +101,15 @@ func (r *kbRepo) GetKbDocument(id string) (model.KbDocument, error) {
 }
 
 func (r *kbRepo) ListKbChunksByDoc(docID string) ([]model.KbChunk, error) {
-	rows, err := r.db.Query(`SELECT id, doc_id, seq, heading, content, created_at FROM kb_chunks WHERE doc_id = ? ORDER BY seq ASC`, docID)
+	rows, err := r.db.Query(`SELECT `+kbChunkCols+` FROM kb_chunks WHERE doc_id = ? ORDER BY seq ASC`, docID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := make([]model.KbChunk, 0)
 	for rows.Next() {
-		var c model.KbChunk
-		if err := rows.Scan(&c.ID, &c.DocID, &c.Seq, &c.Heading, &c.Content, &c.CreatedAt); err != nil {
+		c, err := scanKbChunk(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -174,6 +190,50 @@ func (r *kbRepo) ListKbEmbeddings() ([]model.KbEmbedding, error) {
 
 func (r *kbRepo) DeleteKbEmbeddingsByDoc(docID string) error {
 	_, err := r.db.Exec(`DELETE FROM kb_embeddings WHERE doc_id = ?`, docID)
+	return err
+}
+
+func (r *kbRepo) InsertKbChunkQuestion(q model.KbChunkQuestion) error {
+	_, err := r.db.Exec(`INSERT INTO kb_chunk_questions (id, chunk_id, doc_id, question, created_at) VALUES (?,?,?,?,?)`, q.ID, q.ChunkID, q.DocID, q.Question, q.CreatedAt)
+	return err
+}
+
+func (r *kbRepo) ListKbChunkQuestionsByChunk(chunkID string) ([]model.KbChunkQuestion, error) {
+	rows, err := r.db.Query(`SELECT id, chunk_id, doc_id, question, created_at FROM kb_chunk_questions WHERE chunk_id = ? ORDER BY created_at ASC`, chunkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.KbChunkQuestion, 0)
+	for rows.Next() {
+		var q model.KbChunkQuestion
+		if err := rows.Scan(&q.ID, &q.ChunkID, &q.DocID, &q.Question, &q.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+func (r *kbRepo) ListKbChunkQuestions() ([]model.KbChunkQuestion, error) {
+	rows, err := r.db.Query(`SELECT id, chunk_id, doc_id, question, created_at FROM kb_chunk_questions ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.KbChunkQuestion, 0)
+	for rows.Next() {
+		var q model.KbChunkQuestion
+		if err := rows.Scan(&q.ID, &q.ChunkID, &q.DocID, &q.Question, &q.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
+}
+
+func (r *kbRepo) DeleteKbChunkQuestionsByDoc(docID string) error {
+	_, err := r.db.Exec(`DELETE FROM kb_chunk_questions WHERE doc_id = ?`, docID)
 	return err
 }
 
@@ -295,6 +355,22 @@ func (s *Store) ListKbEmbeddings() ([]model.KbEmbedding, error) {
 
 func (s *Store) DeleteKbEmbeddingsByDoc(docID string) error {
 	return (&kbRepo{db: s.db}).DeleteKbEmbeddingsByDoc(docID)
+}
+
+func (s *Store) InsertKbChunkQuestion(q model.KbChunkQuestion) error {
+	return (&kbRepo{db: s.db}).InsertKbChunkQuestion(q)
+}
+
+func (s *Store) ListKbChunkQuestionsByChunk(chunkID string) ([]model.KbChunkQuestion, error) {
+	return (&kbRepo{db: s.db}).ListKbChunkQuestionsByChunk(chunkID)
+}
+
+func (s *Store) ListKbChunkQuestions() ([]model.KbChunkQuestion, error) {
+	return (&kbRepo{db: s.db}).ListKbChunkQuestions()
+}
+
+func (s *Store) DeleteKbChunkQuestionsByDoc(docID string) error {
+	return (&kbRepo{db: s.db}).DeleteKbChunkQuestionsByDoc(docID)
 }
 
 func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
