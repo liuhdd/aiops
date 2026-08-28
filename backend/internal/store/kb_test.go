@@ -222,51 +222,64 @@ func TestKbEmbeddingTablesCreated(t *testing.T) {
 	}
 }
 func TestKbDocumentFingerprintRoundTrip(t *testing.T) {
-    s := newTestStore(t) // 复用既有 helper
-    d := mkDoc("dfp", "标题含 Xid 48", model.KBCase)
-    d.Fingerprints = []string{"Xid 48", "ALERT-GPU-001"}
-    if err := s.WithKBTx(func(tx KBStore) error { return tx.InsertKbDocument(d) }); err != nil {
-        t.Fatal(err)
-    }
-    got, err := s.GetKbDocument("dfp")
-    if err != nil { t.Fatal(err) }
-    if len(got.Fingerprints)!=2 || got.Fingerprints[0]!="Xid 48" {
-        t.Fatalf("fingerprints=%v", got.Fingerprints)
-    }
-    by, err := s.ListKbDocumentsByFingerprints([]string{"ALERT-GPU-001"})
-    if err!=nil || len(by)!=1 || by[0].ID!="dfp" { t.Fatalf("byFp err=%v by=%+v", err, by) }
-    by2, _ := s.ListKbDocumentsByFingerprints([]string{"NOT-EXISTS"})
-    if len(by2)!=0 { t.Fatalf("want empty, got %v", by2) }
+	s := newTestStore(t) // 复用既有 helper
+	d := mkDoc("dfp", "标题含 Xid 48", model.KBCase)
+	d.Fingerprints = []string{"Xid 48", "ALERT-GPU-001"}
+	if err := s.WithKBTx(func(tx KBStore) error { return tx.InsertKbDocument(d) }); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetKbDocument("dfp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fingerprints) != 2 || got.Fingerprints[0] != "Xid 48" {
+		t.Fatalf("fingerprints=%v", got.Fingerprints)
+	}
+	by, err := s.ListKbDocumentsByFingerprints([]string{"ALERT-GPU-001"})
+	if err != nil || len(by) != 1 || by[0].ID != "dfp" {
+		t.Fatalf("byFp err=%v by=%+v", err, by)
+	}
+	by2, _ := s.ListKbDocumentsByFingerprints([]string{"NOT-EXISTS"})
+	if len(by2) != 0 {
+		t.Fatalf("want empty, got %v", by2)
+	}
 }
 func TestKbDocumentFingerprintLegacyCompatible(t *testing.T) {
-    // 用老 schema 建库（不含 fingerprints 列）→ 用新 migrate 打开应自动补列且旧行读回空数组
-    dir := t.TempDir()
-    path := filepath.Join(dir, "legacy.db")
-    db, _ := sql.Open("sqlite", path)
-    _, _ = db.Exec(`CREATE TABLE kb_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, device_types TEXT, vendor TEXT, model TEXT, metrics TEXT, keywords TEXT, intents TEXT, source_file TEXT, content TEXT, created_at DATETIME, updated_at DATETIME)`)
-    db.Close()
-    s, err := New(path)
-    if err != nil { t.Fatal(err) }
-    defer s.Close()
-    d, err := s.GetKbDocument("missing")
-    _ = d; _ = err // 仅断言 New 不报错
+	// 用老 schema 建库（不含 fingerprints 列）→ 用新 migrate 打开应自动补列且旧行读回空数组
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.db")
+	db, _ := sql.Open("sqlite", path)
+	_, _ = db.Exec(`CREATE TABLE kb_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, device_types TEXT, vendor TEXT, model TEXT, metrics TEXT, keywords TEXT, intents TEXT, source_file TEXT, content TEXT, created_at DATETIME, updated_at DATETIME)`)
+	db.Close()
+	s, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	d, err := s.GetKbDocument("missing")
+	_ = d
+	_ = err // 仅断言 New 不报错
 }
 func TestKbChunkEnrichColumns(t *testing.T) {
-    s := newTestStore(t)
-    c := model.KbChunk{ID: "c1", DocID: "d1", Seq: 0, Heading: "h", Content: "增强后", Summary: "摘要", SourceDocIDs: []string{"d1","d2"}, CreatedAt: time.Now()}
-    // 通过事务插入文档与块
-    _ = s.WithKBTx(func(tx KBStore) error {
-        _ = tx.InsertKbDocument(model.KbDocument{ID: "d1", Title: "t", Category: model.KBOther, Content: "x", CreatedAt: time.Now(), UpdatedAt: time.Now()})
-        return tx.InsertKbChunk(c)
-    })
-    got, _ := s.ListKbChunksByDoc("d1")
-    if len(got)!=1 || got[0].Summary!="摘要" || len(got[0].SourceDocIDs)!=2 { t.Fatalf("%+v", got) }
-    // 历史库兼容：无列旧库自动补列
+	s := newTestStore(t)
+	c := model.KbChunk{ID: "c1", DocID: "d1", Seq: 0, Heading: "h", Content: "增强后", Summary: "摘要", SourceDocIDs: []string{"d1", "d2"}, CreatedAt: time.Now()}
+	// 通过事务插入文档与块
+	_ = s.WithKBTx(func(tx KBStore) error {
+		_ = tx.InsertKbDocument(model.KbDocument{ID: "d1", Title: "t", Category: model.KBOther, Content: "x", CreatedAt: time.Now(), UpdatedAt: time.Now()})
+		return tx.InsertKbChunk(c)
+	})
+	got, _ := s.ListKbChunksByDoc("d1")
+	if len(got) != 1 || got[0].Summary != "摘要" || len(got[0].SourceDocIDs) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	// 历史库兼容：无列旧库自动补列
 }
 func TestKbChunkQuestionsCRUD(t *testing.T) {
-    s := newTestStore(t)
-    q := model.KbChunkQuestion{ID: "q1", ChunkID: "c1", DocID: "d1", Question: "如何排查 Xid 48？", CreatedAt: time.Now()}
-    _ = s.InsertKbChunkQuestion(q)
-    list, _ := s.ListKbChunkQuestionsByChunk("c1")
-    if len(list)!=1 || list[0].Question != q.Question { t.Fatalf("%+v", list) }
+	s := newTestStore(t)
+	q := model.KbChunkQuestion{ID: "q1", ChunkID: "c1", DocID: "d1", Question: "如何排查 Xid 48？", CreatedAt: time.Now()}
+	_ = s.InsertKbChunkQuestion(q)
+	list, _ := s.ListKbChunkQuestionsByChunk("c1")
+	if len(list) != 1 || list[0].Question != q.Question {
+		t.Fatalf("%+v", list)
+	}
 }

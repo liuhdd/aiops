@@ -7,30 +7,30 @@ import (
 )
 
 type Config struct {
-	LLMAPIKey            string
-	LLMBaseURL           string
-	LLMModel             string
-	DBPath               string
-	SimInterval          time.Duration
-	Port                 string
-	React                bool    // CONTEXT_REACT，ReAct 循环开关，默认 true
-	TopK                 int     // CONTEXT_TOP_K，每源上下文条数，默认 3
-	LLMLightBaseURL      string  // LLM_LIGHT_BASE_URL，轻量意图模型 BaseURL，默认同 LLM_BASE_URL
-	LLMLightModel        string  // LLM_LIGHT_MODEL，轻量意图模型，默认同 LLM_MODEL
-	LLMEmbedBaseURL      string  // LLM_EMBED_BASE_URL，embedding 接口 BaseURL，默认同 LLM_BASE_URL
-	LLMEmbedModel        string  // LLM_EMBED_MODEL，embedding 模型，默认 text-embedding-3-small
-	MaxSplit             int     // INTENT_MAX_SPLIT，单条输入多意图拆分上限，默认 3
-	RetrieveFingerprint  bool    // RETRIEVE_FINGERPRINT，默认 true
-	RetrieveRRF          bool    // RETRIEVE_RRF，默认 true
-	RerankBaseURL        string  // RERANK_BASE_URL，为空即不启用
-	RerankAPIKey         string  // RERANK_API_KEY，为空即不启用
-	RerankModel          string  // RERANK_MODEL，默认 rerank
-	RerankFloor          float64 // RERANK_FLOOR，默认 0.2
-	KBEnhance            bool    // KB_ENHANCE，默认 true
-	KBEnhanceSummary     bool    // KB_ENHANCE_SUMMARY，默认 true
-	KBEnhanceQuestions   bool    // KB_ENHANCE_QUESTIONS，默认 true
-	KBEnhanceCDTA        bool    // KB_ENHANCE_CDTA，默认 true
-	KBCdtaThreshold      float64 // KB_CDTA_THRESHOLD，默认 0.85
+	LLMAPIKey           string
+	LLMBaseURL          string
+	LLMModel            string
+	DBPath              string
+	SimInterval         time.Duration
+	Port                string
+	React               bool    // CONTEXT_REACT，ReAct 循环开关，默认 true
+	TopK                int     // CONTEXT_TOP_K，每源上下文条数，默认 3
+	LLMLightBaseURL     string  // LLM_LIGHT_BASE_URL，轻量意图模型 BaseURL，默认同 LLM_BASE_URL
+	LLMLightModel       string  // LLM_LIGHT_MODEL，轻量意图模型，默认同 LLM_MODEL
+	LLMEmbedBaseURL     string  // LLM_EMBED_BASE_URL，embedding 接口 BaseURL，默认同 LLM_BASE_URL
+	LLMEmbedModel       string  // LLM_EMBED_MODEL，embedding 模型，默认 text-embedding-3-small
+	MaxSplit            int     // INTENT_MAX_SPLIT，单条输入多意图拆分上限，默认 3
+	RetrieveFingerprint bool    // RETRIEVE_FINGERPRINT，默认 true
+	RetrieveRRF         bool    // RETRIEVE_RRF，默认 true
+	RerankBaseURL       string  // RERANK_BASE_URL，为空即不启用
+	RerankAPIKey        string  // RERANK_API_KEY，为空即不启用
+	RerankModel         string  // RERANK_MODEL，默认 rerank
+	RerankFloor         float64 // RERANK_FLOOR，默认 0.2
+	KBEnhance           bool    // KB_ENHANCE，默认 true
+	KBEnhanceSummary    bool    // KB_ENHANCE_SUMMARY，默认 true
+	KBEnhanceQuestions  bool    // KB_ENHANCE_QUESTIONS，默认 true
+	KBEnhanceCDTA       bool    // KB_ENHANCE_CDTA，默认 true
+	KBCdtaThreshold     float64 // KB_CDTA_THRESHOLD，默认 0.85
 }
 
 func Load() Config {
@@ -150,14 +150,14 @@ func LoadFromEnv(lookup func(string) string) Config {
 		MaxSplit:            maxSplit,
 		RetrieveFingerprint: retrieveFingerprint,
 		RetrieveRRF:         retrieveRRF,
-		RerankBaseURL:        rerankBaseURL,
-		RerankAPIKey:         rerankAPIKey,
-		RerankModel:          rerankModel,
-		RerankFloor:          rerankFloor,
-		KBEnhance:            kbEnhance,
-		KBEnhanceSummary:     kbSummary,
-		KBEnhanceQuestions:   kbQuestions,
-		KBEnhanceCDTA:        kbCDTA,
-		KBCdtaThreshold:      kbCdtaThreshold,
+		RerankBaseURL:       rerankBaseURL,
+		RerankAPIKey:        rerankAPIKey,
+		RerankModel:         rerankModel,
+		RerankFloor:         rerankFloor,
+		KBEnhance:           kbEnhance,
+		KBEnhanceSummary:    kbSummary,
+		KBEnhanceQuestions:  kbQuestions,
+		KBEnhanceCDTA:       kbCDTA,
+		KBCdtaThreshold:     kbCdtaThreshold,
 	}
 }

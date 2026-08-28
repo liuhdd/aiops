@@ -308,33 +308,38 @@ func (s *Store) ListKbDocuments(f KbFilter) ([]model.KbDocSummary, error) {
 }
 
 func (s *Store) ListKbDocumentsByFingerprints(fps []string) ([]model.KbDocSummary, error) {
-    if len(fps)==0 { return nil, nil }
-    var conds []string; var args []any
-    for _, fp := range fps {
-        conds = append(conds, `d.fingerprints LIKE '%'||?||'%' ESCAPE '\'`)
-        args = append(args, `"`+likeEscape(fp)+`"`)
-    }
-    q := `SELECT d.id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, d.source_file, d.content, d.fingerprints, d.created_at, d.updated_at, (SELECT count(*) FROM kb_chunks c WHERE c.doc_id=d.id) AS chunk_count FROM kb_documents d WHERE (`+strings.Join(conds," OR ")+`)`
-    rows, err := s.db.Query(q, args...)
-    if err!=nil { return nil,err }
-    defer rows.Close()
-    out := make([]model.KbDocSummary, 0)
-    for rows.Next() {
-        var s model.KbDocSummary
-        var dt, vd, md, mtr, kw, in, fpStr string
-        if err := rows.Scan(&s.ID, &s.Title, &s.Category, &dt, &vd, &md, &mtr, &kw, &in, &s.SourceFile, &s.Content, &fpStr, &s.CreatedAt, &s.UpdatedAt, &s.ChunkCount); err != nil {
-            return nil, err
-        }
-        s.DeviceTypes = parseArr(dt)
-        s.Vendor = parseArr(vd)
-        s.Model = parseArr(md)
-        s.Metrics = parseArr(mtr)
-        s.Keywords = parseArr(kw)
-        s.Intents = parseArr(in)
-        s.Fingerprints = parseArr(fpStr)
-        out = append(out, s)
-    }
-    return out, rows.Err()
+	if len(fps) == 0 {
+		return nil, nil
+	}
+	var conds []string
+	var args []any
+	for _, fp := range fps {
+		conds = append(conds, `d.fingerprints LIKE '%'||?||'%' ESCAPE '\'`)
+		args = append(args, `"`+likeEscape(fp)+`"`)
+	}
+	q := `SELECT d.id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, d.source_file, d.content, d.fingerprints, d.created_at, d.updated_at, (SELECT count(*) FROM kb_chunks c WHERE c.doc_id=d.id) AS chunk_count FROM kb_documents d WHERE (` + strings.Join(conds, " OR ") + `)`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.KbDocSummary, 0)
+	for rows.Next() {
+		var s model.KbDocSummary
+		var dt, vd, md, mtr, kw, in, fpStr string
+		if err := rows.Scan(&s.ID, &s.Title, &s.Category, &dt, &vd, &md, &mtr, &kw, &in, &s.SourceFile, &s.Content, &fpStr, &s.CreatedAt, &s.UpdatedAt, &s.ChunkCount); err != nil {
+			return nil, err
+		}
+		s.DeviceTypes = parseArr(dt)
+		s.Vendor = parseArr(vd)
+		s.Model = parseArr(md)
+		s.Metrics = parseArr(mtr)
+		s.Keywords = parseArr(kw)
+		s.Intents = parseArr(in)
+		s.Fingerprints = parseArr(fpStr)
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetKbDocument(id string) (model.KbDocument, error) {
