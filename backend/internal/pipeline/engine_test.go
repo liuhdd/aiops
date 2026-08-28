@@ -20,8 +20,8 @@ type fakeStage struct {
 	run      func(st *State) error
 }
 
-func (f fakeStage) StageID() string                 { return f.id }
-func (f fakeStage) Name() string                    { return f.name }
+func (f fakeStage) StageID() string                        { return f.id }
+func (f fakeStage) Name() string                           { return f.name }
 func (f fakeStage) Run(_ context.Context, st *State) error { return f.run(st) }
 
 func TestEngineRunsStagesInOrder(t *testing.T) {

@@ -19,13 +19,14 @@ type Options struct {
 
 // Result 检索结果块（供工具与组装器消费）。
 type Result struct {
-	DocID    string
-	Title    string
-	Category model.KBCategory
-	Heading  string
-	Content  string
-	Score    float64
-	Intents  []string // 所属文档的意图码，供组装器/agent 按意图过滤
+	DocID        string
+	Title        string
+	Category     model.KBCategory
+	Heading      string
+	Content      string
+	Score        float64
+	Intents      []string // 所属文档的意图码，供组装器/agent 按意图过滤
+	SourceDocIDs []string // 多文档出处（CDTA 合并后的 source_doc_ids）
 }
 
 // Searcher 混合检索器接口：案例/手册两路检索入口。
@@ -161,7 +162,7 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 		res = append(res, Result{
 			DocID: c.Chunk.DocID, Title: c.Chunk.Title, Category: c.Chunk.Category,
 			Heading: c.Chunk.Heading, Content: c.Chunk.Content, Score: c.Final,
-			Intents: c.Chunk.Intents,
+			Intents: c.Chunk.Intents, SourceDocIDs: c.Chunk.SourceDocIDs,
 		})
 	}
 	return res, nil
@@ -208,13 +209,14 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 		}
 		for _, c := range chunks {
 			res = append(res, Result{
-				DocID:    d.ID,
-				Title:    d.Title,
-				Category: d.Category,
-				Heading:  c.Heading,
-				Content:  c.Content,
-				Score:    1.0,
-				Intents:  d.Intents,
+				DocID:        d.ID,
+				Title:        d.Title,
+				Category:     d.Category,
+				Heading:      c.Heading,
+				Content:      c.Content,
+				Score:        1.0,
+				Intents:      d.Intents,
+				SourceDocIDs: c.SourceDocIDs,
 			})
 			if len(res) >= topK {
 				break
@@ -231,16 +233,23 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 }
 
 // dualRecall 双路召回：BM25 + 向量 + 信号 + 时效，返回未排序候选供融合阶段处理。
+// 扩展问题通道：拉问题向量与问题文本，对每块计算 QVec/QBM25 取 max 后与块通道取 max 再进 RRF。
 func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat model.KBCategory) []cand {
 	kcs, err := s.st.ListKnowledgeChunks()
 	if err != nil {
 		return nil
 	}
 	embeds := map[string][]float64{}
+	qEmbeds := map[string][]float64{} // questionID -> vec（去掉 q_ 前缀）
 	if s.embedder != nil {
 		if evs, err := s.st.ListKbEmbeddings(); err == nil {
 			for _, e := range evs {
-				embeds[e.ChunkID] = e.Embedding
+				if strings.HasPrefix(e.ChunkID, "q_") {
+					qid := strings.TrimPrefix(e.ChunkID, "q_")
+					qEmbeds[qid] = e.Embedding
+				} else {
+					embeds[e.ChunkID] = e.Embedding
+				}
 			}
 		}
 	}
@@ -253,6 +262,60 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 	if s.embedder != nil && q.Text != "" {
 		if vs, err := s.embedder.Embed(ctx, []string{q.Text}); err == nil && len(vs) > 0 {
 			qVec = vs[0]
+		}
+	}
+	// 拉问题文本，按 chunkID 聚合
+	questionsByChunk := map[string][]model.KbChunkQuestion{}
+	if qs, err := s.st.ListKbChunkQuestions(); err == nil {
+		for _, qq := range qs {
+			questionsByChunk[qq.ChunkID] = append(questionsByChunk[qq.ChunkID], qq)
+		}
+	}
+	// 计算 QBM25：对问题文本建临时 BM25 索引，按 chunk 取 max
+	qBM25Max := map[string]float64{}
+	if len(questionsByChunk) > 0 && strings.TrimSpace(q.Text) != "" {
+		var qKcs []model.KbKnowledgeChunk
+		var qIds []string
+		for _, qs := range questionsByChunk {
+			for _, qq := range qs {
+				qKcs = append(qKcs, model.KbKnowledgeChunk{ChunkID: qq.ID, Content: qq.Question})
+				qIds = append(qIds, qq.ID)
+			}
+		}
+		if len(qKcs) > 0 {
+			qIdx := BuildBM25(qKcs, qIds)
+			qScores := qIdx.Score(q.Text)
+			for chunkID, qs := range questionsByChunk {
+				max := 0.0
+				for _, qq := range qs {
+					if sc := qScores[qq.ID]; sc > max {
+						max = sc
+					}
+				}
+				if max > 0 {
+					qBM25Max[chunkID] = max
+				}
+			}
+		}
+	}
+	// 计算 QVec：对每块取所属问题中与 qVec 的最大余弦
+	qVecMax := map[string]float64{}
+	if qVec != nil && len(qEmbeds) > 0 {
+		for chunkID, qs := range questionsByChunk {
+			max := 0.0
+			first := true
+			for _, qq := range qs {
+				if qv, ok := qEmbeds[qq.ID]; ok {
+					sc := Cosine(qv, qVec)
+					if first || sc > max {
+						max = sc
+						first = false
+					}
+				}
+			}
+			if !first {
+				qVecMax[chunkID] = max
+			}
 		}
 	}
 	now := time.Now()
@@ -270,8 +333,14 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 		}
 		c := cand{Chunk: kc}
 		c.BM25 = bmScores[kc.ChunkID]
+		if v, ok := qBM25Max[kc.ChunkID]; ok && v > c.BM25 {
+			c.BM25 = v
+		}
 		if v, ok := embeds[kc.ChunkID]; ok && qVec != nil {
 			c.Vec = Cosine(v, qVec)
+		}
+		if qv, ok := qVecMax[kc.ChunkID]; ok && qv > c.Vec {
+			c.Vec = qv
 		}
 		if isManual {
 			c.Signal = FieldScore(kc, q)

@@ -37,11 +37,21 @@ type KbDocument struct {
 }
 
 type KbChunk struct {
+	ID           string    `json:"id"`
+	DocID        string    `json:"doc_id"`
+	Seq          int       `json:"seq"`
+	Heading      string    `json:"heading"`
+	Content      string    `json:"content"`
+	Summary      string    `json:"summary"`
+	SourceDocIDs []string  `json:"source_doc_ids"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
+type KbChunkQuestion struct {
 	ID        string    `json:"id"`
+	ChunkID   string    `json:"chunk_id"`
 	DocID     string    `json:"doc_id"`
-	Seq       int       `json:"seq"`
-	Heading   string    `json:"heading"`
-	Content   string    `json:"content"`
+	Question  string    `json:"question"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -62,17 +72,18 @@ type KbEmbedding struct {
 
 // KbKnowledgeChunk 检索视图：块 + 所属文档元数据（RAG 联查返回）。
 type KbKnowledgeChunk struct {
-	ChunkID     string
-	DocID       string
-	Title       string
-	Category    KBCategory
-	DeviceTypes []string
-	Vendor      []string
-	Model       []string
-	Metrics     []string
-	Keywords    []string
-	Intents     []string
-	Heading     string
-	Content     string
-	CreatedAt   time.Time
+	ChunkID      string
+	DocID        string
+	Title        string
+	Category     KBCategory
+	DeviceTypes  []string
+	Vendor       []string
+	Model        []string
+	Metrics      []string
+	Keywords     []string
+	Intents      []string
+	Heading      string
+	Content      string
+	SourceDocIDs []string
+	CreatedAt    time.Time
 }

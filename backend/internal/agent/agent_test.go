@@ -636,7 +636,7 @@ func TestAgentChatRewriteIntegration(t *testing.T) {
 	_ = s.SaveMessage(model.Message{ID: "m2", Role: model.RoleAssistant, Content: "已记录 db-01", ConversationID: conv.ID, CreatedAt: time.Now()})
 	cs := ctxpkg.NewStore(s)
 	light := &rewriteAwareLight{
-		rewritten: `{"rewritten":"有哪些告警？它怎么处理？","sub_questions":["有哪些告警","它怎么处理"]}`,
+		rewritten:  `{"rewritten":"有哪些告警？它怎么处理？","sub_questions":["有哪些告警","它怎么处理"]}`,
 		rewriteMap: map[string]string{"它怎么处理": "db-01 磁盘告警怎么处理"},
 	}
 	ag := NewWithLight(s, nil, light, nil, cs, 3, 3)

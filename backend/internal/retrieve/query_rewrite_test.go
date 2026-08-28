@@ -9,11 +9,11 @@ import (
 )
 
 type rewriteFake struct {
-	out string
-	err error
+	out    string
+	err    error
 	called bool
 	prompt string
-	delay time.Duration
+	delay  time.Duration
 }
 
 func (f *rewriteFake) Complete(ctx context.Context, prompt string) (string, error) {

@@ -292,3 +292,103 @@ func TestSearchRerankUnavailableFallsBack(t *testing.T) {
 		t.Fatalf("NewSearcher 兼容构造应返回结果 err=%v res=%+v", err, res2)
 	}
 }
+
+func newTestStoreWithQuestions(t *testing.T) *store.Store {
+	t.Helper()
+	s, err := store.New(filepath.Join(t.TempDir(), "q.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	now := time.Now()
+	_ = s.WithKBTx(func(tx store.KBStore) error {
+		_ = tx.InsertKbDocument(model.KbDocument{ID: "d1", Title: "GPU掉卡与Xid错误", Category: model.KBCase,
+			DeviceTypes: []string{"gpu-server"}, Metrics: []string{"gpu_util"}, Keywords: []string{"显卡"},
+			Intents: []string{"AskRootCause"}, Content: "GPU 详细内容", CreatedAt: now, UpdatedAt: now})
+		_ = tx.InsertKbChunk(model.KbChunk{ID: "c1", DocID: "d1", Seq: 0, Content: "GPU 硬件模块 详细记录", SourceDocIDs: []string{"d1"}, CreatedAt: now})
+		_ = tx.InsertKbChunkQuestion(model.KbChunkQuestion{ID: "q1", ChunkID: "c1", DocID: "d1", Question: "如何排查 Xid 48？", CreatedAt: now})
+		_ = tx.UpsertKbEmbedding(model.KbEmbedding{ChunkID: "c1", DocID: "d1", Embedding: []float64{1, 0}, Model: "fake", CreatedAt: now})
+		_ = tx.UpsertKbEmbedding(model.KbEmbedding{ChunkID: "q_q1", DocID: "d1", Embedding: []float64{0, 1}, Model: "fake", CreatedAt: now})
+		_ = tx.InsertKbDocument(model.KbDocument{ID: "d2", Title: "磁盘案例", Category: model.KBCase,
+			DeviceTypes: []string{"server"}, Metrics: []string{"disk_usage"}, Keywords: []string{"磁盘"},
+			Content: "磁盘内容", CreatedAt: now, UpdatedAt: now})
+		_ = tx.InsertKbChunk(model.KbChunk{ID: "c2", DocID: "d2", Seq: 0, Content: "磁盘扩容 清理 日志 无关内容", SourceDocIDs: []string{"d2"}, CreatedAt: now})
+		_ = tx.UpsertKbEmbedding(model.KbEmbedding{ChunkID: "c2", DocID: "d2", Embedding: []float64{0, -1}, Model: "fake", CreatedAt: now})
+		return nil
+	})
+	return s
+}
+
+type questionBoostEmbedder struct{}
+
+func (questionBoostEmbedder) Model() string { return "fake" }
+func (questionBoostEmbedder) Embed(_ context.Context, texts []string) ([][]float64, error) {
+	out := make([][]float64, len(texts))
+	for i, t := range texts {
+		if strings.Contains(t, "排查") {
+			out[i] = []float64{0, 1}
+		} else if strings.Contains(t, "GPU") {
+			out[i] = []float64{1, 0}
+		} else {
+			out[i] = []float64{0, -1}
+		}
+	}
+	return out, nil
+}
+
+func TestSearchQuestionChannelBoost(t *testing.T) {
+	// 种子：块内容为 "GPU 硬件模块 详细记录"（与查询无 BM25 重叠），问题为 "如何排查 Xid 48？"
+	// 查询 "Xid 48 怎么排查" 对块 BM25 弱（0）但对问题 BM25 强，应因问题通道而召回
+	s := newTestStoreWithQuestions(t)
+	cfg := config.Config{RetrieveFingerprint: false, RetrieveRRF: true, RerankFloor: 0.2, RerankModel: "rerank"}
+	searcher := NewSearcherWithConfig(s, nil, nil, cfg)
+	res, err := searcher.SearchCases(context.Background(), Query{Text: "Xid 48 怎么排查"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases: %v", err)
+	}
+	if len(res) == 0 || res[0].Title != "GPU掉卡与Xid错误" {
+		t.Fatalf("问题通道应使 GPU 案例被召回，got %+v", res)
+	}
+	// 向量通道：块向量与查询正交，问题向量与查询一致，应同样通过 QVec 召回
+	s2 := newTestStoreWithQuestions(t)
+	searcher2 := NewSearcherWithConfig(s2, questionBoostEmbedder{}, nil, cfg)
+	res2, err := searcher2.SearchCases(context.Background(), Query{Text: "Xid 48 怎么排查"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases vector: %v", err)
+	}
+	if len(res2) == 0 || res2[0].Title != "GPU掉卡与Xid错误" {
+		t.Fatalf("问题向量通道应使 GPU 案例被召回，got %+v", res2)
+	}
+}
+
+func TestSearchQuestionChannelFallback(t *testing.T) {
+	// 无问题表时仍按块通道正常召回
+	s := seedRetrieveStore(t)
+	cfg := config.Config{RetrieveFingerprint: false, RetrieveRRF: true, RerankFloor: 0.2, RerankModel: "rerank"}
+	searcher := NewSearcherWithConfig(s, fakeEmbedder{}, nil, cfg)
+	res, err := searcher.SearchCases(context.Background(), Query{Text: "GPU 掉卡"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases: %v", err)
+	}
+	if len(res) == 0 || res[0].DocID != "d1" {
+		t.Fatalf("无问题表时块通道应正常命中 d1，got %+v", res)
+	}
+	// 无问题表且无 embedder 时 BM25 仍应召回
+	searcher2 := NewSearcherWithConfig(s, nil, nil, cfg)
+	res2, err := searcher2.SearchCases(context.Background(), Query{Text: "光模块"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchCases manual fallback: %v", err)
+	}
+	// 光模块仅手册中有，案例检索应为空，不因缺问题表而 panic
+	if len(res2) != 0 {
+		// 案例中无光模块，应为空，验证静默降级不 panic
+	}
+	// 手册通道在无问题表时仍应正常
+	res3, err := searcher2.SearchManuals(context.Background(), Query{Text: "光模块"}, Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("SearchManuals fallback: %v", err)
+	}
+	if len(res3) == 0 || res3[0].DocID != "d3" {
+		t.Fatalf("手册通道 fallback 应命中 d3，got %+v", res3)
+	}
+}

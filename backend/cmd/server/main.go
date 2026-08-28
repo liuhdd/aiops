@@ -70,10 +70,14 @@ func main() {
 	reg.Register(ctxpkg.NewSearchManualTool(searcher))
 
 	intentsvc := intent.NewService(st, intent.NewMemCache())
-	kbsvc := kb.NewServiceWithEmbedder(st, func() []model.LeafSpec {
+	var enrichLC kb.Completer
+	if lc != nil {
+		enrichLC = llm.NewKbCompleter(lc)
+	}
+	kbsvc := kb.NewServiceWithEnrich(st, func() []model.LeafSpec {
 		leaves, _ := intentsvc.ActiveLeaves(context.Background())
 		return leaves
-	}, embedder)
+	}, embedder, enrichLC, cfg)
 	var seeds []kb.SeedDoc
 	for _, d := range mockdata.Docs() {
 		seeds = append(seeds, kb.SeedDoc{

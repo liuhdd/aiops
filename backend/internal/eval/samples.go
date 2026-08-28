@@ -16,16 +16,16 @@ type JudgeVerdict struct {
 
 // Sample 单条人工校准样本：任务 + transcript + LLM 判定 + 人工判定（待填）
 type Sample struct {
-	TaskID     string                 `json:"task_id"`
-	Config     string                 `json:"config"`
-	Trial      int                    `json:"trial"`
-	RunStatus  string                 `json:"run_status"`
-	RCA        model.RCA              `json:"rca"`
-	Evidence   model.Evidence         `json:"evidence"`
-	Recommend  model.Recommendation   `json:"recommend"`
-	Transcript string                 `json:"transcript"` // 阶段状态摘要（供人工对照）
-	LLMVerds   []JudgeVerdict         `json:"llm_verdicts"`
-	HumanVerd  string                 `json:"human_verdict"` // 人工回填: PASS | FAIL
+	TaskID     string               `json:"task_id"`
+	Config     string               `json:"config"`
+	Trial      int                  `json:"trial"`
+	RunStatus  string               `json:"run_status"`
+	RCA        model.RCA            `json:"rca"`
+	Evidence   model.Evidence       `json:"evidence"`
+	Recommend  model.Recommendation `json:"recommend"`
+	Transcript string               `json:"transcript"` // 阶段状态摘要（供人工对照）
+	LLMVerds   []JudgeVerdict       `json:"llm_verdicts"`
+	HumanVerd  string               `json:"human_verdict"` // 人工回填: PASS | FAIL
 }
 
 // ExportSamples 从评测报告导出人工校准样本。

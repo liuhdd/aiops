@@ -3,7 +3,10 @@ package kb
 import "testing"
 
 func TestExtractFingerprints(t *testing.T) {
-	cases := []struct{ title, content string; want []string }{
+	cases := []struct {
+		title, content string
+		want           []string
+	}{
 		{"GPU 掉卡 Xid 48", "日志含 Xid  48 重复", []string{"Xid 48"}},
 		{"ALERT-GPU-001 告警", "", []string{"ALERT-GPU-001"}},
 		{"", "NVMe 错误 ERR-NVME-0x4004", []string{"ERR-NVME-0x4004"}},

@@ -37,9 +37,9 @@ func (t *TriageStage) Run(_ context.Context, st *State) error {
 		if a.Device == st.Alert.Device && a.Metric == st.Alert.Metric {
 			if run, err := ss.GetRun("run-" + a.ID); err == nil && run.Status == model.StatusCompleted {
 				st.Triage = &model.TriageResult{
-					Deduped:  true,
-					Proceed:  false,
-					Reason:   "近期同类告警已排查过: " + a.ID,
+					Deduped: true,
+					Proceed: false,
+					Reason:  "近期同类告警已排查过: " + a.ID,
 				}
 				return nil
 			}
