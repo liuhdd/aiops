@@ -12,6 +12,7 @@ import (
 
 	"aiops/internal/config"
 	"aiops/internal/kb"
+	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/retrieve"
@@ -33,6 +34,7 @@ type GoldenItem struct {
 func main() {
 	golden := flag.String("golden", "testdata/golden_set.jsonl", "golden set jsonl path")
 	generate := flag.Bool("generate", false, "生成模式：按种子文档批量出题")
+	enhance := flag.Bool("enhance", true, "是否启用富化")
 	flag.Parse()
 
 	if *generate {
@@ -97,6 +99,9 @@ func main() {
 	}
 
 	cfg := config.Load()
+	if !*enhance {
+		cfg.KBEnhance = false
+	}
 	dbPath := filepath.Join(os.TempDir(), "rageval.db")
 	_ = os.Remove(dbPath)
 	defer os.Remove(dbPath)
@@ -120,7 +125,15 @@ func main() {
 			Content:     d.Body,
 		})
 	}
-	svc := kb.NewService(s, nil)
+	var embedder retrieve.Embedder
+	if e, err := retrieve.NewLLMEmbedder(cfg); err == nil {
+		embedder = e
+	}
+	var llmCompleter kb.Completer
+	if lc, err := llm.NewClient(cfg); err == nil && lc != nil {
+		llmCompleter = llm.NewKbCompleter(lc)
+	}
+	svc := kb.NewServiceWithEnrich(s, nil, embedder, llmCompleter, cfg)
 	if err := svc.Seed(seeds); err != nil {
 		fmt.Fprintf(os.Stderr, "kb seed 失败: %v\n", err)
 		os.Exit(1)
@@ -182,21 +195,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	var embedder retrieve.Embedder
-	if e, err := retrieve.NewLLMEmbedder(cfg); err == nil {
-		embedder = e
-	}
 	searcher := retrieve.NewSearcher(s, embedder)
 
 	// per-type 聚合
 	type agg struct {
-		Count      int
-		HitCount   int
+		Count       int
+		HitCount    int
 		RejectCount int
-		SumMRR     float64
-		SumNDCG    float64
-		SumRecall  float64
-		RejectOK   int
+		SumMRR      float64
+		SumNDCG     float64
+		SumRecall   float64
+		RejectOK    int
 	}
 	perType := map[string]*agg{}
 	overallHit := &agg{}

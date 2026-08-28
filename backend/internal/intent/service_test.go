@@ -217,5 +217,5 @@ func TestActiveLeavesPath(t *testing.T) {
 type countCache struct{ puts, invalidates int }
 
 func (c *countCache) Get(context.Context) ([]model.IntentNode, bool) { return nil, false }
-func (c *countCache) Put(context.Context, []model.IntentNode)         { c.puts++ }
-func (c *countCache) Invalidate(context.Context)                      { c.invalidates++ }
+func (c *countCache) Put(context.Context, []model.IntentNode)        { c.puts++ }
+func (c *countCache) Invalidate(context.Context)                     { c.invalidates++ }

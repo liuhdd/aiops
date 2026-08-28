@@ -28,7 +28,7 @@ func TestExportSamples(t *testing.T) {
 	tr2 := &TrialResult{Trial: 2, Config: "rule", RunStatus: model.StatusCompleted}
 	scored2 := ScoredTrial{TrialResult: tr2, Scores: []GraderResult{
 		{Name: "RootCauseMatch", Pass: true, Score: 1, Weight: 0.3}, // 非 LLM 评委，不导出
-		{Name: "JudgeAccuracy", NA: true, Weight: 0.2},               // NA 评委，不导出
+		{Name: "JudgeAccuracy", NA: true, Weight: 0.2},              // NA 评委，不导出
 	}}
 
 	rep := Report{Tasks: []TaskReport{{

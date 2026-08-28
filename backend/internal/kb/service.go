@@ -75,12 +75,15 @@ func NewService(st *store.Store, leaves func() []model.LeafSpec) *Service {
 
 // NewServiceWithEmbedder 构造 Service；embed 可为 nil（不上向量）。
 func NewServiceWithEmbedder(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder) *Service {
-	return NewServiceWithEnrich(st, leaves, embed, nil)
+	return NewServiceWithEnrich(st, leaves, embed, nil, config.Load())
 }
 
-// NewServiceWithEnrich 构造 Service；lc 可为 nil（富化回退）。
-func NewServiceWithEnrich(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder, lc Completer) *Service {
-	return &Service{st: st, leaves: leaves, embed: embed, enrichLC: lc, cfg: config.Load()}
+// NewServiceWithEnrich 构造 Service；lc 可为 nil（富化回退），cfg 为零值时回退到 config.Load()。
+func NewServiceWithEnrich(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder, lc Completer, cfg config.Config) *Service {
+	if cfg == (config.Config{}) {
+		cfg = config.Load()
+	}
+	return &Service{st: st, leaves: leaves, embed: embed, enrichLC: lc, cfg: cfg}
 }
 
 // Seed 表空时导入种子文档（幂等）。
@@ -546,25 +549,6 @@ func truncateRunes(s string, n int) string {
 		return string(r[:n])
 	}
 	return s
-}
-
-func (s *Service) insertDocAndChunks(doc model.KbDocument, chunks []ChunkResult, ids []string, embs []model.KbEmbedding, now time.Time) error {
-	return s.st.WithKBTx(func(tx store.KBStore) error {
-		if err := tx.InsertKbDocument(doc); err != nil {
-			return err
-		}
-		for i, c := range chunks {
-			if err := tx.InsertKbChunk(model.KbChunk{ID: ids[i], DocID: doc.ID, Seq: i, Heading: c.Heading, Content: c.Content, CreatedAt: now}); err != nil {
-				return err
-			}
-		}
-		for _, e := range embs {
-			if err := tx.UpsertKbEmbedding(e); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 func (s *Service) List(ctx context.Context, f store.KbFilter) ([]model.KbDocSummary, error) {

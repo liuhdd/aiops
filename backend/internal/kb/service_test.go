@@ -339,8 +339,7 @@ func TestRagevalEnhanceContrast(t *testing.T) {
 			t.Fatalf("store.New: %v", err)
 		}
 		t.Cleanup(func() { st.Close() })
-		svc := NewServiceWithEnrich(st, nil, nil, lc)
-		svc.cfg = cfg
+		svc := NewServiceWithEnrich(st, nil, nil, lc, cfg)
 		if err := svc.Seed(seeds); err != nil {
 			t.Fatalf("Seed: %v", err)
 		}

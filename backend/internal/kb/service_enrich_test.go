@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"aiops/internal/config"
 	"aiops/internal/model"
 	"aiops/internal/store"
 )
@@ -55,7 +56,7 @@ func newTestStoreEnrich(t *testing.T) *store.Store {
 func TestUploadWithEnrich(t *testing.T) {
 	s := newTestStoreEnrich(t)
 	lc := fakeEnrichCompleter{summary: "摘要句", questions: "如何排查？\n如何恢复？"}
-	svc := NewServiceWithEnrich(s, nil, &fakeEmbedder{vec: []float64{1, 0}}, lc)
+	svc := NewServiceWithEnrich(s, nil, &fakeEmbedder{vec: []float64{1, 0}}, lc, config.Load())
 	doc, err := svc.Upload(context.Background(), UploadReq{SourceFile: "a.md", Data: []byte("# 标题\nGPU 掉卡 Xid 48 内容"), Title: "GPU 掉卡"})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func TestUploadWithEnrich(t *testing.T) {
 func TestUploadCDTAMerge(t *testing.T) {
 	s := newTestStoreEnrich(t)
 	lc := fakeEnrichCompleter{summary: "s", questions: "q1"}
-	svc := NewServiceWithEnrich(s, nil, &fakeEmbedder{vec: []float64{1, 0}}, lc)
+	svc := NewServiceWithEnrich(s, nil, &fakeEmbedder{vec: []float64{1, 0}}, lc, config.Load())
 	if err := svc.Seed([]SeedDoc{{Title: "t1", Content: "GPU Xid 48 掉卡详细内容块A", Category: model.KBOther}}); err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
