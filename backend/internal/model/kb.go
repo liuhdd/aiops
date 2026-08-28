@@ -72,17 +72,18 @@ type KbEmbedding struct {
 
 // KbKnowledgeChunk 检索视图：块 + 所属文档元数据（RAG 联查返回）。
 type KbKnowledgeChunk struct {
-	ChunkID     string
-	DocID       string
-	Title       string
-	Category    KBCategory
-	DeviceTypes []string
-	Vendor      []string
-	Model       []string
-	Metrics     []string
-	Keywords    []string
-	Intents     []string
-	Heading     string
-	Content     string
-	CreatedAt   time.Time
+	ChunkID      string
+	DocID        string
+	Title        string
+	Category     KBCategory
+	DeviceTypes  []string
+	Vendor       []string
+	Model        []string
+	Metrics      []string
+	Keywords     []string
+	Intents      []string
+	Heading      string
+	Content      string
+	SourceDocIDs []string
+	CreatedAt    time.Time
 }

@@ -173,3 +173,76 @@ func TestAssembleRoutesKnowledgeByStage(t *testing.T) {
 		t.Fatalf("recommend 手册 topK=2 不应出现第3个手册:\n%s", as.User)
 	}
 }
+
+func TestResultChunkSourceDocIDs(t *testing.T) {
+	r := retrieve.Result{DocID: "d1", Title: "GPU掉卡", Category: model.KBCase, Heading: "排查", Content: "Xid 48 排查", SourceDocIDs: []string{"d1", "d2"}, Intents: []string{"AskRootCause"}}
+	ch := resultChunk(r)
+	if got := ch.Metadata["source_doc_ids"]; got != "d1,d2" {
+		t.Fatalf("source_doc_ids Metadata = %q want %q", got, "d1,d2")
+	}
+	if !strings.Contains(ch.Content, "来源：d1,d2") {
+		t.Fatalf("Content 应含多源出处，got %q", ch.Content)
+	}
+	// 单源不应追加来源
+	r2 := retrieve.Result{DocID: "d1", Title: "t", Category: model.KBCase, Content: "c", SourceDocIDs: []string{"d1"}}
+	ch2 := resultChunk(r2)
+	if strings.Contains(ch2.Content, "来源") {
+		t.Fatalf("单源不应追加来源，got %q", ch2.Content)
+	}
+	if got := ch2.Metadata["source_doc_ids"]; got != "d1" {
+		t.Fatalf("单源 Metadata = %q want d1", got)
+	}
+	// 空源静默
+	r3 := retrieve.Result{DocID: "d1", Title: "t", Category: model.KBCase, Content: "c"}
+	ch3 := resultChunk(r3)
+	if got := ch3.Metadata["source_doc_ids"]; got != "" {
+		t.Fatalf("空源 Metadata = %q want empty", got)
+	}
+}
+
+func TestKnowledgeContentSourceDocIDs(t *testing.T) {
+	kc := model.KbKnowledgeChunk{Title: "手册", Category: model.KBManual, Content: "内容", SourceDocIDs: []string{"a", "b"}}
+	got := knowledgeContent(kc)
+	if !strings.Contains(got, "来源：a,b") {
+		t.Fatalf("knowledgeContent 多源应含来源，got %q", got)
+	}
+	kc2 := model.KbKnowledgeChunk{Title: "t", Category: model.KBCase, Content: "c", SourceDocIDs: []string{"a"}}
+	got2 := knowledgeContent(kc2)
+	if strings.Contains(got2, "来源") {
+		t.Fatalf("单源不应含来源，got %q", got2)
+	}
+	kc3 := model.KbKnowledgeChunk{Title: "t", Category: model.KBCase, Content: "c"}
+	got3 := knowledgeContent(kc3)
+	if strings.Contains(got3, "来源") {
+		t.Fatalf("空源不应含来源，got %q", got3)
+	}
+}
+
+func TestAssembleSourceDocIDsPropagation(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := NewStore(s)
+	asm := NewAssembler(cs, 3)
+	mock := &mockSearcher{
+		cases: []retrieve.Result{
+			{DocID: "d1", Title: "GPU掉卡", Category: model.KBCase, Content: "排查步骤", SourceDocIDs: []string{"d1", "d2"}},
+		},
+	}
+	asm.SetSearcher(mock)
+	as, err := asm.Assemble(Query{Device: "db-01", Metric: "gpu_util", Stage: "rca"}, false, nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if !strings.Contains(as.User, "来源：d1,d2") {
+		t.Fatalf("组装后知识库段应含多源出处，got %s", as.User)
+	}
+	found := false
+	for _, c := range as.Selected {
+		if c.Source == SourceKnowledge && c.Metadata["source_doc_ids"] == "d1,d2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Selected 中应透传 source_doc_ids，got %+v", as.Selected)
+	}
+}

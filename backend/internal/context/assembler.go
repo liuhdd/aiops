@@ -136,14 +136,15 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 			out = append(out, Chunk{Source: SourceKnowledge,
 				Content: knowledgeContent(kc),
 				Metadata: map[string]string{
-					"metrics":      strings.Join(kc.Metrics, ","),
-					"device_types": strings.Join(kc.DeviceTypes, ","),
-					"vendor":       strings.Join(kc.Vendor, ","),
-					"model":        strings.Join(kc.Model, ","),
-					"intents":      strings.Join(kc.Intents, ","),
-					"doc_title":    kc.Title,
-					"doc_id":       kc.DocID,
-					"created_at":   kc.CreatedAt.Format(time.RFC3339),
+					"metrics":        strings.Join(kc.Metrics, ","),
+					"device_types":   strings.Join(kc.DeviceTypes, ","),
+					"vendor":         strings.Join(kc.Vendor, ","),
+					"model":          strings.Join(kc.Model, ","),
+					"intents":        strings.Join(kc.Intents, ","),
+					"doc_title":      kc.Title,
+					"doc_id":         kc.DocID,
+					"source_doc_ids": strings.Join(kc.SourceDocIDs, ","),
+					"created_at":     kc.CreatedAt.Format(time.RFC3339),
 				}})
 		}
 	}
@@ -161,7 +162,11 @@ func knowledgeContent(kc model.KbKnowledgeChunk) string {
 	if kc.Heading != "" {
 		head += " §" + kc.Heading
 	}
-	return head + ": " + kc.Content
+	content := head + ": " + kc.Content
+	if len(kc.SourceDocIDs) > 1 {
+		content += "\n来源：" + strings.Join(kc.SourceDocIDs, ",")
+	}
+	return content
 }
 
 func categoryName(c model.KBCategory) string {
@@ -285,15 +290,16 @@ const searcherChunkScore = 1.0
 func resultChunk(r retrieve.Result) Chunk {
 	kc := model.KbKnowledgeChunk{
 		DocID: r.DocID, Title: r.Title, Category: r.Category,
-		Heading: r.Heading, Content: r.Content,
+		Heading: r.Heading, Content: r.Content, SourceDocIDs: r.SourceDocIDs,
 	}
 	return Chunk{
 		Source:  SourceKnowledge,
 		Content: knowledgeContent(kc),
 		Metadata: map[string]string{
-			"doc_title": r.Title,
-			"doc_id":    r.DocID,
-			"intents":   strings.Join(r.Intents, ","),
+			"doc_title":      r.Title,
+			"doc_id":         r.DocID,
+			"intents":        strings.Join(r.Intents, ","),
+			"source_doc_ids": strings.Join(r.SourceDocIDs, ","),
 		},
 	}
 }

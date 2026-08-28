@@ -399,7 +399,7 @@ func (s *Store) DeleteKbChunkQuestionsByDoc(docID string) error {
 }
 
 func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
-	rows, err := s.db.Query(`SELECT c.id, c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, d.created_at
+	rows, err := s.db.Query(`SELECT c.id, c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, c.source_doc_ids, d.created_at
 		FROM kb_chunks c JOIN kb_documents d ON d.id = c.doc_id
 		ORDER BY d.created_at DESC, c.seq ASC`)
 	if err != nil {
@@ -409,8 +409,8 @@ func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 	out := make([]model.KbKnowledgeChunk, 0)
 	for rows.Next() {
 		var k model.KbKnowledgeChunk
-		var dt, vd, md, mtr, kw, in string
-		if err := rows.Scan(&k.ChunkID, &k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &k.CreatedAt); err != nil {
+		var dt, vd, md, mtr, kw, in, srcIDs string
+		if err := rows.Scan(&k.ChunkID, &k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &srcIDs, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.DeviceTypes = parseArr(dt)
@@ -419,6 +419,7 @@ func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 		k.Metrics = parseArr(mtr)
 		k.Keywords = parseArr(kw)
 		k.Intents = parseArr(in)
+		k.SourceDocIDs = parseArr(srcIDs)
 		out = append(out, k)
 	}
 	return out, rows.Err()
