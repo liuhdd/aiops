@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"aiops/internal/prompt"
 )
 
 // Completer 复用 llm/complete 语义的最小接口，避免 import 业务 context 包。
@@ -36,7 +38,7 @@ func RewriteQuery(ctx context.Context, light Completer, history []string, q stri
 	}
 	ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	prompt := "将下述查询结合对话历史改写为独立检索句，仅输出改写句：\n历史：" + strings.Join(history, "\n") + "\n查询：" + q
+	prompt := prompt.QueryRewriteInstruction(strings.Join(history, "\n"), q)
 	out, err := light.Complete(ctx2, prompt)
 	if err != nil || strings.TrimSpace(out) == "" {
 		return q, err

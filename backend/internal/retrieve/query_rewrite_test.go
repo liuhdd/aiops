@@ -88,6 +88,19 @@ func TestRewriteQueryEmptyOutputFallback(t *testing.T) {
 	}
 }
 
+func TestRewriteQueryPromptKeepsEntities(t *testing.T) {
+	f := &rewriteFake{out: "改写后的句子"}
+	_, err := RewriteQuery(context.Background(), f, []string{"上一句"}, "磁盘满了怎么办")
+	if err != nil {
+		t.Fatalf("RewriteQuery: %v", err)
+	}
+	for _, kw := range []string{"原样保留", "历史：上一句", "查询：磁盘满了怎么办"} {
+		if !strings.Contains(f.prompt, kw) {
+			t.Fatalf("prompt 应含 %q, got %q", kw, f.prompt)
+		}
+	}
+}
+
 func TestRewriteQueryTimeoutFallback(t *testing.T) {
 	fc := &rewriteFake{out: "超时后结果", delay: 3 * time.Second}
 	orig := "需要改写的查询"
