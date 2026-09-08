@@ -38,8 +38,8 @@ func RewriteQuery(ctx context.Context, light Completer, history []string, q stri
 	}
 	ctx2, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	prompt := prompt.QueryRewriteInstruction(strings.Join(history, "\n"), q)
-	out, err := light.Complete(ctx2, prompt)
+	instr := prompt.QueryRewriteInstruction(strings.Join(history, "\n"), q)
+	out, err := light.Complete(ctx2, instr)
 	if err != nil || strings.TrimSpace(out) == "" {
 		return q, err
 	}

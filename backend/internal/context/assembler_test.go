@@ -219,7 +219,6 @@ func TestKnowledgeContentSourceDocIDs(t *testing.T) {
 }
 
 func TestAssembleSystemIsKnowledgeIntro(t *testing.T) {
-	mockdata.GenerateAll(42)
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
 	cs := NewStore(s)

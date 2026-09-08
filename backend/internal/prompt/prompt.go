@@ -19,9 +19,9 @@ const RCASystem = "你是算力中心硬件运维专家。基于给定证据输�
 const RecommendSystem = "你是算力中心运维助手。基于根因和预案，给出简明的处置建议步骤列表。步骤须与 runbook_ref 对应，无对应预案时 risk 填\"无预案参考\"。只输出JSON：{\"actions\":[string],\"runbook_ref\":string,\"risk\":string}"
 
 // ChatAnswerUser answerWithLLM 用户消息（保持现有结构：告警行 + 已有结论 + 上下文 + 问题）。
-func ChatAnswerUser(alertID, device, metric, rca, actions, context, question string) string {
+func ChatAnswerUser(alertID, device, metric, rca, actions, contextText, question string) string {
 	return fmt.Sprintf("告警 %s：设备=%s 指标=%s\n已有根因：%s\n已有处置：%s\n\n【相关上下文】\n%s\n\n用户问题：%s",
-		alertID, device, metric, rca, actions, context, question)
+		alertID, device, metric, rca, actions, contextText, question)
 }
 
 // QueryRewriteInstruction 检索改写提示：实体词原样保留。
