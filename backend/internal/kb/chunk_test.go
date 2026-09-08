@@ -1,6 +1,7 @@
 package kb
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -68,5 +69,63 @@ func TestChunkHeadingOnlyProducesOneChunk(t *testing.T) {
 	}
 	if !strings.Contains(got[0].Content, "只有标题") || !strings.Contains(got[0].Content, "没有正文") {
 		t.Fatalf("块应包含标题行内容, got %+v", got[0])
+	}
+}
+
+func TestChunkKeepsTableIntact(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("# 运维\n前言\n\n| 指标 | 阈值 |\n| --- | --- |\n")
+	for i := 0; i < 100; i++ {
+		b.WriteString("| cpu_usage | 90% |\n")
+	}
+	b.WriteString("\n尾声\n")
+	got := Chunk(b.String())
+	// 表格行不得被拆散到不同块（任一块包含表头即须包含全部表格行）
+	for _, c := range got {
+		if strings.Contains(c.Content, "| 指标 | 阈值 |") && !strings.Contains(c.Content, "尾声") {
+			if strings.Count(c.Content, "| cpu_usage |") != 100 {
+				t.Fatalf("表格被拆散，块内容行数不对")
+			}
+		}
+	}
+}
+
+func TestChunkKeepsCodeFence(t *testing.T) {
+	content := "# 部署\n```bash\n# 安装驱动\nsh install.sh\n```\n尾声"
+	got := Chunk(content)
+	if len(got) != 1 {
+		t.Fatalf("代码块注释 # 不得误判标题，chunks = %+v", got)
+	}
+	if !strings.Contains(got[0].Content, "sh install.sh") {
+		t.Fatalf("代码块内容丢失: %+v", got[0])
+	}
+}
+
+func TestChunkFlowAtomicity(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("# GPU 运维\n## 掉卡处置\n前言\n\n")
+	for i := 1; i <= 7; i++ {
+		b.WriteString(strings.Repeat("x", 400) + "\n")
+		b.WriteString(strconv.Itoa(i) + ". 执行步骤" + "\n")
+	}
+	b.WriteString("> 若复位失败则跳至步骤 7\n\n| 项 | 值 |\n| --- | --- |\n| a | b |")
+	b.WriteString("```bash\necho done\n```\n")
+	got := Chunk(b.String())
+	flows := 0
+	for _, c := range got {
+		if c.IsFlow {
+			flows++
+			for i := 1; i <= 7; i++ {
+				if !strings.Contains(c.Content, strconv.Itoa(i)+". 执行步骤") {
+					t.Fatalf("流程块缺步骤 %d", i)
+				}
+			}
+			if c.HeadingPath != "GPU 运维 > 掉卡处置" {
+				t.Fatalf("heading_path = %q", c.HeadingPath)
+			}
+		}
+	}
+	if flows != 1 {
+		t.Fatalf("含步骤的 Section 应合并为 exactly 1 个流程块, got %d (%+v)", flows, got)
 	}
 }
