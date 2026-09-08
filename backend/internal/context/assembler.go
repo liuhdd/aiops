@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"aiops/internal/model"
+	"aiops/internal/prompt"
 	"aiops/internal/retrieve"
 )
 
@@ -61,7 +62,7 @@ func (a *Assembler) Assemble(q Query, includeTools bool, tools []Tool) (*Assembl
 			sections = append(sections, sec)
 		}
 	}
-	out.System = "以下是当前任务相关的上下文信息。"
+	out.System = prompt.KnowledgeIntro
 	out.User = strings.Join(sections, "\n")
 	return out, nil
 }

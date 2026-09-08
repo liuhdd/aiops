@@ -218,6 +218,22 @@ func TestKnowledgeContentSourceDocIDs(t *testing.T) {
 	}
 }
 
+func TestAssembleSystemIsKnowledgeIntro(t *testing.T) {
+	mockdata.GenerateAll(42)
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	cs := NewStore(s)
+	as, err := NewAssembler(cs, 3).Assemble(Query{Stage: "chat"}, false, nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	for _, kw := range []string{"标注来源", "无相关信息时", "以下是当前任务相关的上下文信息"} {
+		if !strings.Contains(as.System, kw) {
+			t.Fatalf("System 应含 %q, got %q", kw, as.System)
+		}
+	}
+}
+
 func TestAssembleSourceDocIDsPropagation(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
