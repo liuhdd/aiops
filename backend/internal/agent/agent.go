@@ -11,6 +11,7 @@ import (
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
+	"aiops/internal/prompt"
 	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
@@ -397,12 +398,13 @@ func (a *Agent) answerWithLLM(ctx context.Context, conversationID, alertID strin
 		}
 	}
 	ctxStr := ""
+	system := prompt.ChatAnswerSystem
 	if as := a.buildAssembled(conversationID, alert.Device, alert.Metric, []string{intent}); as != nil {
 		ctxStr = as.User
+		system += "\n" + as.System
 	}
-	system := "你是算力中心硬件运维助手。结合给定上下文与已有排查结论，用中文简明回答用户的根因或处置问题。"
-	user := fmt.Sprintf("告警 %s：设备=%s 指标=%s\n已有根因：%s\n已有处置：%s\n\n【相关上下文】\n%s\n\n用户问题：%s",
-		alertID, alert.Device, alert.Metric, rca.RootCause, strings.Join(rec.Actions, "；"), ctxStr, userText)
+	user := prompt.ChatAnswerUser(alertID, alert.Device, alert.Metric,
+		rca.RootCause, strings.Join(rec.Actions, "；"), ctxStr, userText)
 	raw, cerr := a.llm.Complete(ctx, system, user)
 	if cerr != nil || strings.TrimSpace(raw) == "" {
 		return a.answerFor(conversationID, alertID, intent)
