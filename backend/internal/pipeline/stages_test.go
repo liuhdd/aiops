@@ -294,3 +294,20 @@ func TestRCASingleCallSystemHasGapRule(t *testing.T) {
 		t.Fatalf("RCA = %+v", st.RCA)
 	}
 }
+
+func TestRecommendSystemHasRunbookRule(t *testing.T) {
+	fake := &sysCapturingLLM{raw: `{"actions":["清理日志"],"runbook_ref":"disk_usage","risk":"低"}`}
+	st := &State{Alert: model.Alert{ID: "a1", Device: "db-01", Metric: "disk_usage"},
+		RCA: &model.RCA{RootCause: "磁盘空间不足"}}
+	if err := (NewRecommendStage(fake)).Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, kw := range []string{"无预案参考", "runbook_ref", "只输出JSON"} {
+		if !strings.Contains(fake.system, kw) {
+			t.Fatalf("system 应含 %q, got %q", kw, fake.system)
+		}
+	}
+	if st.Recommendation == nil || len(st.Recommendation.Actions) == 0 {
+		t.Fatalf("应解析出处置建议, got %+v", st.Recommendation)
+	}
+}

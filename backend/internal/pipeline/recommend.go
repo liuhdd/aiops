@@ -8,6 +8,7 @@ import (
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
+	"aiops/internal/prompt"
 )
 
 type RecommendStage struct {
@@ -26,7 +27,7 @@ func (s *RecommendStage) Run(ctx context.Context, st *State) error {
 	}
 	actions := steps
 	if !ctxpkg.IsNilCompleter(s.llm) {
-		system := "你是算力中心运维助手。基于根因和预案，给出简明的处置建议步骤列表。只输出JSON：{\"actions\":[string],\"runbook_ref\":string,\"risk\":string}"
+		system := prompt.RecommendSystem
 		root := ""
 		if st.RCA != nil {
 			root = st.RCA.RootCause
