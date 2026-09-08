@@ -477,7 +477,7 @@ func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 // ListKnowledgeChunksFiltered 按版本过滤检索视图；version 为空返回全量，
 // 非空时在内存中按版本区间过滤（SQLite 字符串比较不可靠，块量小，全量查后过滤）。
 func (s *Store) ListKnowledgeChunksFiltered(version string) ([]model.KbKnowledgeChunk, error) {
-	rows, err := s.db.Query(`SELECT c.id, c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, c.source_doc_ids, c.version_min, c.version_max, d.created_at
+	rows, err := s.db.Query(`SELECT c.id, c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, c.source_doc_ids, c.version_min, c.version_max, c.heading_path, d.created_at
 		FROM kb_chunks c JOIN kb_documents d ON d.id = c.doc_id
 		ORDER BY d.created_at DESC, c.seq ASC`)
 	if err != nil {
@@ -488,7 +488,7 @@ func (s *Store) ListKnowledgeChunksFiltered(version string) ([]model.KbKnowledge
 	for rows.Next() {
 		var k model.KbKnowledgeChunk
 		var dt, vd, md, mtr, kw, in, srcIDs string
-		if err := rows.Scan(&k.ChunkID, &k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &srcIDs, &k.VersionMin, &k.VersionMax, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ChunkID, &k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &srcIDs, &k.VersionMin, &k.VersionMax, &k.HeadingPath, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.DeviceTypes = parseArr(dt)

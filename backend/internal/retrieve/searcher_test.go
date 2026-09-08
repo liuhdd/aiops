@@ -392,3 +392,66 @@ func TestSearchQuestionChannelFallback(t *testing.T) {
 		t.Fatalf("手册通道 fallback 应命中 d3，got %+v", res3)
 	}
 }
+
+// TestSearchVersionFilter 版本过滤透传：同关键词两案例分属不交版本区间，
+// Query.Version 应只召回命中区间的文档；空版本返回全量。
+// 区间直接落盘（含 Max 上界）；经 Upload 只能造下界区间（frontmatter 无上界形式），
+// 故 assembler 侧用 >= 区间（见 TestAssembleVersionFilter），此处补全双向排他验证。
+func TestSearchVersionFilter(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "v.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	now := time.Now()
+	if err := s.WithKBTx(func(tx store.KBStore) error {
+		mkDoc := func(id, title string) error {
+			return tx.InsertKbDocument(model.KbDocument{ID: id, Title: title, Category: model.KBCase,
+				DeviceTypes: []string{"server"}, Metrics: []string{"firmware_ver"},
+				Keywords: []string{"NVMe固件"}, Content: "NVMe固件升级公共关键词" + title,
+				CreatedAt: now, UpdatedAt: now})
+		}
+		mkChunk := func(id, docID, content, vmin, vmax string) error {
+			return tx.InsertKbChunk(model.KbChunk{ID: id, DocID: docID, Seq: 0,
+				Heading: "步骤", Content: content, VersionMin: vmin, VersionMax: vmax, CreatedAt: now})
+		}
+		if err := mkDoc("d-v2", "版本过滤案例旧版"); err != nil {
+			return err
+		}
+		if err := mkChunk("c-v2", "d-v2", "NVMe固件升级公共关键词旧版内容", "2.0.0", "2.9.9"); err != nil {
+			return err
+		}
+		if err := mkDoc("d-v3", "版本过滤案例新版"); err != nil {
+			return err
+		}
+		return mkChunk("c-v3", "d-v3", "NVMe固件升级公共关键词新版内容", "3.0.0", "3.9.9")
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// 关闭指纹快路径，隔离版本过滤主链路。
+	cfg := config.Config{RetrieveFingerprint: false, RetrieveRRF: true, RerankFloor: 0.2, RerankModel: "rerank"}
+	se := NewSearcherWithConfig(s, nil, nil, cfg)
+
+	only := func(version string) []string {
+		t.Helper()
+		res, err := se.SearchCases(context.Background(), Query{Text: "NVMe固件升级", Version: version}, Options{TopK: 3})
+		if err != nil {
+			t.Fatalf("SearchCases version=%q: %v", version, err)
+		}
+		ids := make([]string, 0, len(res))
+		for _, r := range res {
+			ids = append(ids, r.DocID)
+		}
+		return ids
+	}
+	if got := only("2.5.0"); len(got) != 1 || got[0] != "d-v2" {
+		t.Fatalf("2.5.0 应只回旧版，got %v", got)
+	}
+	if got := only("3.1.0"); len(got) != 1 || got[0] != "d-v3" {
+		t.Fatalf("3.1.0 应只回新版，got %v", got)
+	}
+	gotAll := only("")
+	if len(gotAll) != 2 {
+		t.Fatalf("空版本应两者皆回，got %v", gotAll)
+	}
+}

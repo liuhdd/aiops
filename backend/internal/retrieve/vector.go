@@ -36,6 +36,7 @@ type Query struct {
 	Vendor   string
 	Model    string
 	Intents  []string
+	Version  string // 目标版本（如设备固件版本），按块版本区间过滤
 }
 
 // LabelScore 案例信号：metric/device 标签命中 + keywords 词重叠 + 意图命中。

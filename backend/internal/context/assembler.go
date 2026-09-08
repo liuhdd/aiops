@@ -104,7 +104,7 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 		casesTopK, manualsTopK := retrieve.Router(q.Stage, q.Intents, a.leafList())
 		if casesTopK > 0 {
 			res, err := a.search.SearchCases(context.Background(), retrieve.Query{
-				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents,
+				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents, Version: q.Version,
 			}, retrieve.Options{TopK: casesTopK})
 			// 单次检索失败静默降级为空知识（不阻断组装）；nil searcher 走下方全量扫描回退。
 			if err == nil {
@@ -117,7 +117,7 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 		}
 		if manualsTopK > 0 {
 			res, err := a.search.SearchManuals(context.Background(), retrieve.Query{
-				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents,
+				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents, Version: q.Version,
 			}, retrieve.Options{TopK: manualsTopK})
 			// 单次检索失败静默降级为空知识（不阻断组装）；nil searcher 走下方全量扫描回退。
 			if err == nil {
@@ -129,7 +129,7 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 			}
 		}
 	} else {
-		kcs, err := a.cs.ListKnowledgeChunks()
+		kcs, err := a.cs.ListKnowledgeChunksFiltered(q.Version)
 		if err != nil {
 			return nil, err
 		}
@@ -160,10 +160,16 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 
 func knowledgeContent(kc model.KbKnowledgeChunk) string {
 	head := "[" + categoryName(kc.Category) + "] " + kc.Title
+	if kc.HeadingPath != "" {
+		head += " > " + kc.HeadingPath
+	}
 	if kc.Heading != "" {
 		head += " §" + kc.Heading
 	}
 	content := head + ": " + kc.Content
+	if kc.VersionMin != "" {
+		content += " [文档版本 V" + kc.VersionMin + "]"
+	}
 	if len(kc.SourceDocIDs) > 1 {
 		content += "\n来源：" + strings.Join(kc.SourceDocIDs, ",")
 	}

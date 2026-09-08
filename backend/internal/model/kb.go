@@ -120,5 +120,7 @@ type KbKnowledgeChunk struct {
 	// 技术文档版本范围（检索视图透传）。
 	VersionMin string
 	VersionMax string
+	// 标题路径（如“GPU 运维 > 掉卡处置”），回显用。
+	HeadingPath  string
 	CreatedAt    time.Time
 }
