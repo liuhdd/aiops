@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -56,4 +57,32 @@ func makeDocx(documentXML string) []byte {
 	_, _ = w.Write([]byte(documentXML))
 	_ = zw.Close()
 	return buf.Bytes()
+}
+
+func TestParseFrontmatter(t *testing.T) {
+	raw := "---\nversion: 2.1.0\napplies_to: [\">=2.0\", \"<3.0\"]\n---\n# 标题\n正文"
+	body, meta := StripFrontmatter(raw)
+	if meta.Version != "2.1.0" {
+		t.Fatalf("version = %q", meta.Version)
+	}
+	if len(meta.AppliesTo) != 2 {
+		t.Fatalf("applies_to = %v", meta.AppliesTo)
+	}
+	if strings.Contains(body, "version:") || !strings.Contains(body, "# 标题") {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestParseFrontmatterAbsent(t *testing.T) {
+	body, meta := StripFrontmatter("# 标题\n正文")
+	if meta.Version != "" || body != "# 标题\n正文" {
+		t.Fatalf("got %q %+v", body, meta)
+	}
+}
+
+func TestParseDocStripsFrontmatter(t *testing.T) {
+	got, err := ParseDoc("a.md", []byte("---\nversion: 1.0.0\n---\nhello"))
+	if err != nil || got != "hello" {
+		t.Fatalf("got %q %v", got, err)
+	}
 }
