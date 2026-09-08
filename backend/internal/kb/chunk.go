@@ -68,7 +68,8 @@ func Chunk(content string) (out []ChunkResult) {
 		return nil
 	}
 	defer func() {
-		if recover() != nil {
+		if r := recover(); r != nil {
+			log.Printf("kb: chunkAST panic %v，回退旧逻辑", r)
 			out = chunkLineFallback(content)
 		}
 	}()

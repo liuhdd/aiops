@@ -90,6 +90,39 @@ func TestChunkKeepsTableIntact(t *testing.T) {
 	}
 }
 
+func TestChunkKeepsGiantTableIntact(t *testing.T) {
+	const rows = 200
+	var b strings.Builder
+	b.WriteString("# 运维\n前言\n\n| 指标 | 阈值 |\n| --- | --- |\n")
+	for i := 0; i < rows; i++ {
+		b.WriteString("| cpu_usage | 90% |\n")
+	}
+	b.WriteString("\n尾声\n")
+	got := Chunk(b.String())
+	// 超限单原子块宁可超限也不拆散：含表头块唯一且含全表行
+	headerBlocks := 0
+	totalRows := 0
+	for _, c := range got {
+		n := strings.Count(c.Content, "| cpu_usage |")
+		totalRows += n
+		if strings.Contains(c.Content, "| 指标 | 阈值 |") {
+			headerBlocks++
+			if n != rows {
+				t.Fatalf("巨表被拆散，含表头块仅含 %d/%d 行", n, rows)
+			}
+			if len([]rune(c.Content)) <= DefaultChunkSize {
+				t.Fatalf("巨表块应超限（单原子不拆），got %d rune", len([]rune(c.Content)))
+			}
+		}
+	}
+	if headerBlocks != 1 {
+		t.Fatalf("含表头块应恰好 1 个, got %d (%+v)", headerBlocks, got)
+	}
+	if totalRows != rows {
+		t.Fatalf("表格行跨块拆分或丢失，total = %d, want %d", totalRows, rows)
+	}
+}
+
 func TestChunkKeepsCodeFence(t *testing.T) {
 	content := "# 部署\n```bash\n# 安装驱动\nsh install.sh\n```\n尾声"
 	got := Chunk(content)
