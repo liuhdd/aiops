@@ -66,3 +66,40 @@ func TestUploadEmbedInline(t *testing.T) {
 	}
 	_ = base
 }
+
+func TestUploadUnresolvedEmbedNoDup(t *testing.T) {
+	svc := newTestService(t)
+	raw := "![[missing-never-exists-xyz]]"
+	content := "# 未解析回归\n## 首节\n首节正文\n## 次节\n含未解析 " + raw + " 尾"
+	doc, err := svc.Upload(context.Background(), UploadReq{SourceFile: "unresolved.md", Data: []byte(content), Category: model.KBManual})
+	if err != nil {
+		t.Fatalf("Upload: %v", err)
+	}
+	detail, err := svc.Get(context.Background(), doc.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(detail.Chunks) < 2 {
+		t.Fatalf("需要至少 2 块以覆盖非首块场景, got %+v", detail.Chunks)
+	}
+	ownerIdx := -1
+	for i, c := range detail.Chunks {
+		if strings.Contains(c.Content, raw) {
+			ownerIdx = i
+		}
+	}
+	if ownerIdx <= 0 {
+		t.Fatalf("未解析标记应落在非首块, owner=%d (%+v)", ownerIdx, detail.Chunks)
+	}
+	count := 0
+	for _, c := range detail.Chunks {
+		for _, r := range c.SourceRefs {
+			if r.Raw == raw {
+				count++
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("未解析 embed 应恰好出现一次, got %d (%+v)", count, detail.Chunks)
+	}
+}

@@ -124,6 +124,7 @@ func (s *Service) Seed(docs []SeedDoc) error {
 		doc.VersionMin, doc.VersionMax = docVer.Min, docVer.Max
 		doc.Fingerprints = ExtractFingerprints(doc.Title, doc.Content)
 		inputs := s.buildChunkInputs(body, Chunk(inlined), docVer)
+		s.logFlowOverflow(inputs)
 		if err := s.insertEnrichedDoc(context.Background(), doc, inputs, now); err != nil {
 			return err
 		}
@@ -284,7 +285,11 @@ func (s *Service) buildChunkInputs(origContent string, chunks []ChunkResult, doc
 		vr := ParseChunkVersion(c.Content, docVer)
 		refs := filterAttributionLinks(c.Content, ExtractRefs(c.Content))
 		for i, er := range embedRefs {
-			if used[i] || hasRefRaw(refs, er.Raw) {
+			if used[i] {
+				continue
+			}
+			if hasRefRaw(refs, er.Raw) {
+				used[i] = true
 				continue
 			}
 			if !containsAttribution(c.Content, er.Target, er.Anchor) {
