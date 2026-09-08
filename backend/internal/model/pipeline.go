@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -105,8 +106,12 @@ type DeviceContext struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// idCounter 进程内自增序号：墙钟仅微秒级精度，连续两次 time.Now 可能同刻度，
+// 仅用时间戳生成 ID 会碰撞（TestNewID 偶发失败），故叠加原子计数保证进程内唯一。
+var idCounter atomic.Uint64
+
 func NewID(prefix string) string {
-	return fmt.Sprintf("%s-%x", prefix, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%x-%x", prefix, time.Now().UnixNano(), idCounter.Add(1))
 }
 
 func MustJSON(v any) string {
