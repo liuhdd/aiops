@@ -31,6 +31,8 @@ type Config struct {
 	KBEnhanceQuestions  bool    // KB_ENHANCE_QUESTIONS，默认 true
 	KBEnhanceCDTA       bool    // KB_ENHANCE_CDTA，默认 true
 	KBCdtaThreshold     float64 // KB_CDTA_THRESHOLD，默认 0.85
+	KBFlowMaxSize       int     // KB_FLOW_MAX_SIZE，默认 8000
+	KBEmbedDepth        int     // KB_EMBED_DEPTH，默认 2
 }
 
 func Load() Config {
@@ -134,6 +136,18 @@ func LoadFromEnv(lookup func(string) string) Config {
 			kbCdtaThreshold = f
 		}
 	}
+	kbFlowMaxSize := 8000
+	if v := lookup("KB_FLOW_MAX_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			kbFlowMaxSize = n
+		}
+	}
+	kbEmbedDepth := 2
+	if v := lookup("KB_EMBED_DEPTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			kbEmbedDepth = n
+		}
+	}
 	return Config{
 		LLMAPIKey:           lookup("LLM_API_KEY"),
 		LLMBaseURL:          base,
@@ -159,5 +173,7 @@ func LoadFromEnv(lookup func(string) string) Config {
 		KBEnhanceQuestions:  kbQuestions,
 		KBEnhanceCDTA:       kbCDTA,
 		KBCdtaThreshold:     kbCdtaThreshold,
+		KBFlowMaxSize:       kbFlowMaxSize,
+		KBEmbedDepth:        kbEmbedDepth,
 	}
 }
