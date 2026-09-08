@@ -283,3 +283,80 @@ func TestKbChunkQuestionsCRUD(t *testing.T) {
 		t.Fatalf("%+v", list)
 	}
 }
+
+func TestKbChunkNewCols(t *testing.T) {
+	s := newTestStore(t)
+	now := time.Now()
+	refs := []model.ChunkRef{{Raw: "[[a.md]]", Type: "wikilink", Target: "a.md", Resolved: true}}
+	_ = s.WithKBTx(func(tx KBStore) error {
+		_ = tx.InsertKbDocument(model.KbDocument{ID: "d1", Title: "t", Category: model.KBOther,
+			Version: "3.1.0", VersionMin: "3.0.0", VersionMax: "3.5.0",
+			Content: "x", CreatedAt: now, UpdatedAt: now})
+		return tx.InsertKbChunk(model.KbChunk{ID: "c1", DocID: "d1", Seq: 0, Heading: "h", Content: "x",
+			VersionMin: "3.0.0", VersionMax: "3.5.0", HeadingPath: "标题 > 子标题",
+			SourceRefs: refs, IsFlow: true, CreatedAt: now})
+	})
+	got, err := s.GetKbChunk("c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VersionMin != "3.0.0" || got.VersionMax != "3.5.0" || got.HeadingPath != "标题 > 子标题" || !got.IsFlow {
+		t.Fatalf("新列读回: %+v", got)
+	}
+	if len(got.SourceRefs) != 1 || got.SourceRefs[0].Target != "a.md" || !got.SourceRefs[0].Resolved {
+		t.Fatalf("source_refs=%+v", got.SourceRefs)
+	}
+	gd, err := s.GetKbDocument("d1")
+	if err != nil || gd.Version != "3.1.0" || gd.VersionMin != "3.0.0" || gd.VersionMax != "3.5.0" {
+		t.Fatalf("doc 版本列: %+v %v", gd, err)
+	}
+	// UpdateKbChunk 全列更新：改内容后新列不丢失。
+	got.Content, got.Summary = "new", "s"
+	if err := s.UpdateKbChunk(got); err != nil {
+		t.Fatal(err)
+	}
+	got2, err := s.GetKbChunk("c1")
+	if err != nil || got2.Content != "new" || got2.VersionMin != "3.0.0" || !got2.IsFlow || len(got2.SourceRefs) != 1 {
+		t.Fatalf("更新后: %+v %v", got2, err)
+	}
+}
+
+func TestKbChunkNewColsLegacyCompat(t *testing.T) {
+	// 用老 schema 建库（不含版本/引用新列）→ 新 migrate 打开应自动补列，旧行读回新字段为零值。
+	dir := t.TempDir()
+	path := filepath.Join(dir, "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE kb_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, category TEXT NOT NULL, device_types TEXT, vendor TEXT, model TEXT, metrics TEXT, keywords TEXT, intents TEXT, source_file TEXT, content TEXT, created_at DATETIME, updated_at DATETIME)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE kb_chunks (id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, seq INTEGER NOT NULL, heading TEXT NOT NULL DEFAULT '', content TEXT NOT NULL, created_at DATETIME)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO kb_chunks (id, doc_id, seq, heading, content, created_at) VALUES ('c1','d1',0,'h','x',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	s, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// 新列应已补齐。
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('kb_chunks') WHERE name IN ('version_min','version_max','heading_path','source_refs','is_flow')`).Scan(&n); err != nil || n != 5 {
+		t.Fatalf("kb_chunks 新列数 = %d %v, want 5", n, err)
+	}
+	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('kb_documents') WHERE name IN ('version','version_min','version_max')`).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("kb_documents 新列数 = %d %v, want 3", n, err)
+	}
+	got, err := s.GetKbChunk("c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VersionMin != "" || got.HeadingPath != "" || got.IsFlow || len(got.SourceRefs) != 0 {
+		t.Fatalf("旧行新字段应为零值: %+v", got)
+	}
+}

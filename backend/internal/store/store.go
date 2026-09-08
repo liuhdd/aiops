@@ -200,6 +200,44 @@ func (s *Store) migrate() error {
 	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kcq_doc ON kb_chunk_questions(doc_id)`); err != nil {
 		return err
 	}
+	// 技术文档切块：文档与块级版本列 + 引用边表（老库经 ensureColumn 自动补列）。
+	if err := ensureColumn(s.db, "kb_documents", "version", "version TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_documents", "version_min", "version_min TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_documents", "version_max", "version_max TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_chunks", "version_min", "version_min TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_chunks", "version_max", "version_max TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_chunks", "heading_path", "heading_path TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_chunks", "source_refs", "source_refs TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		return err
+	}
+	if err := ensureColumn(s.db, "kb_chunks", "is_flow", "is_flow INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS kb_chunk_refs (
+		id TEXT PRIMARY KEY, chunk_id TEXT NOT NULL, doc_id TEXT NOT NULL,
+		target_path TEXT NOT NULL, target_doc_id TEXT NOT NULL DEFAULT '',
+		anchor TEXT NOT NULL DEFAULT '', ref_type TEXT NOT NULL,
+		resolved INTEGER NOT NULL DEFAULT 0, created_at DATETIME)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kb_refs_chunk ON kb_chunk_refs(chunk_id)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_kb_refs_doc ON kb_chunk_refs(doc_id)`); err != nil {
+		return err
+	}
 	return nil
 }
 
