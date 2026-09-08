@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -86,7 +87,7 @@ func NewServiceWithEnrich(st *store.Store, leaves func() []model.LeafSpec, embed
 	return &Service{st: st, leaves: leaves, embed: embed, enrichLC: lc, cfg: cfg}
 }
 
-// Seed 表空时导入种子文档（幂等）。
+// Seed 表空时导入种子文档（幂等；逐文档顺序处理使先入库文档可被后文档 embed）。
 func (s *Service) Seed(docs []SeedDoc) error {
 	n, err := s.st.CountKbDocuments()
 	if err != nil {
@@ -104,22 +105,35 @@ func (s *Service) Seed(docs []SeedDoc) error {
 		if cat == "" || !model.IsKBCategory(cat) {
 			cat = model.KBOther
 		}
+		// 种子正文同样剥离 frontmatter，保证版本链与 Upload 一致。
+		body, meta := StripFrontmatter(d.Content)
+		if strings.TrimSpace(body) == "" {
+			continue
+		}
+		docVer := ParseDocVersion(body, meta)
+		inlined := InlineEmbeds(body, s.embedLookup(), s.embedDepth())
 		doc := model.KbDocument{
 			ID: model.NewID("kbdoc"), Title: d.Title, Category: cat,
 			DeviceTypes: d.DeviceTypes, Metrics: d.Metrics, Keywords: d.Keywords,
-			Content: d.Content, CreatedAt: now, UpdatedAt: now,
+			Content: inlined, CreatedAt: now, UpdatedAt: now,
 		}
+		doc.Version = strings.TrimSpace(meta.Version)
+		if doc.Version == "" {
+			doc.Version = docVer.Min
+		}
+		doc.VersionMin, doc.VersionMax = docVer.Min, docVer.Max
 		doc.Fingerprints = ExtractFingerprints(doc.Title, doc.Content)
-		if err := s.insertEnrichedDoc(context.Background(), doc, d.Content, now); err != nil {
+		inputs := s.buildChunkInputs(body, Chunk(inlined), docVer)
+		if err := s.insertEnrichedDoc(context.Background(), doc, inputs, now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// Upload 解析→打标（合并覆盖）→切块→富化→嵌入→CDTA→事务入库。
+// Upload 解析→版本→内联→打标（合并覆盖）→切块→富化→嵌入→CDTA→事务入库。
 func (s *Service) Upload(ctx context.Context, req UploadReq) (*model.KbDocument, error) {
-	content, err := ParseDoc(req.SourceFile, req.Data)
+	content, meta, err := ParseDocWithMeta(req.SourceFile, req.Data)
 	if err != nil {
 		return nil, err
 	}
@@ -135,11 +149,13 @@ func (s *Service) Upload(ctx context.Context, req UploadReq) (*model.KbDocument,
 		base := filepath.Base(req.SourceFile)
 		title = strings.TrimSuffix(base, filepath.Ext(base))
 	}
+	docVer := ParseDocVersion(content, meta)
+	inlined := InlineEmbeds(content, s.embedLookup(), s.embedDepth())
 	var leaves []model.LeafSpec
 	if s.leaves != nil {
 		leaves = s.leaves()
 	}
-	tags := Tag(content, leaves)
+	tags := Tag(inlined, leaves)
 	merge := func(auto, override []string) []string {
 		if len(override) > 0 {
 			return override
@@ -156,15 +172,176 @@ func (s *Service) Upload(ctx context.Context, req UploadReq) (*model.KbDocument,
 		Keywords:    merge(tags.Keywords, req.Keywords),
 		Intents:     merge(tags.Intents, req.Intents),
 		SourceFile:  req.SourceFile,
-		Content:     content,
+		Content:     inlined,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	// 文档级版本：原始标注存 Version，归一化区间存 Min/Max（无标注留空=全版本适用）。
+	doc.Version = strings.TrimSpace(meta.Version)
+	if doc.Version == "" {
+		doc.Version = docVer.Min
+	}
+	doc.VersionMin, doc.VersionMax = docVer.Min, docVer.Max
 	doc.Fingerprints = ExtractFingerprints(doc.Title, doc.Content)
-	if err := s.insertEnrichedDoc(ctx, doc, content, now); err != nil {
+	inputs := s.buildChunkInputs(content, Chunk(inlined), docVer)
+	s.logFlowOverflow(inputs)
+	if err := s.insertEnrichedDoc(ctx, doc, inputs, now); err != nil {
 		return nil, err
 	}
 	return &doc, nil
+}
+
+// ChunkInput 新管线块输入：切块结果 + 版本区间 + 抽取引用。
+type ChunkInput struct {
+	Chunk      ChunkResult
+	VersionMin string
+	VersionMax string
+	Refs       []model.ChunkRef
+}
+
+// embedDepth 内联最大层数；配置无 >0 守卫，此处钳制保底。
+func (s *Service) embedDepth() int {
+	if s.cfg.KBEmbedDepth <= 0 {
+		return 2
+	}
+	return s.cfg.KBEmbedDepth
+}
+
+// logFlowOverflow 流程块超限仅告警不拆（原子性优先）；配置无 >0 守卫，此处钳制保底。
+func (s *Service) logFlowOverflow(inputs []ChunkInput) {
+	maxFlow := s.cfg.KBFlowMaxSize
+	if maxFlow <= 0 {
+		maxFlow = 8000
+	}
+	for _, in := range inputs {
+		if in.Chunk.IsFlow && len([]rune(in.Chunk.Content)) > maxFlow {
+			log.Printf("kb: 流程块超限（heading=%q，%d rune，上限 %d），仍保持不拆", in.Chunk.HeadingPath, len([]rune(in.Chunk.Content)), maxFlow)
+		}
+	}
+}
+
+// lookupDoc 按 SourceFile 精确匹配，其次 Title 匹配；返回目标文档 Content 与版本。
+func (s *Service) lookupDoc(target string) (content, version, docID string, ok bool) {
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return "", "", "", false
+	}
+	docs, err := s.st.ListKbDocuments(store.KbFilter{})
+	if err != nil || len(docs) == 0 {
+		return "", "", "", false
+	}
+	id := ""
+	for _, d := range docs {
+		if d.SourceFile != "" && d.SourceFile == t {
+			id = d.ID
+			break
+		}
+	}
+	if id == "" {
+		for _, d := range docs {
+			if d.Title != "" && d.Title == t {
+				id = d.ID
+				break
+			}
+		}
+	}
+	if id == "" {
+		return "", "", "", false
+	}
+	got, err := s.st.GetKbDocument(id)
+	if err != nil {
+		return "", "", "", false
+	}
+	v := got.Version
+	if v == "" {
+		v = got.VersionMin
+	}
+	return got.Content, v, got.ID, true
+}
+
+// embedLookup 适配 InlineEmbeds 回调签名的 lookup。
+func (s *Service) embedLookup() func(target string) (string, string, bool) {
+	return func(target string) (string, string, bool) {
+		c, v, _, ok := s.lookupDoc(target)
+		return c, v, ok
+	}
+}
+
+// buildChunkInputs 为每块填充版本区间与引用。
+// 内联会吞掉原文 ![[embed]] 标记，故 embed 引用从内联前原文抽取，
+// 按嵌入出处（"> 📎 嵌入自 [[target#anchor]]"）归属到含展开块的 chunk；
+// 其余类型标记在内联后保留，直接从块内容抽取。
+func (s *Service) buildChunkInputs(origContent string, chunks []ChunkResult, docVer VersionRange) []ChunkInput {
+	var embedRefs []model.ChunkRef
+	for _, r := range ExtractRefs(origContent) {
+		if r.Type == "embed" {
+			embedRefs = append(embedRefs, r)
+		}
+	}
+	inputs := make([]ChunkInput, 0, len(chunks))
+	used := make([]bool, len(embedRefs))
+	for _, c := range chunks {
+		vr := ParseChunkVersion(c.Content, docVer)
+		refs := filterAttributionLinks(c.Content, ExtractRefs(c.Content))
+		for i, er := range embedRefs {
+			if used[i] || hasRefRaw(refs, er.Raw) {
+				continue
+			}
+			if !containsAttribution(c.Content, er.Target, er.Anchor) {
+				continue
+			}
+			refs = append(refs, er)
+			used[i] = true
+		}
+		inputs = append(inputs, ChunkInput{Chunk: c, VersionMin: vr.Min, VersionMax: vr.Max, Refs: refs})
+	}
+	// 兜底：未归属的 embed 引用挂到首块，避免引用丢失。
+	for i, er := range embedRefs {
+		if used[i] || len(inputs) == 0 {
+			continue
+		}
+		if hasRefRaw(inputs[0].Refs, er.Raw) {
+			continue
+		}
+		inputs[0].Refs = append(inputs[0].Refs, er)
+	}
+	return inputs
+}
+
+// containsAttribution 判断块内是否含指定目标的嵌入出处标注。
+func containsAttribution(chunkContent, target, anchor string) bool {
+	disp := strings.TrimSpace(target)
+	if a := strings.TrimSpace(anchor); a != "" {
+		disp += "#" + a
+	}
+	if disp == "" {
+		return false
+	}
+	return strings.Contains(chunkContent, "嵌入自 [["+disp+"]]")
+}
+
+// filterAttributionLinks 剔除嵌入出处行自带的 [[wikilink]]（关系已由 embed 引用覆盖，避免边表重复）。
+func filterAttributionLinks(chunkContent string, refs []model.ChunkRef) []model.ChunkRef {
+	out := refs[:0:0]
+	if len(refs) == 0 {
+		return nil
+	}
+	for _, r := range refs {
+		if r.Type == "wikilink" && strings.Contains(chunkContent, "嵌入自 "+r.Raw) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func hasRefRaw(refs []model.ChunkRef, raw string) bool {
+	for _, r := range refs {
+		if r.Raw == raw {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) prepareEnriched(ctx context.Context, chunks []ChunkResult) []EnrichedChunk {
@@ -225,23 +402,67 @@ func containsStr(list []string, v string) bool {
 }
 
 type pendingChunk struct {
-	id       string
-	seq      int
-	enriched EnrichedChunk
-	vec      []float64
-	qTexts   []string
-	qVecs    [][]float64
+	id         string
+	seq        int
+	enriched   EnrichedChunk
+	vec        []float64
+	qTexts     []string
+	qVecs      [][]float64
+	verMin     string
+	verMax     string
+	refs       []model.ChunkRef
+	refTargets []string // 与 refs 等长；未命中/anchor 为 ""
 }
 
 type mergeEntry struct {
-	oldChunk     model.KbChunk
-	newContents  []string
-	newQuestions []string
-	newQVecs     [][]float64
+	oldChunk      model.KbChunk
+	newContents   []string
+	newQuestions  []string
+	newQVecs      [][]float64
+	newRefs       []model.ChunkRef
+	newRefTargets []string
 }
 
-func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, content string, now time.Time) error {
-	chunks := Chunk(content)
+// appendRefs 去重追加引用（按 Raw），目标 ID 数组同步对齐。
+func appendRefs(dst []model.ChunkRef, dstTargets []string, src []model.ChunkRef, srcTargets []string) ([]model.ChunkRef, []string) {
+	for i, r := range src {
+		if hasRefRaw(dst, r.Raw) {
+			continue
+		}
+		dst = append(dst, r)
+		t := ""
+		if i < len(srcTargets) {
+			t = srcTargets[i]
+		}
+		dstTargets = append(dstTargets, t)
+	}
+	return dst, dstTargets
+}
+
+func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, inputs []ChunkInput, now time.Time) error {
+	chunks := make([]ChunkResult, len(inputs))
+	for i, in := range inputs {
+		chunks[i] = in.Chunk
+	}
+	// 引用解析回填 Resolved；读库须在事务外完成（SQLite 单写者）。
+	// 目标文档 ID 与 refs 等长对齐，供事务内写 kb_chunk_refs。
+	refTargets := make([][]string, len(inputs))
+	for i := range inputs {
+		targets := make([]string, len(inputs[i].Refs))
+		for j := range inputs[i].Refs {
+			r := &inputs[i].Refs[j]
+			if r.Target == "" {
+				r.Resolved = false
+				continue
+			}
+			_, _, id, ok := s.lookupDoc(r.Target)
+			r.Resolved = ok
+			if ok {
+				targets[j] = id
+			}
+		}
+		refTargets[i] = targets
+	}
 	enriched := s.prepareEnriched(ctx, chunks)
 	if len(enriched) == 0 {
 		// 空内容时仍需插入文档（无块）
@@ -328,7 +549,8 @@ func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, c
 			}
 			qTexts := ec.Questions
 			qVecs := perChunkQVecs[i]
-			pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs})
+			pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs,
+				verMin: inputs[i].VersionMin, verMax: inputs[i].VersionMax, refs: inputs[i].Refs, refTargets: refTargets[i]})
 		}
 	} else {
 		// CDTA 融合
@@ -356,6 +578,8 @@ func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, c
 				// 合并到 pending
 				p := &pendings[mergedIntoPending]
 				p.enriched.EnhancedContent += "\n\n---\n\n" + ec.EnhancedContent
+				// 合并引用去重（版本保留首块）
+				p.refs, p.refTargets = appendRefs(p.refs, p.refTargets, inputs[i].Refs, refTargets[i])
 				// 合并问题去重
 				for qi, q := range qTexts {
 					if containsStr(p.qTexts, q) {
@@ -388,13 +612,17 @@ func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, c
 					oc, err := s.st.GetKbChunk(bestID)
 					if err != nil {
 						// 拉取失败则当未命中
-						pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs})
+						pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs,
+							verMin: inputs[i].VersionMin, verMax: inputs[i].VersionMax, refs: inputs[i].Refs, refTargets: refTargets[i]})
 						continue
 					}
-					merges[bestID] = &mergeEntry{oldChunk: oc, newContents: []string{ec.EnhancedContent}, newQuestions: append([]string(nil), qTexts...), newQVecs: append([][]float64(nil), qVecs...)}
+					me := &mergeEntry{oldChunk: oc, newContents: []string{ec.EnhancedContent}, newQuestions: append([]string(nil), qTexts...), newQVecs: append([][]float64(nil), qVecs...)}
+					me.newRefs, me.newRefTargets = appendRefs(nil, nil, inputs[i].Refs, refTargets[i])
+					merges[bestID] = me
 				} else {
 					me := merges[bestID]
 					me.newContents = append(me.newContents, ec.EnhancedContent)
+					me.newRefs, me.newRefTargets = appendRefs(me.newRefs, me.newRefTargets, inputs[i].Refs, refTargets[i])
 					for qi, q := range qTexts {
 						if containsStr(me.newQuestions, q) {
 							continue
@@ -410,7 +638,8 @@ func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, c
 				continue
 			}
 			// 未命中，作为新块
-			pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs})
+			pendings = append(pendings, pendingChunk{id: ids[i], seq: i, enriched: ec, vec: v, qTexts: qTexts, qVecs: qVecs,
+				verMin: inputs[i].VersionMin, verMax: inputs[i].VersionMax, refs: inputs[i].Refs, refTargets: refTargets[i]})
 		}
 	}
 	// 事务写入
@@ -422,10 +651,19 @@ func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, c
 		for idx, p := range pendings {
 			chunk := model.KbChunk{
 				ID: p.id, DocID: doc.ID, Seq: idx, Heading: p.enriched.Heading,
+				HeadingPath: p.enriched.HeadingPath, IsFlow: p.enriched.IsFlow,
+				VersionMin: p.verMin, VersionMax: p.verMax, SourceRefs: p.refs,
 				Content: p.enriched.EnhancedContent, Summary: p.enriched.Summary,
 				SourceDocIDs: []string{doc.ID}, CreatedAt: now,
 			}
+			if chunk.SourceRefs == nil {
+				chunk.SourceRefs = []model.ChunkRef{}
+			}
 			if err := tx.InsertKbChunk(chunk); err != nil {
+				return err
+			}
+			// 引用边（纯 anchor 无目标文档，只保留在 SourceRefs JSON，不写边表）
+			if err := insertChunkRefEdges(tx, p.id, doc.ID, p.refs, p.refTargets, now); err != nil {
 				return err
 			}
 			// 问题
@@ -484,11 +722,30 @@ func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, c
 					dedup = append(dedup, id)
 				}
 			}
-			updated := model.KbChunk{
-				ID: old.ID, DocID: old.DocID, Seq: old.Seq, Heading: old.Heading,
-				Content: newContent, Summary: old.Summary, SourceDocIDs: dedup, CreatedAt: old.CreatedAt,
+			// 读改写：从事务内最新旧记录出发，只改内容/来源/引用，
+			// 其余新列（版本/标题路径/流程标记等）原样保留，避免全列覆盖清零。
+			updated := old
+			updated.Content = newContent
+			updated.SourceDocIDs = dedup
+			// 合并新引用（去重），并为新增引用补边表行。
+			var addedRefs []model.ChunkRef
+			var addedTargets []string
+			for i, nr := range me.newRefs {
+				if hasRefRaw(updated.SourceRefs, nr.Raw) {
+					continue
+				}
+				updated.SourceRefs = append(updated.SourceRefs, nr)
+				addedRefs = append(addedRefs, nr)
+				t := ""
+				if i < len(me.newRefTargets) {
+					t = me.newRefTargets[i]
+				}
+				addedTargets = append(addedTargets, t)
 			}
 			if err := tx.UpdateKbChunk(updated); err != nil {
+				return err
+			}
+			if err := insertChunkRefEdges(tx, oldID, old.DocID, addedRefs, addedTargets, now); err != nil {
 				return err
 			}
 			// 已有问题去重
@@ -516,6 +773,28 @@ func (s *Service) insertEnrichedDoc(ctx context.Context, doc model.KbDocument, c
 		}
 		return nil
 	})
+}
+
+// insertChunkRefEdges 在事务内按块写 kb_chunk_refs；纯 anchor 跳过边表。
+func insertChunkRefEdges(tx store.KBStore, chunkID, docID string, refs []model.ChunkRef, targets []string, now time.Time) error {
+	for i, r := range refs {
+		if r.Target == "" {
+			continue
+		}
+		t := ""
+		if i < len(targets) {
+			t = targets[i]
+		}
+		row := model.KbChunkRefRow{
+			ID: model.NewID("kbref"), ChunkID: chunkID, DocID: docID,
+			TargetPath: r.Target, TargetDocID: t, Anchor: r.Anchor,
+			RefType: r.Type, Resolved: r.Resolved, CreatedAt: now,
+		}
+		if err := tx.InsertKbChunkRef(row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) embedChunks(ctx context.Context, docID string, chunks []ChunkResult, ids []string, now time.Time) []model.KbEmbedding {
@@ -607,6 +886,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			return err
 		}
 		if err := tx.DeleteKbChunks(id); err != nil {
+			return err
+		}
+		if err := tx.DeleteKbChunkRefsByDoc(id); err != nil {
 			return err
 		}
 		if err := tx.DeleteKbChunkQuestionsByDoc(id); err != nil {
