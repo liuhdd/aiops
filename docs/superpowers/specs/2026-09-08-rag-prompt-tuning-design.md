@@ -78,7 +78,7 @@ const QueryRewriteInstruction = "将下述查询结合对话历史改写为独�
 
 - 所有改动仅替换提示词文案，LLM 失败/空返回的既有降级路径（`answerFor` 规则回复、rerank 静默降级等）不变。
 - 无 `LLM_API_KEY` 时 client 为 nil，LLM 分支不执行，行为与现状一致。
-- **system 提示的叠加口径**：`ChatAnswerSystem`（回答规则）与 `KnowledgeIntro`（知识使用规则）职责不同、二者叠加使用——`answerWithLLM` 的最终 system = `prompt.ChatAnswerSystem` + "\n" + `as.System`；ReAct 分支（`react.go`）继续只消费 `as.System`，自动获得新的知识使用规则（属预期增强，单测覆盖）。
+- **system 提示的消费口径**：现状 `as.System`（assembler.go:64）无任何消费方（`rca.react` 传的是自己的内联 system）。本期起：`answerWithLLM` 的最终 system = `prompt.ChatAnswerSystem` + "\n" + `as.System`（`buildAssembled` 已返回该值，无需额外调用）；ReAct 分支维持现内联 system 不动（见 §7）。`as.System` 文案更新为 `KnowledgeIntro` 后即开始被真实消费。
 
 ## 6. 测试与验证
 
