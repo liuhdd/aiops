@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -265,5 +266,31 @@ func TestRCAReactFallsBackOnError(t *testing.T) {
 	evs, _ := cs.ListToolEvents("run-" + alert.ID)
 	if len(evs) != 5 { // max_steps 轮工具调用
 		t.Fatalf("tool events = %d, want 5", len(evs))
+	}
+}
+
+type sysCapturingLLM struct {
+	system string
+	raw    string
+}
+
+func (f *sysCapturingLLM) Complete(_ context.Context, system, _ string) (string, error) {
+	f.system = system
+	return f.raw, nil
+}
+
+func TestRCASingleCallSystemHasGapRule(t *testing.T) {
+	fake := &sysCapturingLLM{raw: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`}
+	st := &State{Alert: model.Alert{ID: "a1", Device: "db-01", Metric: "disk_usage"}}
+	if err := (NewRCAStage(fake)).Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, kw := range []string{"gaps", "禁止编造 evidence_chain", "只输出JSON", "算力中心硬件运维专家"} {
+		if !strings.Contains(fake.system, kw) {
+			t.Fatalf("system 应含 %q, got %q", kw, fake.system)
+		}
+	}
+	if st.RCA == nil || st.RCA.RootCause != "磁盘空间不足" {
+		t.Fatalf("RCA = %+v", st.RCA)
 	}
 }

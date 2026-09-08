@@ -9,6 +9,7 @@ import (
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/llm"
 	"aiops/internal/model"
+	"aiops/internal/prompt"
 )
 
 type RCAStage struct {
@@ -64,7 +65,7 @@ func (s *RCAStage) react(ctx context.Context, st *State) error {
 }
 
 func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
-	system := "你是算力中心硬件运维专家。基于给定证据输出JSON：{\"root_cause\":string,\"evidence_chain\":[string],\"confidence\":0~1,\"gaps\":[string]}。只输出JSON。"
+	system := prompt.RCASystem
 	user := ""
 	if st.Ctx != nil {
 		if as, err := st.Ctx.Assemble(ctxpkg.Query{
