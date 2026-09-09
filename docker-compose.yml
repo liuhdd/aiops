@@ -5,10 +5,21 @@ services:
     env_file: .env
     environment:
       - DB_PATH=/data/aiops.db
+      - PHOENIX_BASE_URL=http://phoenix:6006
     volumes:
       - ./data:/data
     ports:
       - "8080:8080"
+    depends_on:
+      - phoenix
+    restart: unless-stopped
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"
+    volumes:
+      - ./data/phoenix:/mnt/data
     restart: unless-stopped
 
   frontend:
