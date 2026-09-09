@@ -44,8 +44,12 @@ func TestFetchFailsOnBadStatusOrBody(t *testing.T) {
 	cases := []http.HandlerFunc{
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) },
 		func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `not-json`) },
-		func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"data":{"template":{"messages":[]}}}`) },
-		func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"data":{"template":{"messages":[{"role":"SYSTEM","content":""}]}}}`) },
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"data":{"template":{"messages":[]}}}`)
+		},
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{"data":{"template":{"messages":[{"role":"SYSTEM","content":""}]}}}`)
+		},
 	}
 	for i, h := range cases {
 		srv := httptest.NewServer(h)
