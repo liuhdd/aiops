@@ -309,6 +309,13 @@ func (r *kbRepo) DeleteKbChunkRefsByDoc(docID string) error {
 	return err
 }
 
+// CountInboundChunkRefs 统计其他文档指向该文档的引用边数（回填时仅展示，不级联）。
+func (r *kbRepo) CountInboundChunkRefs(docID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(`SELECT count(*) FROM kb_chunk_refs WHERE target_doc_id = ? AND doc_id != ?`, docID, docID).Scan(&n)
+	return n, err
+}
+
 // likeEscape 转义 LIKE 通配符，使筛选词按字面匹配。
 func likeEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
@@ -468,6 +475,10 @@ func (s *Store) ListKbChunkRefsByChunk(chunkID string) ([]model.KbChunkRefRow, e
 
 func (s *Store) DeleteKbChunkRefsByDoc(docID string) error {
 	return (&kbRepo{db: s.db}).DeleteKbChunkRefsByDoc(docID)
+}
+
+func (s *Store) CountInboundChunkRefs(docID string) (int, error) {
+	return (&kbRepo{db: s.db}).CountInboundChunkRefs(docID)
 }
 
 func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
