@@ -72,6 +72,16 @@ func TestIntentClassifySystemRendersCandidates(t *testing.T) {
 	}
 }
 
+func TestRCAGapHintBranches(t *testing.T) {
+	resetRegistry(t)
+	if got := RCAGapHint(0); got != "请基于当前证据给出根因结论。" {
+		t.Fatalf("iteration=0 应走 Go 侧文案, got %q", got)
+	}
+	if got := RCAGapHint(2); got != "这是第2轮补充取证，请重点分析新增证据。" {
+		t.Fatalf("iteration=2 应走模板, got %q", got)
+	}
+}
+
 func TestQueryRewriteInstructionKeepsEntities(t *testing.T) {
 	p := QueryRewriteInstruction("历史行", "磁盘满了怎么办")
 	for _, kw := range []string{"原样保留", "历史：历史行", "查询：磁盘满了怎么办", "仅输出改写句"} {

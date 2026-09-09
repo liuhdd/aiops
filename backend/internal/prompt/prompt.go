@@ -3,6 +3,8 @@
 // 本包禁止 import 任何 aiops/internal/* 包，供 agent/context/pipeline/retrieve/eval/kb 单向引用。
 package prompt
 
+import "fmt"
+
 // ChatAnswerSystem answerWithLLM 系统提示（Phoenix name: chat-answer-system）。
 func ChatAnswerSystem() string { return Render("chat-answer-system", nil) }
 
@@ -35,4 +37,16 @@ func IntentRewriteSplitSystem() string { return Render("intent-rewrite-split", n
 // candidates 为闭集候选列表（code+描述拼装），由 agent 侧生成。
 func IntentClassifySystem(candidates string) string {
 	return Render("intent-classify", map[string]string{"candidates": candidates})
+}
+
+// RCAReactSystem RCA ReAct 分支系统提示（Phoenix name: rca-react-system）。
+func RCAReactSystem() string { return Render("rca-react-system", nil) }
+
+// RCAGapHint RCA 回溯轮次提示（Phoenix name: rca-gap-hint）。
+// iteration==0 是「请给结论」语义分支，文案保留在 Go 侧，不上 Phoenix（spec §4）。
+func RCAGapHint(iteration int) string {
+	if iteration == 0 {
+		return "请基于当前证据给出根因结论。"
+	}
+	return Render("rca-gap-hint", map[string]string{"iteration": fmt.Sprint(iteration)})
 }
