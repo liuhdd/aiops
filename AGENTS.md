@@ -30,6 +30,7 @@ Root: `cp .env.example .env` (set `LLM_API_KEY`), then `docker compose up -d --b
 - Concurrency: `internal/coordinator` enforces a per-device serial lock. `engine.Run` holds it for the whole run (30s timeout); on timeout the run is marked `degraded`. The chat agent, simulator, and API use the raw store (global scope).
 - Chat agent (`internal/agent`): LLM multi-intent recognition (rewrite+split via light model, rule-first + light-LLM fallback per sub-question, aggregated reply with per-sub status); mentioning an alert ID triggers the pipeline on demand.
 - Context engineering: `internal/context` 包实现 Scratchpad/记忆/工具(ReAct)/知识(RAG)，每次调 LLM 前经 Selector+Assembler 挑选相关上下文；`CONTEXT_REACT`(默认1) 控制 ReAct。
+- Prompt 注册中心：`internal/prompt`（Phoenix 提示词注册中心：14 条注册表 + 运行时按 name+tag 拉取 + 默认模板兜底 + `cmd/promptctl` 灌库）。
 
 ## Gotchas
 
