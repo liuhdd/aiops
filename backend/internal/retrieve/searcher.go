@@ -204,6 +204,19 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 	if topK <= 0 {
 		topK = 3
 	}
+	// 版本过滤：快路径同样受 Query.Version 约束（与 ListKnowledgeChunksFiltered 同语义）；
+	// 空版本直通不过滤。视图加载失败则降级为未命中，走主链路判定。
+	var allowed map[string]struct{}
+	if strings.TrimSpace(q.Version) != "" {
+		kcs, err := s.st.ListKnowledgeChunksFiltered(q.Version)
+		if err != nil {
+			return nil, false, nil
+		}
+		allowed = make(map[string]struct{}, len(kcs))
+		for _, kc := range kcs {
+			allowed[kc.ChunkID] = struct{}{}
+		}
+	}
 	var res []Result
 	for _, d := range filtered {
 		chunks, err := s.st.ListKbChunksByDoc(d.ID)
@@ -211,6 +224,11 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 			continue // 单文档加载失败静默跳过
 		}
 		for _, c := range chunks {
+			if allowed != nil {
+				if _, ok := allowed[c.ID]; !ok {
+					continue
+				}
+			}
 			res = append(res, Result{
 				DocID:        d.ID,
 				Title:        d.Title,

@@ -393,6 +393,58 @@ func TestSearchQuestionChannelFallback(t *testing.T) {
 	}
 }
 
+// TestSearchFingerprintFastPathVersionFilter 指纹快路径版本过滤：共享指纹的两版本文档，
+// 带版本查询应只回命中区间的块（关闭旁路）；空版本直通两者皆回。
+func TestSearchFingerprintFastPathVersionFilter(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "fpv.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	now := time.Now()
+	if err := s.WithKBTx(func(tx store.KBStore) error {
+		if err := tx.InsertKbDocument(model.KbDocument{ID: "d-old", Title: "旧版案例", Category: model.KBCase,
+			Fingerprints: []string{"Xid 48"}, Content: "旧版内容", CreatedAt: now, UpdatedAt: now}); err != nil {
+			return err
+		}
+		if err := tx.InsertKbChunk(model.KbChunk{ID: "c-old", DocID: "d-old", Seq: 0,
+			Content: "旧版块内容", VersionMin: "2.0.0", VersionMax: "2.9.9", CreatedAt: now}); err != nil {
+			return err
+		}
+		if err := tx.InsertKbDocument(model.KbDocument{ID: "d-new", Title: "新版案例", Category: model.KBCase,
+			Fingerprints: []string{"Xid 48"}, Content: "新版内容", CreatedAt: now, UpdatedAt: now}); err != nil {
+			return err
+		}
+		return tx.InsertKbChunk(model.KbChunk{ID: "c-new", DocID: "d-new", Seq: 0,
+			Content: "新版块内容", VersionMin: "3.0.0", VersionMax: "3.9.9", CreatedAt: now})
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// 指纹开关默认开启（NewSearcher），复现旁路的原始条件。
+	se := NewSearcher(s, nil)
+	only := func(version string) []string {
+		t.Helper()
+		res, err := se.SearchCases(context.Background(), Query{Text: "系统报 Xid 48 故障", Version: version}, Options{TopK: 10})
+		if err != nil {
+			t.Fatalf("SearchCases version=%q: %v", version, err)
+		}
+		ids := make([]string, 0, len(res))
+		for _, r := range res {
+			ids = append(ids, r.DocID)
+		}
+		return ids
+	}
+	if got := only("2.5.0"); len(got) != 1 || got[0] != "d-old" {
+		t.Fatalf("2.5.0 应只回旧版（快路径需过滤新版），got %v", got)
+	}
+	if got := only("3.1.0"); len(got) != 1 || got[0] != "d-new" {
+		t.Fatalf("3.1.0 应只回新版（快路径需过滤旧版），got %v", got)
+	}
+	if got := only(""); len(got) != 2 {
+		t.Fatalf("空版本应直通两者皆回，got %v", got)
+	}
+}
+
 // TestSearchVersionFilter 版本过滤透传：同关键词两案例分属不交版本区间，
 // Query.Version 应只召回命中区间的文档；空版本返回全量。
 // 区间直接落盘（含 Max 上界）；经 Upload 只能造下界区间（frontmatter 无上界形式），
