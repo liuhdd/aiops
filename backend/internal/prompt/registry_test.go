@@ -1,11 +1,14 @@
 package prompt
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 func resetRegistry(t *testing.T) {
@@ -97,13 +100,29 @@ func TestRenderSingleflightWithinTTL(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"template":{"messages":[{"role":"SYSTEM","content":"V"}]}}}`))
 	}))
 	defer srv.Close()
-	Configure(NewPhoenixFetcher(srv.URL, "production", ""), time.Minute)
+	f := NewPhoenixFetcher(srv.URL, "production", "")
+	// 顺序调用：证 TTL 缓存。
+	Configure(f, time.Minute)
 	for i := 0; i < 10; i++ {
 		if got := Render("rca-gap-hint", nil); got != "V" {
 			t.Fatalf("got %q", got)
 		}
 	}
-	if got := n.Load(); got != 1 {
-		t.Fatalf("TTL 内 10 次调用应只请求 1 次, got %d", got)
+	// 并发调用：证 singleflight 合并，10 个 goroutine 只触发 1 次真实拉取。
+	Configure(f, time.Minute) // 清缓存，进入首次拉取路径
+	var g errgroup.Group
+	for i := 0; i < 10; i++ {
+		g.Go(func() error {
+			if got := Render("rca-gap-hint", nil); got != "V" {
+				return fmt.Errorf("Render = %q", got)
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if got := n.Load(); got != 2 { // 顺序阶段 1 次 + 并发阶段合并后 1 次
+		t.Fatalf("顺序+并发共 20 次调用应只请求 2 次, got %d", got)
 	}
 }

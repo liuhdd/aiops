@@ -30,13 +30,18 @@ func main() {
 			names = append(names, n)
 		}
 		sort.Strings(names)
+		failed := 0
 		for _, n := range names {
 			e := prompt.All[n]
 			if err := f.Push(n, e.Role, e.Default, cfg.LLMModel); err != nil {
 				log.Printf("push %s 失败: %v", n, err)
+				failed++
 				continue
 			}
 			fmt.Println("pushed:", n)
+		}
+		if failed > 0 { // 部分成功也算失败退出，便于 CI 感知
+			os.Exit(1)
 		}
 	case "list":
 		ps, err := f.List()

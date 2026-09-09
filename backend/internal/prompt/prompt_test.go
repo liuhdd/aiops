@@ -110,3 +110,30 @@ func TestQueryRewriteInstructionKeepsEntities(t *testing.T) {
 		}
 	}
 }
+
+func TestIntentRewriteSplitSystemContainsSplitRule(t *testing.T) {
+	resetRegistry(t)
+	for _, kw := range []string{"问题理解模块", "sub_questions", "rewritten"} {
+		if !strings.Contains(IntentRewriteSplitSystem(), kw) {
+			t.Fatalf("IntentRewriteSplitSystem 应含 %q: %s", kw, IntentRewriteSplitSystem())
+		}
+	}
+}
+
+func TestRCAReactSystemContainsReActRule(t *testing.T) {
+	resetRegistry(t)
+	for _, kw := range []string{"write_scratchpad", "final_answer", "gaps"} {
+		if !strings.Contains(RCAReactSystem(), kw) {
+			t.Fatalf("RCAReactSystem 应含 %q: %s", kw, RCAReactSystem())
+		}
+	}
+}
+
+func TestEvalJudgeSystemContainsVerdictRule(t *testing.T) {
+	resetRegistry(t)
+	for _, kw := range []string{"INSUFFICIENT_INFO", "score", "verdict"} {
+		if !strings.Contains(EvalJudgeSystem(), kw) {
+			t.Fatalf("EvalJudgeSystem 应含 %q: %s", kw, EvalJudgeSystem())
+		}
+	}
+}

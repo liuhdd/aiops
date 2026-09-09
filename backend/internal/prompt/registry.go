@@ -72,7 +72,7 @@ type cacheItem struct {
 }
 
 // Configure 注入 Phoenix 拉取器；f 为 nil 即关闭拉取并清缓存（测试用它复位）。
-// d <= 0 时用默认 TTL。未调用本函数时 Render 永远走默认模板。
+// d <= 0 时保留当前 TTL（未显式设置过即为默认值）。未调用本函数时 Render 永远走默认模板。
 func Configure(f *PhoenixFetcher, d time.Duration) {
 	mu.Lock()
 	defer mu.Unlock()
