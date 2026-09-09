@@ -62,7 +62,7 @@ func (a *Assembler) Assemble(q Query, includeTools bool, tools []Tool) (*Assembl
 			sections = append(sections, sec)
 		}
 	}
-	out.System = prompt.KnowledgeIntro
+	out.System = prompt.KnowledgeIntro()
 	out.User = strings.Join(sections, "\n")
 	return out, nil
 }

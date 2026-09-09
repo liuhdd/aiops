@@ -7,8 +7,8 @@ import (
 
 func TestChatAnswerSystemContainsCoreRules(t *testing.T) {
 	for _, kw := range []string{"暂无相关信息", "禁止编造", "禁止使用自身知识补充", "算力中心硬件运维助手", "分点回答"} {
-		if !strings.Contains(ChatAnswerSystem, kw) {
-			t.Fatalf("ChatAnswerSystem 应含 %q: %s", kw, ChatAnswerSystem)
+		if !strings.Contains(ChatAnswerSystem(), kw) {
+			t.Fatalf("ChatAnswerSystem 应含 %q: %s", kw, ChatAnswerSystem())
 		}
 	}
 }
@@ -24,25 +24,41 @@ func TestChatAnswerUserKeepsStructure(t *testing.T) {
 
 func TestKnowledgeIntroContainsUsageRules(t *testing.T) {
 	for _, kw := range []string{"标注来源", "无相关信息时", "以下是当前任务相关的上下文信息"} {
-		if !strings.Contains(KnowledgeIntro, kw) {
-			t.Fatalf("KnowledgeIntro 应含 %q: %s", kw, KnowledgeIntro)
+		if !strings.Contains(KnowledgeIntro(), kw) {
+			t.Fatalf("KnowledgeIntro 应含 %q: %s", kw, KnowledgeIntro())
 		}
 	}
 }
 
 func TestRCASystemContainsGapRule(t *testing.T) {
 	for _, kw := range []string{"gaps", "禁止编造 evidence_chain", "只输出JSON", "算力中心硬件运维专家"} {
-		if !strings.Contains(RCASystem, kw) {
-			t.Fatalf("RCASystem 应含 %q: %s", kw, RCASystem)
+		if !strings.Contains(RCASystem(), kw) {
+			t.Fatalf("RCASystem 应含 %q: %s", kw, RCASystem())
 		}
 	}
 }
 
 func TestRecommendSystemContainsRunbookRule(t *testing.T) {
 	for _, kw := range []string{"无预案参考", "runbook_ref", "只输出JSON"} {
-		if !strings.Contains(RecommendSystem, kw) {
-			t.Fatalf("RecommendSystem 应含 %q: %s", kw, RecommendSystem)
+		if !strings.Contains(RecommendSystem(), kw) {
+			t.Fatalf("RecommendSystem 应含 %q: %s", kw, RecommendSystem())
 		}
+	}
+}
+
+func TestAccessorsUseRegistry(t *testing.T) {
+	resetRegistry(t)
+	if ChatAnswerSystem() != All["chat-answer-system"].Default {
+		t.Fatal("ChatAnswerSystem 未走注册表默认模板")
+	}
+	if KnowledgeIntro() != All["knowledge-intro"].Default {
+		t.Fatal("KnowledgeIntro 未走注册表默认模板")
+	}
+	if RCASystem() != All["rca-system"].Default {
+		t.Fatal("RCASystem 未走注册表默认模板")
+	}
+	if RecommendSystem() != All["recommend-system"].Default {
+		t.Fatal("RecommendSystem 未走注册表默认模板")
 	}
 }
 

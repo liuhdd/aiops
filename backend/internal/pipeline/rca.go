@@ -65,7 +65,7 @@ func (s *RCAStage) react(ctx context.Context, st *State) error {
 }
 
 func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
-	system := prompt.RCASystem
+	system := prompt.RCASystem()
 	user := ""
 	if st.Ctx != nil {
 		if as, err := st.Ctx.Assemble(ctxpkg.Query{
