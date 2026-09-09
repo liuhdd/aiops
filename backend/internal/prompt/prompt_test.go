@@ -82,6 +82,16 @@ func TestRCAGapHintBranches(t *testing.T) {
 	}
 }
 
+func TestEvalJudgeUserRenders(t *testing.T) {
+	resetRegistry(t)
+	got := EvalJudgeUser("t-1", "EV", "RCA", "根因是否准确")
+	for _, kw := range []string{"评测任务: t-1", "证据:EV", "RCA:RCA", "评分维度: 根因是否准确"} {
+		if !strings.Contains(got, kw) {
+			t.Fatalf("EvalJudgeUser 应含 %q: %s", kw, got)
+		}
+	}
+}
+
 func TestQueryRewriteInstructionKeepsEntities(t *testing.T) {
 	p := QueryRewriteInstruction("历史行", "磁盘满了怎么办")
 	for _, kw := range []string{"原样保留", "历史：历史行", "查询：磁盘满了怎么办", "仅输出改写句"} {

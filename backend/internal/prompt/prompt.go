@@ -50,3 +50,13 @@ func RCAGapHint(iteration int) string {
 	}
 	return Render("rca-gap-hint", map[string]string{"iteration": fmt.Sprint(iteration)})
 }
+
+// EvalJudgeSystem 评测 LLM 评委系统提示（Phoenix name: eval-judge-system）。
+func EvalJudgeSystem() string { return Render("eval-judge-system", nil) }
+
+// EvalJudgeUser 评测 LLM 评委用户消息（Phoenix name: eval-judge-user）。
+func EvalJudgeUser(taskID, evidence, rca, rubric string) string {
+	return Render("eval-judge-user", map[string]string{
+		"task_id": taskID, "evidence": evidence, "rca": rca, "rubric": rubric,
+	})
+}
