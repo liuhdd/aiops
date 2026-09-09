@@ -72,22 +72,29 @@ func (f *PhoenixFetcher) Fetch(name string) (string, bool) {
 	return "", false
 }
 
-// pushRequestBody 对应 Phoenix REST API 新建 prompt 请求体。
+// pushRequestBody 对应 Phoenix REST API 新建 prompt 请求体（2026-09 实测 schema：外层 prompt 包装，
+// version 需 CHAT/F_STRING/invocation_parameters，template 需判别字段 type=chat，role 用小写）。
 type pushRequestBody struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Version     pushVersionBody `json:"version"`
+	Prompt  pushPromptBody  `json:"prompt"`
+	Version pushVersionBody `json:"version"`
+}
+
+type pushPromptBody struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
 }
 
 type pushVersionBody struct {
-	ModelProvider  string       `json:"model_provider"`
-	ModelName      string       `json:"model_name"`
-	TemplateType   string       `json:"template_type"`
-	TemplateFormat string       `json:"template_format"`
-	Template       pushTemplate `json:"template"`
+	ModelProvider        string          `json:"model_provider"`
+	ModelName            string          `json:"model_name"`
+	TemplateType         string          `json:"template_type"`
+	TemplateFormat       string          `json:"template_format"`
+	InvocationParameters json.RawMessage `json:"invocation_parameters"`
+	Template             pushTemplate    `json:"template"`
 }
 
 type pushTemplate struct {
+	Type     string        `json:"type"`
 	Messages []pushMessage `json:"messages"`
 }
 
@@ -96,16 +103,21 @@ type pushMessage struct {
 	Content string `json:"content"`
 }
 
-// Push 新建 prompt（含首个版本）；已存在的 name 由 Phoenix 侧新建版本。
+// invocationParameters Phoenix 实测必填：{"type":"openai","openai":{}}。
+var invocationParameters = json.RawMessage(`{"type":"openai","openai":{}}`)
+
+// Push 新建 prompt（含首个版本）并给该版本打上 f.Tag（Fetch 按 name+tag 拉取，灌库后即可被运行时命中）；
+// 已存在的 name 由 Phoenix 侧新建版本。
 func (f *PhoenixFetcher) Push(name, role, content, modelName string) error {
 	payload := pushRequestBody{
-		Name: name,
+		Prompt: pushPromptBody{Name: name},
 		Version: pushVersionBody{
-			ModelProvider:  "OPENAI",
-			ModelName:      modelName,
-			TemplateType:   "STRING",
-			TemplateFormat: "FSTRING",
-			Template:       pushTemplate{Messages: []pushMessage{{Role: toUpperRole(role), Content: content}}},
+			ModelProvider:        "OPENAI",
+			ModelName:            modelName,
+			TemplateType:         "CHAT",
+			TemplateFormat:       "F_STRING",
+			InvocationParameters: invocationParameters,
+			Template:             pushTemplate{Type: "chat", Messages: []pushMessage{{Role: role, Content: content}}},
 		},
 	}
 	bs, err := json.Marshal(payload)
@@ -123,9 +135,44 @@ func (f *PhoenixFetcher) Push(name, role, content, modelName string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&created); err != nil {
+		return err
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("push %s: status %d", name, resp.StatusCode)
+	}
+	if created.Data.ID == "" {
+		return fmt.Errorf("push %s: 响应缺少版本 id", name)
+	}
+	return f.tagVersion(created.Data.ID, f.Tag)
+}
+
+// tagVersion 给指定 prompt 版本打 tag（POST /v1/prompt_versions/{id}/tags），使 Fetch 按 name+tag 可命中。
+func (f *PhoenixFetcher) tagVersion(versionID, tag string) error {
+	bs, err := json.Marshal(map[string]string{"name": tag})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost,
+		f.BaseURL+"/v1/prompt_versions/"+url.PathEscape(versionID)+"/tags", bytes.NewReader(bs))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	f.setAuth(req)
+	resp, err := f.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("tag %s on %s: status %d", tag, versionID, resp.StatusCode)
 	}
 	return nil
 }
@@ -164,12 +211,4 @@ func (f *PhoenixFetcher) setAuth(req *http.Request) {
 	if f.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+f.APIKey)
 	}
-}
-
-// toUpperRole 把 "system"/"user" 归一为 Phoenix 的 "SYSTEM"/"USER"。
-func toUpperRole(role string) string {
-	if role == "user" {
-		return "USER"
-	}
-	return "SYSTEM"
 }

@@ -74,30 +74,66 @@ func TestFetchFailsOnTimeout(t *testing.T) {
 }
 
 func TestPushCreatesPromptWithTemplate(t *testing.T) {
-	var body map[string]any
+	var body, tagBody map[string]any
+	var tagPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/prompts" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/prompts":
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = io.WriteString(w, `{"data":{"id":"v-1"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/prompt_versions/v-1/tags":
+			tagPath = r.URL.Path
+			_ = json.NewDecoder(r.Body).Decode(&tagBody)
+			w.WriteHeader(http.StatusNoContent)
+		default:
 			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		_, _ = io.WriteString(w, `{"data":{"id":"p-1"}}`)
 	}))
 	defer srv.Close()
 	f := NewPhoenixFetcher(srv.URL, "production", "")
 	if err := f.Push("rca-system", "system", "你好 {{x}}", "deepseek-chat"); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
-	if body["name"] != "rca-system" {
-		t.Fatalf("name = %v", body["name"])
+	prm, ok := body["prompt"].(map[string]any)
+	if !ok || prm["name"] != "rca-system" {
+		t.Fatalf("prompt = %v", body["prompt"])
 	}
-	ver := body["version"].(map[string]any)
-	if ver["model_name"] != "deepseek-chat" || ver["template_format"] != "FSTRING" {
+	ver, ok := body["version"].(map[string]any)
+	if !ok {
+		t.Fatalf("version 缺失: %v", body)
+	}
+	if ver["model_name"] != "deepseek-chat" || ver["template_type"] != "CHAT" || ver["template_format"] != "F_STRING" {
 		t.Fatalf("version = %v", ver)
 	}
-	msgs := ver["template"].(map[string]any)["messages"].([]any)
+	if inv, ok := ver["invocation_parameters"].(map[string]any); !ok || inv["type"] != "openai" {
+		t.Fatalf("invocation_parameters = %v", ver["invocation_parameters"])
+	}
+	tpl, ok := ver["template"].(map[string]any)
+	if !ok || tpl["type"] != "chat" {
+		t.Fatalf("template = %v", ver["template"])
+	}
+	msgs := tpl["messages"].([]any)
 	m0 := msgs[0].(map[string]any)
-	if m0["role"] != "SYSTEM" || m0["content"] != "你好 {{x}}" {
+	if m0["role"] != "system" || m0["content"] != "你好 {{x}}" {
 		t.Fatalf("messages[0] = %v", m0)
+	}
+	if tagPath != "/v1/prompt_versions/v-1/tags" || tagBody["name"] != "production" {
+		t.Fatalf("新建版本未按 tag=%s 打标: %s %v", "production", tagPath, tagBody)
+	}
+}
+
+func TestPushFailsWhenTaggingFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/prompt_versions/v-1/tags" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{"id":"v-1"}}`)
+	}))
+	defer srv.Close()
+	f := NewPhoenixFetcher(srv.URL, "production", "")
+	if err := f.Push("a", "system", "x", "m"); err == nil {
+		t.Fatal("打 tag 失败应返回错误")
 	}
 }
 
