@@ -92,6 +92,16 @@ func TestEvalJudgeUserRenders(t *testing.T) {
 	}
 }
 
+func TestKBPromptsRender(t *testing.T) {
+	resetRegistry(t)
+	if got := KBSummarizePrompt("某设备处置手册"); !strings.Contains(got, "1-2句") || !strings.Contains(got, "某设备处置手册") {
+		t.Fatalf("KBSummarizePrompt = %q", got)
+	}
+	if got := KBGenQuestionsPrompt("某设备处置手册"); !strings.Contains(got, "2-3个") || !strings.Contains(got, "某设备处置手册") {
+		t.Fatalf("KBGenQuestionsPrompt = %q", got)
+	}
+}
+
 func TestQueryRewriteInstructionKeepsEntities(t *testing.T) {
 	p := QueryRewriteInstruction("历史行", "磁盘满了怎么办")
 	for _, kw := range []string{"原样保留", "历史：历史行", "查询：磁盘满了怎么办", "仅输出改写句"} {

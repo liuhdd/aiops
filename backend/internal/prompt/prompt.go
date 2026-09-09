@@ -60,3 +60,13 @@ func EvalJudgeUser(taskID, evidence, rca, rubric string) string {
 		"task_id": taskID, "evidence": evidence, "rca": rca, "rubric": rubric,
 	})
 }
+
+// KBSummarizePrompt 知识库富化摘要提示（Phoenix name: kb-summarize）。
+func KBSummarizePrompt(content string) string {
+	return Render("kb-summarize", map[string]string{"content": content})
+}
+
+// KBGenQuestionsPrompt 知识库富化出题提示（Phoenix name: kb-gen-questions）。
+func KBGenQuestionsPrompt(content string) string {
+	return Render("kb-gen-questions", map[string]string{"content": content})
+}

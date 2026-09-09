@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	aiprompt "aiops/internal/prompt"
 )
 
 // Completer LLM 补全最小接口。
@@ -34,8 +36,8 @@ func Summarize(ctx context.Context, lc Completer, chunk string) (string, error) 
 	}
 	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	prompt := "用1-2句中文概括下列运维知识的核心处置/根因，不要扩写：\n" + chunk
-	out, err := lc.Complete(ctx2, prompt)
+	p := aiprompt.KBSummarizePrompt(chunk)
+	out, err := lc.Complete(ctx2, p)
 	if err != nil {
 		return "", err
 	}
@@ -53,8 +55,8 @@ func GenerateQuestions(ctx context.Context, lc Completer, chunk string) ([]strin
 	}
 	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	prompt := "基于下列运维知识，列出它能回答的2-3个用户提问，运维口吻，每行一问，不要编号：\n" + chunk
-	out, err := lc.Complete(ctx2, prompt)
+	p := aiprompt.KBGenQuestionsPrompt(chunk)
+	out, err := lc.Complete(ctx2, p)
 	if err != nil {
 		return nil, err
 	}
