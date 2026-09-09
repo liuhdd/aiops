@@ -27,3 +27,12 @@ func ChatAnswerUser(alertID, device, metric, rca, actions, contextText, question
 func QueryRewriteInstruction(history, q string) string {
 	return Render("query-rewrite", map[string]string{"history": history, "query": q})
 }
+
+// IntentRewriteSplitSystem 轻量 LLM 问题重写与多意图拆分系统提示（Phoenix name: intent-rewrite-split）。
+func IntentRewriteSplitSystem() string { return Render("intent-rewrite-split", nil) }
+
+// IntentClassifySystem 轻量 LLM 意图分类系统提示（Phoenix name: intent-classify）；
+// candidates 为闭集候选列表（code+描述拼装），由 agent 侧生成。
+func IntentClassifySystem(candidates string) string {
+	return Render("intent-classify", map[string]string{"candidates": candidates})
+}
