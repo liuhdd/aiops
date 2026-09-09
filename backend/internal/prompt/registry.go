@@ -62,7 +62,7 @@ var (
 	fetcher *PhoenixFetcher // nil = 未配置，全走默认模板
 	ttl     = defaultTTL
 	cache   = map[string]cacheItem{}
-	group   singleflight.Group
+	group   = &singleflight.Group{}
 	warnAt  = map[string]time.Time{}
 )
 
@@ -82,7 +82,9 @@ func Configure(f *PhoenixFetcher, d time.Duration) {
 	}
 	cache = map[string]cacheItem{}
 	warnAt = map[string]time.Time{}
-	group = singleflight.Group{} // 丢弃在途合并态，避免新配置的调用与旧拉取并成一次
+	// group 整体换新（mu 保护下仅换指针，不触碰旧 group 内部字段）：
+	// 防止新配置的调用被合并进在途旧拉取；旧拉取结果另由 fetcher != f 校验作废。
+	group = &singleflight.Group{}
 }
 
 // Render 取 name 对应生效模板并渲染 {{var}}；未注册 name 返回空串。
@@ -132,7 +134,10 @@ func refresh(name string) {
 	if !ok {
 		return
 	}
-	group.Do(name, func() (any, error) {
+	mu.RLock()
+	g := group // 快照当前 group，避免 Do 执行期间与 Configure 换新竞争
+	mu.RUnlock()
+	g.Do(name, func() (any, error) {
 		mu.RLock()
 		c, hit := cache[name]
 		f := fetcher
