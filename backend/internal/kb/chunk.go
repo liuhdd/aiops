@@ -81,7 +81,7 @@ func Chunk(content string) (out []ChunkResult) {
 
 // blockSpan 顶层块的原文行区间与原子属性。
 type blockSpan struct {
-	start, end int // 原文行区间 [start, end)，不含标题行
+	start, end int  // 原文行区间 [start, end)，不含标题行
 	atomic     bool // 表格/代码块/引用块/列表：不可从中间拆分
 	ordered    bool // 有序列表（步骤序列）
 }

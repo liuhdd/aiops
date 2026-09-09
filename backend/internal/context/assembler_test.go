@@ -106,10 +106,10 @@ type mockSearcher struct {
 	cases   []retrieve.Result
 	manuals []retrieve.Result
 
-	lastCasesQuery  retrieve.Query
+	lastCasesQuery   retrieve.Query
 	lastManualsQuery retrieve.Query
-	lastCasesOpts   retrieve.Options
-	lastManualsOpts retrieve.Options
+	lastCasesOpts    retrieve.Options
+	lastManualsOpts  retrieve.Options
 }
 
 func (m *mockSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {

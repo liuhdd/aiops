@@ -923,6 +923,16 @@ func (s *Service) rechunkInputs(docID string) (*rechunkPlan, error) {
 		return &rechunkPlan{doc: doc, old: old}, nil
 	}
 	docVer := ParseDocVersion(body, meta)
+	if docVer == (VersionRange{}) {
+		// 新管线入库时已剥离 frontmatter，重切时 meta 必然为空；
+		// frontmatter-only 文档此时解析为空，用持久化版本字符串回退，避免静默清空版本。
+		// 块级标注（Available since 等）是正文行，随 Content 落库可被 ParseChunkVersion 直接命中，
+		// 故仅文档级需要此回退。
+		if v := parseVersionExpr(strings.TrimSpace(doc.Version)); v != (VersionRange{}) {
+			docVer = v
+			meta.Version = strings.TrimSpace(doc.Version)
+		}
+	}
 	inlined := InlineEmbeds(body, s.embedLookup(), s.embedDepth())
 	inputs := s.buildChunkInputs(body, Chunk(inlined), docVer)
 	s.logFlowOverflow(inputs)

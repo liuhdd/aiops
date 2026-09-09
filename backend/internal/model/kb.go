@@ -33,21 +33,21 @@ type KbDocument struct {
 	Content      string     `json:"content"`
 	Fingerprints []string   `json:"fingerprints"`
 	// 技术文档版本范围（版本提取任务填充）。
-	Version    string `json:"version"`
-	VersionMin string `json:"version_min"`
-	VersionMax string `json:"version_max"`
+	Version    string    `json:"version"`
+	VersionMin string    `json:"version_min"`
+	VersionMax string    `json:"version_max"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type KbChunk struct {
-	ID           string    `json:"id"`
-	DocID        string    `json:"doc_id"`
-	Seq          int       `json:"seq"`
-	Heading      string    `json:"heading"`
-	Content      string    `json:"content"`
-	Summary      string    `json:"summary"`
-	SourceDocIDs []string  `json:"source_doc_ids"`
+	ID           string   `json:"id"`
+	DocID        string   `json:"doc_id"`
+	Seq          int      `json:"seq"`
+	Heading      string   `json:"heading"`
+	Content      string   `json:"content"`
+	Summary      string   `json:"summary"`
+	SourceDocIDs []string `json:"source_doc_ids"`
 	// 技术文档切块元数据：标题路径、版本范围、源码引用、是否为流程块。
 	VersionMin  string     `json:"version_min"`
 	VersionMax  string     `json:"version_max"`
@@ -121,6 +121,6 @@ type KbKnowledgeChunk struct {
 	VersionMin string
 	VersionMax string
 	// 标题路径（如“GPU 运维 > 掉卡处置”），回显用。
-	HeadingPath  string
-	CreatedAt    time.Time
+	HeadingPath string
+	CreatedAt   time.Time
 }
