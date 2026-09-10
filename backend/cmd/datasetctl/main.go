@@ -147,7 +147,22 @@ func cmdExperiment(c *phoenix.Client, args []string) {
 		}
 		fmt.Printf("experiment 已回写: %s（%d configs）\n", prefix, len(rep.Meta.Configs))
 	case "rag":
-		log.Fatal("rag 回写将在后续任务提供")
+		var rep goldenset.RagReport
+		if err := json.Unmarshal(b, &rep); err != nil {
+			log.Fatalf("报告解析失败: %v", err)
+		}
+		dsID, err := findDataset(c, goldenset.RagDatasetName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		prefix := *name
+		if prefix == "" {
+			prefix = goldenset.RagDatasetName
+		}
+		if err := goldenset.PushRagExperiment(c, dsID, rep, prefix); err != nil {
+			log.Fatalf("回写失败: %v", err)
+		}
+		fmt.Printf("experiment 已回写: %s/rag（%d items）\n", prefix, len(rep.Items))
 	}
 }
 
