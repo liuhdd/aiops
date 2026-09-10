@@ -36,15 +36,8 @@ func main() {
 
 	// locate golden file: handle both "testdata/..." (cwd=backend) and "backend/testdata/..." (cwd=backend)
 	goldenPath := resolveGoldenPath(*golden)
-	f, err := os.Open(goldenPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "无法打开标注集 %s (%s): %v\n", *golden, goldenPath, err)
-		os.Exit(1)
-	}
-	defer f.Close()
 
-	var items []goldenset.Item
-	items, err = goldenset.Load(goldenPath)
+	items, err := goldenset.Load(goldenPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "标注集解析失败: %v\n", err)
 		os.Exit(1)
