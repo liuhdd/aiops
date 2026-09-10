@@ -69,3 +69,20 @@ func ComputeRejectRate(results map[string][]string, expects map[string]string) f
 	}
 	return float64(ok) / float64(tot)
 }
+
+// ComputePrecisionAtK 命中相关文档数 / K（K<=0 或结果为空时返回 0）。
+func ComputePrecisionAtK(ranked []string, relevant map[string]bool, k int) float64 {
+	if k <= 0 {
+		return 0
+	}
+	hits := 0
+	for i, id := range ranked {
+		if i >= k {
+			break
+		}
+		if relevant[id] {
+			hits++
+		}
+	}
+	return float64(hits) / float64(k)
+}

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestComputeNDCG(t *testing.T) {
 	ranked := []string{"d2", "d1", "d3"}
@@ -29,5 +32,15 @@ func TestComputeRejectRate(t *testing.T) {
 	got := ComputeRejectRate(results, expects)
 	if got != 0.5 {
 		t.Fatalf("RejectRate=%v want 0.5", got)
+	}
+}
+func TestComputePrecisionAtK(t *testing.T) {
+	ranked := []string{"a", "b", "c"}
+	relevant := map[string]bool{"a": true}
+	if got := ComputePrecisionAtK(ranked, relevant, 3); math.Abs(got-1.0/3.0) > 1e-9 {
+		t.Fatalf("precision = %v, want 1/3", got)
+	}
+	if got := ComputePrecisionAtK(ranked, relevant, 1); got != 1 {
+		t.Fatalf("precision@1 = %v", got)
 	}
 }

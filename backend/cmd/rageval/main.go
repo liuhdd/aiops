@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"aiops/internal/config"
 	"aiops/internal/goldenset"
@@ -22,6 +23,7 @@ func main() {
 	golden := flag.String("golden", "testdata/golden_set.jsonl", "golden set jsonl path")
 	generate := flag.Bool("generate", false, "生成模式：按种子文档批量出题")
 	enhance := flag.Bool("enhance", true, "是否启用富化")
+	out := flag.String("o", "", "结构化报告输出路径（JSON）")
 	flag.Parse()
 
 	if *generate {
@@ -148,13 +150,14 @@ func main() {
 
 	// per-type 聚合
 	type agg struct {
-		Count       int
-		HitCount    int
-		RejectCount int
-		SumMRR      float64
-		SumNDCG     float64
-		SumRecall   float64
-		RejectOK    int
+		Count        int
+		HitCount     int
+		RejectCount  int
+		SumMRR       float64
+		SumNDCG      float64
+		SumRecall    float64
+		SumPrecision float64
+		RejectOK     int
 	}
 	perType := map[string]*agg{}
 	overallHit := &agg{}
@@ -164,6 +167,7 @@ func main() {
 	// 用于 ComputeRejectRate 的输入
 	resultsMap := map[string][]string{}
 	expectsMap := map[string]string{}
+	var itemResults []goldenset.ItemResult
 
 	for _, it := range items {
 		k := it.TopK
@@ -172,7 +176,9 @@ func main() {
 		}
 		// 检索：统一走 SearchCases（种子库均为 case；manual 通道命中为 0 亦不影响指标）
 		ctx := context.Background()
+		qStart := time.Now()
 		res, err := searcher.SearchCases(ctx, retrieve.Query{Text: it.Question}, retrieve.Options{TopK: k})
+		qEnd := time.Now()
 		if err != nil {
 			// 静默降级：按空结果计
 			res = nil
@@ -190,12 +196,19 @@ func main() {
 			perType[it.Type] = ag
 		}
 		ag.Count++
+
+		ir := goldenset.ItemResult{
+			ID: it.ID, Type: it.Type, Question: it.Question, TopK: k,
+			RankedDocIDs: ranked, Behavior: it.Expect.Behavior,
+			StartedAt: qStart, EndedAt: qEnd,
+		}
 		if it.Expect.Behavior == "reject" {
 			ag.RejectCount++
 			overallRejectTotal++
 			if len(ranked) == 0 {
 				ag.RejectOK++
 				overallRejectOK++
+				ir.RejectOK = true
 			}
 		} else {
 			ag.HitCount++
@@ -208,13 +221,18 @@ func main() {
 			mrr := ComputeMRR(ranked, relevant)
 			ndcg := ComputeNDCG(ranked, relevant, k)
 			rec := ComputeRecallAtK(ranked, relevant, k)
+			prec := ComputePrecisionAtK(ranked, relevant, k)
 			ag.SumMRR += mrr
 			ag.SumNDCG += ndcg
 			ag.SumRecall += rec
+			ag.SumPrecision += prec
 			overallHit.SumMRR += mrr
 			overallHit.SumNDCG += ndcg
 			overallHit.SumRecall += rec
+			overallHit.SumPrecision += prec
+			ir.MRR, ir.NDCG, ir.Recall, ir.Precision = mrr, ndcg, rec, prec
 		}
+		itemResults = append(itemResults, ir)
 	}
 
 	fmt.Printf("rageval: loaded %s (%d items)\n", goldenPath, len(items))
@@ -249,6 +267,13 @@ func main() {
 		overallAvgNDCG = fmt.Sprintf("%.3f", overallHit.SumNDCG/float64(overallHit.Count))
 		overallAvgRec = fmt.Sprintf("%.3f", overallHit.SumRecall/float64(overallHit.Count))
 	}
+	var overallMRRf, overallNDCGf, overallRecf, overallPrecf float64
+	if overallHit.Count > 0 {
+		overallMRRf = overallHit.SumMRR / float64(overallHit.Count)
+		overallNDCGf = overallHit.SumNDCG / float64(overallHit.Count)
+		overallRecf = overallHit.SumRecall / float64(overallHit.Count)
+		overallPrecf = overallHit.SumPrecision / float64(overallHit.Count)
+	}
 	overallRejectRate := "-"
 	if overallRejectTotal > 0 {
 		overallRejectRate = fmt.Sprintf("%.3f", float64(overallRejectOK)/float64(overallRejectTotal))
@@ -257,6 +282,23 @@ func main() {
 	}
 	fmt.Printf("%-18s %4d %6s %8s %8s %10s\n", "overall", len(items), overallAvgMRR, overallAvgNDCG, overallAvgRec, overallRejectRate)
 	fmt.Printf("hit_items=%d reject_items=%d reject_ok=%d\n", overallHit.Count, overallRejectTotal, overallRejectOK)
+
+	if *out != "" {
+		rep := goldenset.RagReport{
+			Meta:  goldenset.RagMeta{Timestamp: time.Now(), Enhance: *enhance, TopK: 3},
+			Items: itemResults,
+			Overall: goldenset.Overall{
+				HitCount: overallHit.Count, RejectCount: overallRejectTotal, RejectOK: overallRejectOK,
+				MRR: overallMRRf, NDCG: overallNDCGf, Recall: overallRecf, Precision: overallPrecf,
+			},
+		}
+		b, _ := rep.ToJSON()
+		if err := os.WriteFile(*out, b, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "写报告失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("报告已写入 %s\n", *out)
+	}
 }
 
 // resolveGoldenPath 尝试解析标注集路径，兼容 backend/ 前缀与相对路径差异
