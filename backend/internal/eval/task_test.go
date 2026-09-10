@@ -117,18 +117,31 @@ func TestChatMultiRecommendExists(t *testing.T) {
 }
 
 func TestNewPipelineTasks(t *testing.T) {
-	ids := map[string]bool{}
-	for _, tk := range DefaultTasks() {
-		ids[tk.ID] = true
-	}
 	for _, id := range []string{"cpu-hot-db-01", "mem-oom-compute-01", "disk-full-web-01", "disk-full-storage-01"} {
-		if !ids[id] {
+		tk, ok := TaskByID(id)
+		if !ok {
 			t.Fatalf("缺 pipeline 任务 %s", id)
 		}
+		if !tk.Extended {
+			t.Fatalf("新题应为 Extended: %+v", tk)
+		}
 	}
-	tk, _ := TaskByID("mem-oom-compute-01")
-	if !tk.Extended {
-		t.Fatalf("新题应为 Extended: %+v", tk)
+}
+
+func TestChatScenesCoverPositiveIntents(t *testing.T) {
+	// 触发流水线的正例 chat 意图必须已播种告警场景，否则 inspect/根因/建议路径不会被实际执行。
+	positive := map[string]bool{
+		"AskRootCause":      true,
+		"AskRecommendation": true,
+		"InspectAlert":      true,
+	}
+	for _, tk := range DefaultTasks() {
+		if tk.Object != ObjectChat || !positive[tk.Expected.Intent] {
+			continue
+		}
+		if chatScenes[tk.ID] == ([4]string{}) {
+			t.Fatalf("chat 任务 %s（intent=%s）缺 scene 播种", tk.ID, tk.Expected.Intent)
+		}
 	}
 }
 
@@ -192,6 +205,9 @@ func TestNewContextTasks(t *testing.T) {
 		}
 		if len(tk.Configs) != 1 || tk.Configs[0] != ConfigLLMReact {
 			t.Fatalf("%s 应仅 llm-react: %v", id, tk.Configs)
+		}
+		if len(tk.Expected.ToolUse) != 1 || tk.Expected.ToolUse[0] != "write_scratchpad" {
+			t.Fatalf("%s ToolUse = %v, want [write_scratchpad]", id, tk.Expected.ToolUse)
 		}
 	}
 }

@@ -31,5 +31,8 @@ func TestShippedGoldenSetLoads(t *testing.T) {
 				t.Fatalf("%s 引用未知 doc_id %s", it.ID, did)
 			}
 		}
+		if (it.Expect.Behavior == "reject") != (len(it.Expect.DocIDs) == 0) {
+			t.Fatalf("%s behavior=%q 与 doc_ids=%v 不自洽", it.ID, it.Expect.Behavior, it.Expect.DocIDs)
+		}
 	}
 }

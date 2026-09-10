@@ -40,7 +40,7 @@ func usage() {
   go run ./cmd/eval run [--trials N] [--configs a,b] [--report out.json]
   go run ./cmd/eval export-samples [--n N] [--report in.json] [-o samples.json]
   go run ./cmd/eval calibrate [--samples samples.json] [-o calib.json]
-  go run ./cmd/eval ci [--threshold 0.9]`)
+  go run ./cmd/eval ci [--threshold 0.9] [--all]`)
 }
 
 // 解析 flags，兼容 "--trials=3" 与 "--trials 3"

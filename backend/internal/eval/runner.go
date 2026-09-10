@@ -161,6 +161,25 @@ func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task,
 	return res, nil
 }
 
+// chatScenes 需要真实告警的 chat 任务场景（device/metric/severity/message），
+// 由 ensureAlertForChat 播种，测试据此断言正例 chat 任务均有场景。
+var chatScenes = map[string][4]string{
+	"chat-root-cause-db":             {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+	"chat-recommend-gpu":             {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
+	"chat-inspect-switch":            {"switch-core-01", "net_in", "critical", "核心交换机入口流量中断"},
+	"chat-inspect-db":                {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+	"chat-multi":                     {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+	"chat-disk-reason-2":             {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+	"chat-root-cause-cpu":            {"compute-01", "cpu_usage", "warning", "CPU使用率持续高于85%"},
+	"chat-recommend-disk":            {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+	"chat-root-cause-gpu":            {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
+	"chat-recommend-mem":             {"web-01", "mem_usage", "warning", "内存使用率持续高于90%"},
+	"chat-root-cause-net":            {"switch-core-01", "net_in", "critical", "核心交换机入口流量中断"},
+	"chat-recommend-storage":         {"storage-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+	"chat-multi-rootcause-recommend": {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
+	"chat-multi-three":               {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
+}
+
 func ensureAlertForChat(st *store.Store, t Task) (model.Alert, error) {
 	// chat 反例/不涉告警：直接返回空
 	if t.Expected.Intent == "Unknown" || t.Expected.Intent == "ListAlerts" || t.Expected.Intent == "AskStatus" {
@@ -168,21 +187,7 @@ func ensureAlertForChat(st *store.Store, t Task) (model.Alert, error) {
 	}
 	// 其余 chat 任务需要一个真实告警（用对应 pipeline 任务的 device/metric）
 	// 复用 disk/gpu/switch 场景
-	scene := map[string][4]string{
-		"chat-root-cause-db":             {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
-		"chat-recommend-gpu":             {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
-		"chat-inspect-switch":            {"switch-core-01", "net_in", "critical", "核心交换机入口流量中断"},
-		"chat-multi":                     {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
-		"chat-disk-reason-2":             {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
-		"chat-root-cause-cpu":            {"compute-01", "cpu_usage", "warning", "CPU使用率持续高于85%"},
-		"chat-recommend-disk":            {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
-		"chat-root-cause-gpu":            {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
-		"chat-recommend-mem":             {"web-01", "mem_usage", "warning", "内存使用率持续高于90%"},
-		"chat-root-cause-net":            {"switch-core-01", "net_in", "critical", "核心交换机入口流量中断"},
-		"chat-recommend-storage":         {"storage-01", "disk_usage", "critical", "磁盘使用率超过95%"},
-		"chat-multi-rootcause-recommend": {"db-01", "disk_usage", "critical", "磁盘使用率超过95%"},
-		"chat-multi-three":               {"compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"},
-	}[t.ID]
+	scene := chatScenes[t.ID]
 	dev, metric, sev, msg := scene[0], scene[1], scene[2], scene[3]
 	if t.ID == "chat-multi-recommend" {
 		now := time.Now()
