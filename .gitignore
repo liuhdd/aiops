@@ -13,3 +13,4 @@ backend/bin/
 
 ragent/
 .playwright-mcp/
+.agents/
