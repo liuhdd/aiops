@@ -46,3 +46,17 @@ go run ./cmd/eval ci --threshold 0.9                                            
 - 任务集基于 mockdata 已知异常，ground-truth 对齐 scenario()/日志模板。
 - 无 `LLM_API_KEY` 时自动跳过 LLM 类配置，仍可跑 rule 路径。
 - 完整设计见 `docs/superpowers/specs/2026-08-12-agent-evaluation-design.md`。
+
+### Phoenix 评测数据集
+
+先 `datasetctl push` 上传数据集，本地评测后 `datasetctl experiment` 回写实验：
+
+```bash
+cd backend
+go run ./cmd/promptctl push                              # 提示词（既有）
+go run ./cmd/datasetctl push --dataset all               # 数据集：agents + rag
+go run ./cmd/eval run --report eval-report.json
+go run ./cmd/datasetctl experiment --dataset agents --report eval-report.json
+go run ./cmd/rageval -o rageval-report.json
+go run ./cmd/datasetctl experiment --dataset rag --report rageval-report.json
+```

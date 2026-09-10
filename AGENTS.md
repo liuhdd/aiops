@@ -47,6 +47,7 @@ Root: `cp .env.example .env` (set `LLM_API_KEY`), then `docker compose up -d --b
 - 意图 `internal/intent`：意图树 CRUD、软删除 + 启停、`intent_audit` 审计与回滚，经 `internal/api` 暴露给前端「意图管理」页。
 - 推送 `internal/hub`：`GET /ws`，`Hub.Publish(type, data)` 广播 `alert`/`stage`/`run`/`message`，前端 `api/ws.ts` 订阅后局部刷新。
 - 评测 `internal/eval` + `cmd/eval`：12 个声明式任务（pipeline/chat/context）× 3 配置 × pass@k，三层评分器；`ci` 子命令做门禁。
+- Phoenix 评测：`internal/phoenix`（datasets/experiments 轻量 REST 客户端）、`internal/goldenset`（RAG 标注集解析/报告/Phoenix 映射）、`cmd/datasetctl`（push/list/experiment）；`cmd/rageval -o` 出结构化报告。
 - 其余：`internal/simulator`（按 `SIM_INTERVAL_SECONDS` 造告警）、`internal/llm`（OpenAI 兼容封装，key 为空则 client 为 nil）、`internal/mockdata`（全量 mock 监控/日志/CMDB/知识库）。
 
 ### 持久化与接口面
