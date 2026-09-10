@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"aiops/internal/kb"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/retrieve"
@@ -105,11 +106,14 @@ type mockSearcher struct {
 	cases   []retrieve.Result
 	manuals []retrieve.Result
 
-	lastCasesOpts   retrieve.Options
-	lastManualsOpts retrieve.Options
+	lastCasesQuery   retrieve.Query
+	lastManualsQuery retrieve.Query
+	lastCasesOpts    retrieve.Options
+	lastManualsOpts  retrieve.Options
 }
 
 func (m *mockSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	m.lastCasesQuery = q
 	m.lastCasesOpts = o
 	out := m.cases
 	if len(out) > o.TopK {
@@ -118,6 +122,7 @@ func (m *mockSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrie
 	return out, nil
 }
 func (m *mockSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
+	m.lastManualsQuery = q
 	m.lastManualsOpts = o
 	out := m.manuals
 	if len(out) > o.TopK {
@@ -259,5 +264,76 @@ func TestAssembleSourceDocIDsPropagation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("Selected 中应透传 source_doc_ids，got %+v", as.Selected)
+	}
+}
+
+// TestAssembleVersionFilter 版本过滤透传：两篇同关键词文档以 >= 形式标注版本区间，
+// Query.Version 应过滤回退扫描结果并透传给 searcher。
+// 注意：裸版本为精确值语义（Min=Max），故不用裸版本造区间数据；>=2.0 与 >=3.0
+// 在 3.1.0 处重叠（皆命中），排他方向只用 2.5.0 验证（见任务报告偏差说明）。
+func TestAssembleVersionFilter(t *testing.T) {
+	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	defer s.Close()
+	svc := kb.NewService(s, nil)
+	upload := func(title, file, ver string) {
+		t.Helper()
+		data := "---\nversion: " + ver + "\n---\n# 固件升级\n## 步骤\nNVMe固件升级公共关键词，检查链路后升级。\n"
+		if _, err := svc.Upload(context.Background(), kb.UploadReq{
+			Title: title, Category: model.KBManual, SourceFile: file, Data: []byte(data),
+		}); err != nil {
+			t.Fatalf("upload %s: %v", title, err)
+		}
+	}
+	upload("版本过滤手册旧版", "fw-v2.md", ">=2.0")
+	upload("版本过滤手册新版", "fw-v3.md", ">=3.0")
+
+	cs := NewStore(s)
+	asm := NewAssembler(cs, 5)
+
+	// 2.5.0 仅命中旧版区间（新版 Min=3.0.0 排除），回显带版本与标题路径。
+	as, err := asm.Assemble(Query{Text: "NVMe固件升级", Version: "2.5.0"}, false, nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if !strings.Contains(as.User, "版本过滤手册旧版") {
+		t.Fatalf("2.5.0 应含旧版，got:\n%s", as.User)
+	}
+	if strings.Contains(as.User, "版本过滤手册新版") {
+		t.Fatalf("2.5.0 不应含新版，got:\n%s", as.User)
+	}
+	if !strings.Contains(as.User, "[文档版本 V2.0.0]") {
+		t.Fatalf("回显应带文档版本，got:\n%s", as.User)
+	}
+	if !strings.Contains(as.User, "固件升级 > 步骤") {
+		t.Fatalf("回显应带标题路径，got:\n%s", as.User)
+	}
+
+	// 空版本两者皆含。
+	asAll, err := asm.Assemble(Query{Text: "NVMe固件升级", Version: ""}, false, nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if !strings.Contains(asAll.User, "版本过滤手册旧版") || !strings.Contains(asAll.User, "版本过滤手册新版") {
+		t.Fatalf("空版本应两者皆含，got:\n%s", asAll.User)
+	}
+
+	// 3.1.0 落在两区间重叠处，两者皆含（不过滤）。
+	asBoth, err := asm.Assemble(Query{Text: "NVMe固件升级", Version: "3.1.0"}, false, nil)
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if !strings.Contains(asBoth.User, "版本过滤手册旧版") || !strings.Contains(asBoth.User, "版本过滤手册新版") {
+		t.Fatalf("3.1.0 两区间重叠应两者皆含，got:\n%s", asBoth.User)
+	}
+
+	// searcher 路径：Version 应透传到两路检索 Query。
+	mock := &mockSearcher{}
+	asm.SetSearcher(mock)
+	if _, err := asm.Assemble(Query{Text: "NVMe固件升级", Version: "2.5.0"}, false, nil); err != nil {
+		t.Fatalf("Assemble with searcher: %v", err)
+	}
+	if mock.lastCasesQuery.Version != "2.5.0" || mock.lastManualsQuery.Version != "2.5.0" {
+		t.Fatalf("Version 未透传给 searcher，got cases=%q manuals=%q",
+			mock.lastCasesQuery.Version, mock.lastManualsQuery.Version)
 	}
 }

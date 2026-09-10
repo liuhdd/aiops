@@ -33,6 +33,19 @@ func TestKbDocumentJSON(t *testing.T) {
 	}
 }
 
+func TestChunkRefJSONRoundTrip(t *testing.T) {
+	c := KbChunk{ID: "k1", HeadingPath: "GPU 运维 > 掉卡处置", IsFlow: true,
+		VersionMin: "3.0.0", SourceRefs: []ChunkRef{{Raw: "[[config]]", Type: "wikilink", Target: "config.md", Resolved: true}}}
+	s := MustJSON(c)
+	var back KbChunk
+	if err := json.Unmarshal([]byte(s), &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.HeadingPath != "GPU 运维 > 掉卡处置" || !back.IsFlow || len(back.SourceRefs) != 1 {
+		t.Fatalf("roundtrip = %+v", back)
+	}
+}
+
 func TestKbDocSummary(t *testing.T) {
 	s := KbDocSummary{KbDocument: KbDocument{ID: "d1", Title: "t"}, ChunkCount: 3}
 	b, _ := json.Marshal(s)

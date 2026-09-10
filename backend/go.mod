@@ -6,6 +6,7 @@ require (
 	github.com/cloudwego/eino v0.9.13
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/gorilla/websocket v1.5.3
+	github.com/yuin/goldmark v1.7.8
 	golang.org/x/sync v0.17.0
 	modernc.org/sqlite v1.46.0
 )

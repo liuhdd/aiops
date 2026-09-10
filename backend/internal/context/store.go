@@ -46,3 +46,8 @@ func (cs *Store) RecentMessages(conversationID string, n int) ([]model.Message, 
 func (cs *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 	return cs.st.ListKnowledgeChunks()
 }
+
+// ListKnowledgeChunksFiltered 按版本过滤检索视图；version 为空返回全量。
+func (cs *Store) ListKnowledgeChunksFiltered(version string) ([]model.KbKnowledgeChunk, error) {
+	return cs.st.ListKnowledgeChunksFiltered(version)
+}

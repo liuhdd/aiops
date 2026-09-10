@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"aiops/internal/model"
@@ -33,12 +34,15 @@ type KBStore interface {
 	ListKbChunkQuestionsByChunk(chunkID string) ([]model.KbChunkQuestion, error)
 	ListKbChunkQuestions() ([]model.KbChunkQuestion, error)
 	DeleteKbChunkQuestionsByDoc(docID string) error
+	InsertKbChunkRef(ref model.KbChunkRefRow) error
+	ListKbChunkRefsByChunk(chunkID string) ([]model.KbChunkRefRow, error)
+	DeleteKbChunkRefsByDoc(docID string) error
 }
 
 type kbRepo struct{ db dbExec }
 
-const kbDocCols = `id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, fingerprints, created_at, updated_at`
-const kbChunkCols = `id, doc_id, seq, heading, content, summary, source_doc_ids, created_at`
+const kbDocCols = `id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, fingerprints, version, version_min, version_max, created_at, updated_at`
+const kbChunkCols = `id, doc_id, seq, heading, content, summary, source_doc_ids, version_min, version_max, heading_path, source_refs, is_flow, created_at`
 
 func parseArr(s string) []string {
 	var out []string
@@ -54,7 +58,7 @@ func parseArr(s string) []string {
 func scanKbDoc(scan func(dest ...any) error) (model.KbDocument, error) {
 	var d model.KbDocument
 	var dt, vd, md, mtr, kw, in, fpStr string
-	if err := scan(&d.ID, &d.Title, &d.Category, &dt, &vd, &md, &mtr, &kw, &in, &d.SourceFile, &d.Content, &fpStr, &d.CreatedAt, &d.UpdatedAt); err != nil {
+	if err := scan(&d.ID, &d.Title, &d.Category, &dt, &vd, &md, &mtr, &kw, &in, &d.SourceFile, &d.Content, &fpStr, &d.Version, &d.VersionMin, &d.VersionMax, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		return d, err
 	}
 	d.DeviceTypes = parseArr(dt)
@@ -68,33 +72,59 @@ func scanKbDoc(scan func(dest ...any) error) (model.KbDocument, error) {
 }
 
 func (r *kbRepo) InsertKbDocument(d model.KbDocument) error {
-	_, err := r.db.Exec(`INSERT INTO kb_documents (id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, fingerprints, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err := r.db.Exec(`INSERT INTO kb_documents (id, title, category, device_types, vendor, model, metrics, keywords, intents, source_file, content, fingerprints, version, version_min, version_max, created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET
 			title=excluded.title, category=excluded.category, device_types=excluded.device_types,
 			vendor=excluded.vendor, model=excluded.model, metrics=excluded.metrics,
 			keywords=excluded.keywords, intents=excluded.intents, source_file=excluded.source_file,
-			content=excluded.content, fingerprints=excluded.fingerprints, updated_at=excluded.updated_at`,
+			content=excluded.content, fingerprints=excluded.fingerprints,
+			version=excluded.version, version_min=excluded.version_min, version_max=excluded.version_max,
+			updated_at=excluded.updated_at`,
 		d.ID, d.Title, string(d.Category), model.MustJSON(d.DeviceTypes), model.MustJSON(d.Vendor),
 		model.MustJSON(d.Model), model.MustJSON(d.Metrics), model.MustJSON(d.Keywords),
-		model.MustJSON(d.Intents), d.SourceFile, d.Content, model.MustJSON(d.Fingerprints), d.CreatedAt, d.UpdatedAt)
+		model.MustJSON(d.Intents), d.SourceFile, d.Content, model.MustJSON(d.Fingerprints),
+		d.Version, d.VersionMin, d.VersionMax, d.CreatedAt, d.UpdatedAt)
 	return err
+}
+
+func parseRefs(s string) []model.ChunkRef {
+	var out []model.ChunkRef
+	if s != "" {
+		_ = json.Unmarshal([]byte(s), &out)
+	}
+	if out == nil {
+		out = []model.ChunkRef{}
+	}
+	return out
+}
+
+// boolToInt 存布尔列（SQLite 无原生布尔类型，沿用 intent enabled/deleted 的 0/1 惯例）。
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func scanKbChunk(scan func(dest ...any) error) (model.KbChunk, error) {
 	var c model.KbChunk
-	var summary, sourceDocIDs string
-	if err := scan(&c.ID, &c.DocID, &c.Seq, &c.Heading, &c.Content, &summary, &sourceDocIDs, &c.CreatedAt); err != nil {
+	var summary, sourceDocIDs, sourceRefs string
+	var isFlow int
+	if err := scan(&c.ID, &c.DocID, &c.Seq, &c.Heading, &c.Content, &summary, &sourceDocIDs, &c.VersionMin, &c.VersionMax, &c.HeadingPath, &sourceRefs, &isFlow, &c.CreatedAt); err != nil {
 		return c, err
 	}
 	c.Summary = summary
 	c.SourceDocIDs = parseArr(sourceDocIDs)
+	c.SourceRefs = parseRefs(sourceRefs)
+	c.IsFlow = isFlow != 0
 	return c, nil
 }
 
 func (r *kbRepo) InsertKbChunk(c model.KbChunk) error {
-	_, err := r.db.Exec(`INSERT INTO kb_chunks (id, doc_id, seq, heading, content, summary, source_doc_ids, created_at) VALUES (?,?,?,?,?,?,?,?)`,
-		c.ID, c.DocID, c.Seq, c.Heading, c.Content, c.Summary, model.MustJSON(c.SourceDocIDs), c.CreatedAt)
+	_, err := r.db.Exec(`INSERT INTO kb_chunks (id, doc_id, seq, heading, content, summary, source_doc_ids, version_min, version_max, heading_path, source_refs, is_flow, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.DocID, c.Seq, c.Heading, c.Content, c.Summary, model.MustJSON(c.SourceDocIDs),
+		c.VersionMin, c.VersionMax, c.HeadingPath, model.MustJSON(c.SourceRefs), boolToInt(c.IsFlow), c.CreatedAt)
 	return err
 }
 
@@ -103,8 +133,8 @@ func (r *kbRepo) GetKbChunk(id string) (model.KbChunk, error) {
 }
 
 func (r *kbRepo) UpdateKbChunk(c model.KbChunk) error {
-	_, err := r.db.Exec(`UPDATE kb_chunks SET content=?, summary=?, source_doc_ids=? WHERE id=?`,
-		c.Content, c.Summary, model.MustJSON(c.SourceDocIDs), c.ID)
+	_, err := r.db.Exec(`UPDATE kb_chunks SET content=?, summary=?, source_doc_ids=?, version_min=?, version_max=?, heading_path=?, source_refs=?, is_flow=? WHERE id=?`,
+		c.Content, c.Summary, model.MustJSON(c.SourceDocIDs), c.VersionMin, c.VersionMax, c.HeadingPath, model.MustJSON(c.SourceRefs), boolToInt(c.IsFlow), c.ID)
 	return err
 }
 
@@ -247,6 +277,43 @@ func (r *kbRepo) ListKbChunkQuestions() ([]model.KbChunkQuestion, error) {
 func (r *kbRepo) DeleteKbChunkQuestionsByDoc(docID string) error {
 	_, err := r.db.Exec(`DELETE FROM kb_chunk_questions WHERE doc_id = ?`, docID)
 	return err
+}
+
+func (r *kbRepo) InsertKbChunkRef(ref model.KbChunkRefRow) error {
+	_, err := r.db.Exec(`INSERT INTO kb_chunk_refs (id, chunk_id, doc_id, target_path, target_doc_id, anchor, ref_type, resolved, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+		ref.ID, ref.ChunkID, ref.DocID, ref.TargetPath, ref.TargetDocID, ref.Anchor, ref.RefType, boolToInt(ref.Resolved), ref.CreatedAt)
+	return err
+}
+
+func (r *kbRepo) ListKbChunkRefsByChunk(chunkID string) ([]model.KbChunkRefRow, error) {
+	rows, err := r.db.Query(`SELECT id, chunk_id, doc_id, target_path, target_doc_id, anchor, ref_type, resolved, created_at FROM kb_chunk_refs WHERE chunk_id = ? ORDER BY id ASC`, chunkID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.KbChunkRefRow, 0)
+	for rows.Next() {
+		var ref model.KbChunkRefRow
+		var resolved int
+		if err := rows.Scan(&ref.ID, &ref.ChunkID, &ref.DocID, &ref.TargetPath, &ref.TargetDocID, &ref.Anchor, &ref.RefType, &resolved, &ref.CreatedAt); err != nil {
+			return nil, err
+		}
+		ref.Resolved = resolved != 0
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
+func (r *kbRepo) DeleteKbChunkRefsByDoc(docID string) error {
+	_, err := r.db.Exec(`DELETE FROM kb_chunk_refs WHERE doc_id = ?`, docID)
+	return err
+}
+
+// CountInboundChunkRefs 统计其他文档指向该文档的引用边数（回填时仅展示，不级联）。
+func (r *kbRepo) CountInboundChunkRefs(docID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(`SELECT count(*) FROM kb_chunk_refs WHERE target_doc_id = ? AND doc_id != ?`, docID, docID).Scan(&n)
+	return n, err
 }
 
 // likeEscape 转义 LIKE 通配符，使筛选词按字面匹配。
@@ -398,8 +465,30 @@ func (s *Store) DeleteKbChunkQuestionsByDoc(docID string) error {
 	return (&kbRepo{db: s.db}).DeleteKbChunkQuestionsByDoc(docID)
 }
 
+func (s *Store) InsertKbChunkRef(ref model.KbChunkRefRow) error {
+	return (&kbRepo{db: s.db}).InsertKbChunkRef(ref)
+}
+
+func (s *Store) ListKbChunkRefsByChunk(chunkID string) ([]model.KbChunkRefRow, error) {
+	return (&kbRepo{db: s.db}).ListKbChunkRefsByChunk(chunkID)
+}
+
+func (s *Store) DeleteKbChunkRefsByDoc(docID string) error {
+	return (&kbRepo{db: s.db}).DeleteKbChunkRefsByDoc(docID)
+}
+
+func (s *Store) CountInboundChunkRefs(docID string) (int, error) {
+	return (&kbRepo{db: s.db}).CountInboundChunkRefs(docID)
+}
+
 func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
-	rows, err := s.db.Query(`SELECT c.id, c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, c.source_doc_ids, d.created_at
+	return s.ListKnowledgeChunksFiltered("")
+}
+
+// ListKnowledgeChunksFiltered 按版本过滤检索视图；version 为空返回全量，
+// 非空时在内存中按版本区间过滤（SQLite 字符串比较不可靠，块量小，全量查后过滤）。
+func (s *Store) ListKnowledgeChunksFiltered(version string) ([]model.KbKnowledgeChunk, error) {
+	rows, err := s.db.Query(`SELECT c.id, c.doc_id, d.title, d.category, d.device_types, d.vendor, d.model, d.metrics, d.keywords, d.intents, c.heading, c.content, c.source_doc_ids, c.version_min, c.version_max, c.heading_path, d.created_at
 		FROM kb_chunks c JOIN kb_documents d ON d.id = c.doc_id
 		ORDER BY d.created_at DESC, c.seq ASC`)
 	if err != nil {
@@ -410,7 +499,7 @@ func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 	for rows.Next() {
 		var k model.KbKnowledgeChunk
 		var dt, vd, md, mtr, kw, in, srcIDs string
-		if err := rows.Scan(&k.ChunkID, &k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &srcIDs, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ChunkID, &k.DocID, &k.Title, &k.Category, &dt, &vd, &md, &mtr, &kw, &in, &k.Heading, &k.Content, &srcIDs, &k.VersionMin, &k.VersionMax, &k.HeadingPath, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		k.DeviceTypes = parseArr(dt)
@@ -420,9 +509,92 @@ func (s *Store) ListKnowledgeChunks() ([]model.KbKnowledgeChunk, error) {
 		k.Keywords = parseArr(kw)
 		k.Intents = parseArr(in)
 		k.SourceDocIDs = parseArr(srcIDs)
+		if !matchChunkVersion(k.VersionMin, k.VersionMax, version) {
+			continue
+		}
 		out = append(out, k)
 	}
 	return out, rows.Err()
+}
+
+// matchChunkVersion 块版本区间命中判断，与 kb.MatchVersion 同语义。
+// store 不能导入 internal/kb（kb/service.go 反向依赖 store），此处本地镜像实现。
+func matchChunkVersion(min, max, query string) bool {
+	if strings.TrimSpace(query) == "" {
+		return true
+	}
+	if min == "" && max == "" {
+		return true
+	}
+	q := normalizeSemver(query)
+	if q == "" {
+		return true
+	}
+	if min != "" && compareSemver(q, min) < 0 {
+		return false
+	}
+	if max != "" && compareSemver(q, max) > 0 {
+		return false
+	}
+	return true
+}
+
+// normalizeSemver 去 v 前缀并补齐三段数字；非法输入返回空串。
+func normalizeSemver(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "v")
+	s = strings.TrimPrefix(s, "V")
+	i := 0
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9' || s[i] == '.') {
+		i++
+	}
+	s = strings.Trim(s[:i], ".")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, ".")
+	nums := make([]string, 0, 3)
+	for _, p := range parts {
+		j := 0
+		for j < len(p) && p[j] >= '0' && p[j] <= '9' {
+			j++
+		}
+		if j == 0 {
+			nums = append(nums, "0")
+		} else {
+			n, _ := strconv.Atoi(p[:j])
+			nums = append(nums, strconv.Itoa(n))
+		}
+		if len(nums) == 3 {
+			break
+		}
+	}
+	for len(nums) < 3 {
+		nums = append(nums, "0")
+	}
+	return strings.Join(nums, ".")
+}
+
+// compareSemver 按数字三段比较归一化版本；返回 -1/0/1。
+func compareSemver(a, b string) int {
+	pa := strings.Split(normalizeSemver(a), ".")
+	pb := strings.Split(normalizeSemver(b), ".")
+	for i := 0; i < 3; i++ {
+		var x, y int
+		if i < len(pa) {
+			x, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			y, _ = strconv.Atoi(pb[i])
+		}
+		if x < y {
+			return -1
+		}
+		if x > y {
+			return 1
+		}
+	}
+	return 0
 }
 
 func (s *Store) CountKbDocuments() (int, error) {

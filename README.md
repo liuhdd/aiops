@@ -22,6 +22,8 @@ Go后端（Eino编排LLM）+ 流水线（接收规范化→过滤分诊→上下
 | LLM_MODEL | 否 | deepseek-chat |
 | DB_PATH | 否 | aiops.db |
 | PORT | 否 | :8080 |
+| KB_FLOW_MAX_SIZE | 否 | 8000 |
+| KB_EMBED_DEPTH | 否 | 2 |
 
 ## 测试
 后端：`cd backend && go test ./...`

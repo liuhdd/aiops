@@ -41,9 +41,11 @@ type searcher struct {
 	embedder Embedder
 	reranker Reranker
 	cfg      config.Config
-	mu       sync.Mutex // 保护 idx/docCount 的懒加载
+	mu       sync.Mutex // 保护 idx/docCount/idxVersion 的懒加载
 	idx      *BM25Index
 	docCount int
+	// idxVersion 索引构建时的版本过滤条件；不同版本各自建索引，避免串味。
+	idxVersion string
 }
 
 // NewSearcherWithConfig 构造混合检索器；reranker 可为 nil（精排跳过）。
@@ -82,18 +84,18 @@ func (s *searcher) effectiveRerankFloor() float64 {
 	return s.cfg.RerankFloor
 }
 
-// ensureIndex 知识库文档数变化时重建 BM25 索引（并发安全：check-then-act 加锁）。
-func (s *searcher) ensureIndex() error {
+// ensureIndex 知识库文档数或版本过滤变化时重建 BM25 索引（并发安全：check-then-act 加锁）。
+func (s *searcher) ensureIndex(version string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n, err := s.st.CountKbDocuments()
 	if err != nil {
 		return err
 	}
-	if s.idx != nil && n == s.docCount {
+	if s.idx != nil && n == s.docCount && version == s.idxVersion {
 		return nil
 	}
-	kcs, err := s.st.ListKnowledgeChunks()
+	kcs, err := s.st.ListKnowledgeChunksFiltered(version)
 	if err != nil {
 		return err
 	}
@@ -103,6 +105,7 @@ func (s *searcher) ensureIndex() error {
 	}
 	s.idx = BuildBM25(kcs, ids)
 	s.docCount = n
+	s.idxVersion = version
 	return nil
 }
 
@@ -127,7 +130,7 @@ func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, is
 			return res, err
 		}
 	}
-	if err := s.ensureIndex(); err != nil {
+	if err := s.ensureIndex(q.Version); err != nil {
 		return nil, err
 	}
 	cands := s.dualRecall(ctx, q, isManual, cat)
@@ -201,6 +204,19 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 	if topK <= 0 {
 		topK = 3
 	}
+	// 版本过滤：快路径同样受 Query.Version 约束（与 ListKnowledgeChunksFiltered 同语义）；
+	// 空版本直通不过滤。视图加载失败则降级为未命中，走主链路判定。
+	var allowed map[string]struct{}
+	if strings.TrimSpace(q.Version) != "" {
+		kcs, err := s.st.ListKnowledgeChunksFiltered(q.Version)
+		if err != nil {
+			return nil, false, nil
+		}
+		allowed = make(map[string]struct{}, len(kcs))
+		for _, kc := range kcs {
+			allowed[kc.ChunkID] = struct{}{}
+		}
+	}
 	var res []Result
 	for _, d := range filtered {
 		chunks, err := s.st.ListKbChunksByDoc(d.ID)
@@ -208,6 +224,11 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 			continue // 单文档加载失败静默跳过
 		}
 		for _, c := range chunks {
+			if allowed != nil {
+				if _, ok := allowed[c.ID]; !ok {
+					continue
+				}
+			}
 			res = append(res, Result{
 				DocID:        d.ID,
 				Title:        d.Title,
@@ -235,7 +256,7 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 // dualRecall 双路召回：BM25 + 向量 + 信号 + 时效，返回未排序候选供融合阶段处理。
 // 扩展问题通道：拉问题向量与问题文本，对每块计算 QVec/QBM25 取 max 后与块通道取 max 再进 RRF。
 func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat model.KBCategory) []cand {
-	kcs, err := s.st.ListKnowledgeChunks()
+	kcs, err := s.st.ListKnowledgeChunksFiltered(q.Version)
 	if err != nil {
 		return nil
 	}

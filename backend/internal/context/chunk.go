@@ -26,4 +26,5 @@ type Query struct {
 	Keywords       []string
 	Intents        []string
 	Text           string // 自由文本（如用户原问句），参与检索文本组装
+	Version        string // 目标版本，透传给检索链路做版本区间过滤
 }

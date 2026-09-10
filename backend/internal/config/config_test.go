@@ -147,6 +147,23 @@ func TestConfigDefaults(t *testing.T) {
 		t.Fatalf("%+v", cfg)
 	}
 }
+func TestKBFlowMaxSizeEmbedDepth(t *testing.T) {
+	env := map[string]string{"KB_FLOW_MAX_SIZE": "4000", "KB_EMBED_DEPTH": "3"}
+	cfg := LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.KBFlowMaxSize != 4000 {
+		t.Fatalf("KBFlowMaxSize = %d, want 4000", cfg.KBFlowMaxSize)
+	}
+	if cfg.KBEmbedDepth != 3 {
+		t.Fatalf("KBEmbedDepth = %d, want 3", cfg.KBEmbedDepth)
+	}
+	def := LoadFromEnv(func(string) string { return "" })
+	if def.KBFlowMaxSize != 8000 {
+		t.Fatalf("KBFlowMaxSize 默认 = %d, want 8000", def.KBFlowMaxSize)
+	}
+	if def.KBEmbedDepth != 2 {
+		t.Fatalf("KBEmbedDepth 默认 = %d, want 2", def.KBEmbedDepth)
+	}
+}
 func TestConfigKbEnhance(t *testing.T) {
 	cfg := LoadFromEnv(func(k string) string {
 		m := map[string]string{"KB_ENHANCE": "0", "KB_ENHANCE_SUMMARY": "false", "KB_CDTA_THRESHOLD": "0.9"}
