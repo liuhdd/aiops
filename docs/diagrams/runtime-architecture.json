@@ -1,0 +1,373 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Hardware AIOps 运行时架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "runtime-architecture.html",
+    "views": [
+      {
+        "id": "pipeline",
+        "label": "流水线 6 阶段",
+        "focus": [
+          "normalize",
+          "triage",
+          "context",
+          "evidence",
+          "rca",
+          "recommend"
+        ],
+        "note": "按 normalize → recommend 顺序执行，rca 报告 Gaps 时回溯重跑。"
+      },
+      {
+        "id": "hub-push",
+        "label": "Hub 推送链路",
+        "focus": [
+          "evidence",
+          "hub",
+          "view-ops"
+        ],
+        "note": "engine.Publish 广播 stage/run，经 Hub /ws 推送到运维面板局部刷新。"
+      },
+      {
+        "id": "frontend",
+        "label": "前端三视图",
+        "focus": [
+          "view-ops",
+          "view-intents",
+          "view-kb",
+          "api"
+        ],
+        "note": "三视图共用 API Server，HTTP 全部经 client.ts。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API Server",
+      "sublabel": "internal/api :8080",
+      "pos": [
+        160,
+        238
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "normalize",
+      "type": "backend",
+      "label": "normalize",
+      "sublabel": "归一化",
+      "pos": [
+        440,
+        240
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "triage",
+      "type": "backend",
+      "label": "triage",
+      "sublabel": "分诊去重",
+      "pos": [
+        620,
+        240
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "context",
+      "type": "backend",
+      "label": "context",
+      "sublabel": "上下文组装",
+      "pos": [
+        800,
+        240
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "evidence",
+      "type": "backend",
+      "label": "evidence",
+      "sublabel": "证据收集",
+      "pos": [
+        880,
+        400
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "rca",
+      "type": "backend",
+      "label": "rca",
+      "sublabel": "根因分析",
+      "pos": [
+        620,
+        400
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "recommend",
+      "type": "backend",
+      "label": "recommend",
+      "sublabel": "处置建议",
+      "pos": [
+        440,
+        400
+      ],
+      "size": [
+        150,
+        60
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "aiops.db · 15 张表",
+      "pos": [
+        1060,
+        238
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "hub",
+      "type": "messagebus",
+      "label": "Hub",
+      "sublabel": "GET /ws 广播",
+      "pos": [
+        1140,
+        398
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "view-ops",
+      "type": "frontend",
+      "label": "运维面板",
+      "sublabel": "PipelineTimeline",
+      "pos": [
+        690,
+        590
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "view-intents",
+      "type": "frontend",
+      "label": "意图管理",
+      "sublabel": "IntentManager",
+      "pos": [
+        460,
+        590
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "view-kb",
+      "type": "frontend",
+      "label": "知识库",
+      "sublabel": "KnowledgeBase",
+      "pos": [
+        230,
+        590
+      ],
+      "size": [
+        170,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "后端 Go 进程 backend/ · :8080（Eino 编排）",
+      "wraps": [
+        "api",
+        "normalize",
+        "triage",
+        "context",
+        "evidence",
+        "rca",
+        "recommend",
+        "store",
+        "hub"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Pipeline Engine · internal/pipeline",
+      "wraps": [
+        "normalize",
+        "triage",
+        "context",
+        "evidence",
+        "rca",
+        "recommend"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "前端 frontend/ · React 18 + Vite",
+      "wraps": [
+        "view-ops",
+        "view-intents",
+        "view-kb"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "api-trigger",
+      "from": "api",
+      "to": "normalize",
+      "label": "POST /inspect",
+      "variant": "emphasis"
+    },
+    {
+      "id": "s1",
+      "from": "normalize",
+      "to": "triage"
+    },
+    {
+      "id": "s2",
+      "from": "triage",
+      "to": "context"
+    },
+    {
+      "id": "s3",
+      "from": "context",
+      "to": "evidence",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "s4",
+      "from": "evidence",
+      "to": "rca"
+    },
+    {
+      "id": "s5",
+      "from": "rca",
+      "to": "recommend"
+    },
+    {
+      "id": "backtrack",
+      "from": "rca",
+      "to": "evidence",
+      "label": "Gaps ⇒ 回溯重跑",
+      "variant": "dashed",
+      "labelAt": [
+        825,
+        396
+      ]
+    },
+    {
+      "id": "publish",
+      "from": "evidence",
+      "to": "hub",
+      "label": "Publish(stage/run)"
+    },
+    {
+      "id": "persist",
+      "from": "context",
+      "to": "store",
+      "label": "st.Store 读写"
+    },
+    {
+      "id": "ws-push",
+      "from": "hub",
+      "to": "view-ops",
+      "label": "WS alert/stage/run/message",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ops-http",
+      "from": "view-ops",
+      "to": "api",
+      "label": "GET /api/alerts",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "intents-http",
+      "from": "view-intents",
+      "to": "api",
+      "label": "/api/intents/*",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "kb-http",
+      "from": "view-kb",
+      "to": "api",
+      "label": "/api/kb/*",
+      "fromSide": "left",
+      "toSide": "left"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "触发与回溯",
+      "items": [
+        "Simulator 按 SIM_INTERVAL_SECONDS 造告警并直接 eng.Run",
+        "triage 同设备同指标去重，已完成运行标记 skipped",
+        "rca 报 Gaps 时回溯重跑 evidence/rca/recommend（≤ 2 轮）"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "数据与并发",
+      "items": [
+        "各阶段经 st.Store 读写，全局⊃设备⊃任务作用域隔离",
+        "coordinator per-device 串行锁，30s 超时标记 degraded",
+        "SQLite 单写连接规避 SQLITE_BUSY"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "前端与推送",
+      "items": [
+        "App.tsx 以 view state 切换三视图，ChatAssistant 常驻",
+        "engine.Publish 广播 stage/run，main.go 转发 alert",
+        "ws.ts 订阅 /ws 局部刷新，chat 可触发流水线"
+      ]
+    }
+  ]
+}
