@@ -2,6 +2,8 @@ package goldenset
 
 import (
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +40,11 @@ type fakeWriter struct {
 }
 
 func (f *fakeWriter) ListExamples(datasetID, versionID string) ([]phoenix.Example, error) {
-	return []phoenix.Example{{ID: "EX-q1", Metadata: map[string]any{"id": "q1"}}}, nil
+	return []phoenix.Example{
+		{ID: "EX-q1", Metadata: map[string]any{"id": "q1"}},
+		{ID: "EX-q2", Metadata: map[string]any{"id": "q2"}},
+		{ID: "EX-q3", Metadata: map[string]any{"id": "q3"}},
+	}, nil
 }
 func (f *fakeWriter) CreateExperiment(datasetID, name string, repetitions int, metadata map[string]any) (phoenix.Experiment, error) {
 	f.exp = append(f.exp, name)
@@ -46,17 +52,30 @@ func (f *fakeWriter) CreateExperiment(datasetID, name string, repetitions int, m
 }
 func (f *fakeWriter) LogRun(experimentID string, r phoenix.RunRequest) (string, error) {
 	f.runs = append(f.runs, r)
-	return "R1", nil
+	return fmt.Sprintf("R%d", len(f.runs)), nil
 }
 func (f *fakeWriter) LogEvaluation(e phoenix.EvaluationRequest) (string, error) {
 	f.evals = append(f.evals, e)
 	return "EV1", nil
 }
 
+// findEval 按 runID + 评测名查一条 evaluation。
+func findEval(evals []phoenix.EvaluationRequest, runID, name string) (phoenix.EvaluationRequest, bool) {
+	for _, e := range evals {
+		if e.ExperimentRunID == runID && e.Name == name {
+			return e, true
+		}
+	}
+	return phoenix.EvaluationRequest{}, false
+}
+
 func TestPushRagExperiment(t *testing.T) {
+	hit := ItemResult{ID: "q1", Type: "fact", TopK: 3, RankedDocIDs: []string{"d1", "d2"}, Behavior: "hit", MRR: 0.5, NDCG: 0.6, Recall: 0.7, Precision: 0.33}
+	rejectOK := ItemResult{ID: "q2", Type: "reject", Behavior: "reject", RejectOK: true}
+	rejectFail := ItemResult{ID: "q3", Type: "reject", Behavior: "reject", RejectOK: false}
 	rep := RagReport{
 		Meta:  RagMeta{Enhance: true, TopK: 3},
-		Items: []ItemResult{{ID: "q1", Type: "fact", TopK: 3, RankedDocIDs: []string{"d1"}, Behavior: "hit", MRR: 1, NDCG: 1, Recall: 1, Precision: 0.33}},
+		Items: []ItemResult{hit, rejectOK, rejectFail},
 	}
 	w := &fakeWriter{}
 	if err := PushRagExperiment(w, "DS", rep, "aiops-rag-golden"); err != nil {
@@ -65,16 +84,53 @@ func TestPushRagExperiment(t *testing.T) {
 	if len(w.exp) != 1 || w.exp[0] != "aiops-rag-golden/rag" {
 		t.Fatalf("exp = %v", w.exp)
 	}
-	if len(w.runs) != 1 || w.runs[0].DatasetExampleID != "EX-q1" {
+	if len(w.runs) != 3 {
 		t.Fatalf("runs = %+v", w.runs)
 	}
-	names := map[string]bool{}
-	for _, e := range w.evals {
-		names[e.Name] = true
-	}
-	for _, want := range []string{"MRR", "NDCG@K", "Recall@K", "Precision@K"} {
-		if !names[want] {
-			t.Fatalf("缺评测 %s: %+v", want, w.evals)
+	// run 与 example 按报告顺序一一对应
+	for i, want := range []string{"EX-q1", "EX-q2", "EX-q3"} {
+		if w.runs[i].DatasetExampleID != want {
+			t.Fatalf("runs[%d].DatasetExampleID = %s, want %s", i, w.runs[i].DatasetExampleID, want)
 		}
+	}
+	// hit item 的 run Output 携带 ranked_doc_ids
+	out, ok := w.runs[0].Output.(map[string]any)
+	if !ok {
+		t.Fatalf("runs[0].Output 类型 = %T", w.runs[0].Output)
+	}
+	docs, ok := out["ranked_doc_ids"].([]string)
+	if !ok || !reflect.DeepEqual(docs, hit.RankedDocIDs) {
+		t.Fatalf("ranked_doc_ids = %#v, want %v", out["ranked_doc_ids"], hit.RankedDocIDs)
+	}
+	// hit item 的四项指标评测携带对应分值
+	metrics := map[string]float64{"MRR": hit.MRR, "NDCG@K": hit.NDCG, "Recall@K": hit.Recall, "Precision@K": hit.Precision}
+	for name, want := range metrics {
+		e, ok := findEval(w.evals, "R1", name)
+		if !ok {
+			t.Fatalf("缺评测 %s: %+v", name, w.evals)
+		}
+		if e.Result == nil || e.Result.Score == nil || *e.Result.Score != want {
+			t.Fatalf("%s score = %+v, want %v", name, e.Result, want)
+		}
+	}
+	// hit item 不应写 RejectOK
+	if _, ok := findEval(w.evals, "R1", "RejectOK"); ok {
+		t.Fatalf("hit item 不应有 RejectOK: %+v", w.evals)
+	}
+	// reject 且 RejectOK=true → score 1 / PASS
+	e, ok := findEval(w.evals, "R2", "RejectOK")
+	if !ok {
+		t.Fatalf("缺 RejectOK 评测: %+v", w.evals)
+	}
+	if e.Result == nil || e.Result.Score == nil || *e.Result.Score != 1 || e.Result.Label != "PASS" {
+		t.Fatalf("RejectOK(true) = %+v", e.Result)
+	}
+	// reject 且 RejectOK=false → score 0 / FAIL
+	e, ok = findEval(w.evals, "R3", "RejectOK")
+	if !ok {
+		t.Fatalf("缺 RejectOK 评测: %+v", w.evals)
+	}
+	if e.Result == nil || e.Result.Score == nil || *e.Result.Score != 0 || e.Result.Label != "FAIL" {
+		t.Fatalf("RejectOK(false) = %+v", e.Result)
 	}
 }
