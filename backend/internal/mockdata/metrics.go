@@ -50,6 +50,20 @@ func scenario(device, metric string, m int) float64 {
 			return 2 + jitter(m)
 		}
 		return 80 + jitter(m)
+	case device == "db-01" && metric == "cpu_usage":
+		if m <= 30 {
+			return 90 + jitter(m)
+		}
+		return 55 + jitter(m)
+	case device == "compute-01" && metric == "mem_usage":
+		if m <= 20 {
+			return 94
+		}
+		return 70 + jitter(m)
+	case device == "web-01" && metric == "disk_usage":
+		return 96
+	case device == "storage-01" && metric == "disk_usage":
+		return 96
 	default:
 		return 50 + jitter(m)
 	}

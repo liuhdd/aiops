@@ -18,11 +18,13 @@ func generateLogs(now time.Time) {
 			{45, "INFO", "load average: 12.5, 11.8, 10.2"},
 			{20, "WARN", "cpu usage threshold exceeded 85%"},
 			{10, "WARN", "scheduler stalled for 2.3s, cpu saturated"},
+			{18, "ERROR", "kernel: OutOfMemory: memory cgroup oom-kill process 2222"},
 		},
 		"db-01": {
 			{90, "WARN", "df: /data usage 91%"},
 			{40, "ERROR", "ext4-fs error (device sda1): no space left on device"},
 			{15, "ERROR", "mysqld: InnoDB: cannot allocate page for the tablespace"},
+			{20, "WARN", "load average 20.1, cpu usage saturated"},
 		},
 		"compute-02": {
 			{60, "INFO", "NVRM: GPU at PCI 0000:3b:00.0 busy"},
@@ -34,6 +36,11 @@ func generateLogs(now time.Time) {
 			{50, "WARN", "java: OutOfMemoryError: Java heap space"},
 			{25, "ERROR", "kworker: page allocation failure, order:3"},
 			{18, "WARN", "memcg: oom-kill process pid=1234"},
+			{30, "ERROR", "ext4-fs error (device sda1): no space left on device"},
+		},
+		"storage-01": {
+			{40, "ERROR", "ext4-fs error (device sdb1): no space left on device"},
+			{20, "WARN", "df: /data usage 96%"},
 		},
 		"switch-core-01": {
 			{55, "INFO", "interface Eth1/1: link up"},
