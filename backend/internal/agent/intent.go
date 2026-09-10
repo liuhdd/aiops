@@ -10,6 +10,7 @@ import (
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
+	"aiops/internal/prompt"
 )
 
 // Intent 意图 code（字符串别名）。
@@ -116,7 +117,7 @@ func ParseIntent(text string) Intent { return RuleMatch(nil, text) }
 // RewriteAndSplit 轻量 LLM 一次调用完成问题重写与多意图拆分。
 // 返回 rewritten（规范化完整问题）与 subs（拆分出的子问题列表）；LLM 不可用/失败返回 err。
 func RewriteAndSplit(ctx context.Context, text string, c ctxpkg.Completer) (rewritten string, subs []string, err error) {
-	system := "你是 AIOps 运维助手的问题理解模块。把用户提问重写为规范、完整的中文问题，并拆分为相互独立的子问题。只输出 JSON：{\"rewritten\":\"<重写后的完整问题>\",\"sub_questions\":[\"<子问题1>\",\"<子问题2>\"]}。若只有一个意图，sub_questions 只含一项。子问题必须完整自包含（补全指代、告警ID、设备名等）。"
+	system := prompt.IntentRewriteSplitSystem()
 	raw, cerr := c.Complete(ctx, system, text)
 	if cerr != nil || strings.TrimSpace(raw) == "" {
 		return "", nil, cerr
@@ -155,7 +156,7 @@ func ClassifyWithLight(ctx context.Context, leaves []model.LeafSpec, text string
 		}
 		parts = append(parts, s+")")
 	}
-	system := "你是意图分类器。判断用户请求属于哪个意图，只输出 JSON：{\"intent\":\"<意图名>\",\"confidence\":<0到1之间的小数>}。意图名必须是 " + strings.Join(parts, "、") + "。无法确定时返回 {\"intent\":\"Unknown\",\"confidence\":0}。"
+	system := prompt.IntentClassifySystem(strings.Join(parts, "、"))
 	raw, err := c.Complete(ctx, system, text)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return Unknown, 0

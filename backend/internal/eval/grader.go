@@ -6,6 +6,7 @@ import (
 
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/model"
+	"aiops/internal/prompt"
 )
 
 // GraderResult 单个评分器的输出
@@ -213,9 +214,8 @@ func gradeWithJudge(ctx context.Context, t Task, res *TrialResult, judge ctxpkg.
 	}
 	var out []GraderResult
 	for _, d := range dimensions {
-		system := "你是评测评委。只输出 JSON: {\"score\":0~1,\"verdict\":\"PASS|FAIL|INSUFFICIENT_INFO\"}。若信息不足判断必须返回 INSUFFICIENT_INFO，不要猜测。"
-		user := "评测任务: " + t.ID + "\n证据:" + mustJSON(res.Outcome.Evidence) +
-			"\nRCA:" + mustJSON(res.Outcome.RCA) + "\n评分维度: " + d.rubric
+		system := prompt.EvalJudgeSystem()
+		user := prompt.EvalJudgeUser(t.ID, mustJSON(res.Outcome.Evidence), mustJSON(res.Outcome.RCA), d.rubric)
 		raw, err := judge.Complete(ctx, system, user)
 		if err != nil || strings.TrimSpace(raw) == "" {
 			out = append(out, GraderResult{Name: d.name, NA: true, Weight: 0.2})

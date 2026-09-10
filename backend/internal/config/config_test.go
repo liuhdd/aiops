@@ -164,6 +164,33 @@ func TestKBFlowMaxSizeEmbedDepth(t *testing.T) {
 		t.Fatalf("KBEmbedDepth 默认 = %d, want 2", def.KBEmbedDepth)
 	}
 }
+
+func TestPhoenixConfig(t *testing.T) {
+	cfg := LoadFromEnv(func(k string) string {
+		m := map[string]string{
+			"PHOENIX_BASE_URL":   "http://localhost:6006",
+			"PHOENIX_PROMPT_TAG": "staging",
+			"PHOENIX_PROMPT_TTL": "30",
+			"PHOENIX_API_KEY":    "sk-p",
+		}
+		return m[k]
+	})
+	if cfg.PhoenixBaseURL != "http://localhost:6006" || cfg.PhoenixTag != "staging" ||
+		cfg.PhoenixTTL != 30 || cfg.PhoenixAPIKey != "sk-p" {
+		t.Fatalf("Phoenix 配置读取错误: %+v", cfg)
+	}
+}
+
+func TestPhoenixConfigDefaults(t *testing.T) {
+	cfg := LoadFromEnv(func(string) string { return "" })
+	if cfg.PhoenixBaseURL != "" {
+		t.Fatal("PHOENIX_BASE_URL 默认应为空（关闭拉取）")
+	}
+	if cfg.PhoenixTag != "production" || cfg.PhoenixTTL != 60 {
+		t.Fatalf("默认 tag/ttl 错误: %s/%d", cfg.PhoenixTag, cfg.PhoenixTTL)
+	}
+}
+
 func TestConfigKbEnhance(t *testing.T) {
 	cfg := LoadFromEnv(func(k string) string {
 		m := map[string]string{"KB_ENHANCE": "0", "KB_ENHANCE_SUMMARY": "false", "KB_CDTA_THRESHOLD": "0.9"}

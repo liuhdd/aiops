@@ -24,6 +24,10 @@ Go后端（Eino编排LLM）+ 流水线（接收规范化→过滤分诊→上下
 | PORT | 否 | :8080 |
 | KB_FLOW_MAX_SIZE | 否 | 8000 |
 | KB_EMBED_DEPTH | 否 | 2 |
+| PHOENIX_BASE_URL | 否 | 空（关闭拉取），如 http://localhost:6006 |
+| PHOENIX_PROMPT_TAG | 否 | production |
+| PHOENIX_PROMPT_TTL | 否 | 60 |
+| PHOENIX_API_KEY | 否 | 空（非空时带 Bearer 头） |
 
 ## 测试
 后端：`cd backend && go test ./...`

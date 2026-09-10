@@ -33,6 +33,10 @@ type Config struct {
 	KBCdtaThreshold     float64 // KB_CDTA_THRESHOLD，默认 0.85
 	KBFlowMaxSize       int     // KB_FLOW_MAX_SIZE，默认 8000
 	KBEmbedDepth        int     // KB_EMBED_DEPTH，默认 2
+	PhoenixBaseURL      string  // PHOENIX_BASE_URL，为空即关闭 Phoenix 提示词拉取
+	PhoenixTag          string  // PHOENIX_PROMPT_TAG，拉取 tag，默认 production
+	PhoenixTTL          int     // PHOENIX_PROMPT_TTL，缓存刷新周期秒数，默认 60
+	PhoenixAPIKey       string  // PHOENIX_API_KEY，非空时带 Bearer 头
 }
 
 func Load() Config {
@@ -154,6 +158,18 @@ func LoadFromEnv(lookup func(string) string) Config {
 			kbEmbedDepth = n
 		}
 	}
+	phoenixBase := lookup("PHOENIX_BASE_URL")
+	phoenixTag := lookup("PHOENIX_PROMPT_TAG")
+	if phoenixTag == "" {
+		phoenixTag = "production"
+	}
+	phoenixTTL := 60
+	if v := lookup("PHOENIX_PROMPT_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			phoenixTTL = n
+		}
+	}
+	phoenixAPIKey := lookup("PHOENIX_API_KEY")
 	return Config{
 		LLMAPIKey:           lookup("LLM_API_KEY"),
 		LLMBaseURL:          base,
@@ -181,5 +197,9 @@ func LoadFromEnv(lookup func(string) string) Config {
 		KBCdtaThreshold:     kbCdtaThreshold,
 		KBFlowMaxSize:       kbFlowMaxSize,
 		KBEmbedDepth:        kbEmbedDepth,
+		PhoenixBaseURL:      phoenixBase,
+		PhoenixTag:          phoenixTag,
+		PhoenixTTL:          phoenixTTL,
+		PhoenixAPIKey:       phoenixAPIKey,
 	}
 }

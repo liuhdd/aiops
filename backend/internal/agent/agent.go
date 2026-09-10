@@ -398,7 +398,7 @@ func (a *Agent) answerWithLLM(ctx context.Context, conversationID, alertID strin
 		}
 	}
 	ctxStr := ""
-	system := prompt.ChatAnswerSystem
+	system := prompt.ChatAnswerSystem()
 	if as := a.buildAssembled(conversationID, alert.Device, alert.Metric, []string{intent}); as != nil {
 		ctxStr = as.User
 		system += "\n" + as.System

@@ -27,7 +27,7 @@ func (s *RecommendStage) Run(ctx context.Context, st *State) error {
 	}
 	actions := steps
 	if !ctxpkg.IsNilCompleter(s.llm) {
-		system := prompt.RecommendSystem
+		system := prompt.RecommendSystem()
 		root := ""
 		if st.RCA != nil {
 			root = st.RCA.RootCause

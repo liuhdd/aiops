@@ -43,7 +43,7 @@ func (s *RCAStage) react(ctx context.Context, st *State) error {
 		st.RCA = ruleRCA(st)
 		return nil
 	}
-	system := "你是算力中心硬件运维专家。基于上下文，若证据不足可调用工具补充，推理记录写入write_scratchpad。最终输出JSON: {\"final_answer\":{\"root_cause\":string,\"evidence_chain\":[string],\"confidence\":0~1,\"gaps\":[string]}}。除final_answer或tool_call外不输出其它内容。"
+	system := prompt.RCAReactSystem()
 	res, err := st.Ctx.RunReact(ctx, s.llm, system, q, as.User)
 	if err != nil {
 		st.RCA = ruleRCA(st)
@@ -65,7 +65,7 @@ func (s *RCAStage) react(ctx context.Context, st *State) error {
 }
 
 func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
-	system := prompt.RCASystem
+	system := prompt.RCASystem()
 	user := ""
 	if st.Ctx != nil {
 		if as, err := st.Ctx.Assemble(ctxpkg.Query{
@@ -78,7 +78,7 @@ func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
 	user += fmt.Sprintf("设备:%s 指标:%s\n证据:%s\n%s",
 		st.Alert.Device, st.Alert.Metric,
 		model.MustJSON(st.Evidence),
-		extraGapHint(st))
+		prompt.RCAGapHint(st.Iteration))
 	raw, err := s.llm.Complete(ctx, system, user)
 	if err != nil {
 		st.RCA = ruleRCA(st)
@@ -92,13 +92,6 @@ func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
 	}
 	st.RCA = rc
 	return nil
-}
-
-func extraGapHint(st *State) string {
-	if st.Iteration > 0 {
-		return "这是第" + fmt.Sprint(st.Iteration) + "轮补充取证，请重点分析新增证据。"
-	}
-	return "请基于当前证据给出根因结论。"
 }
 
 func ruleRCA(st *State) *model.RCA {

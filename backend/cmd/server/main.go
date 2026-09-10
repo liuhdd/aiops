@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"aiops/internal/agent"
 	"aiops/internal/api"
@@ -18,6 +19,7 @@ import (
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
+	"aiops/internal/prompt"
 	"aiops/internal/retrieve"
 	"aiops/internal/simulator"
 	"aiops/internal/store"
@@ -25,6 +27,12 @@ import (
 
 func main() {
 	cfg := config.Load()
+
+	if cfg.PhoenixBaseURL != "" {
+		prompt.Configure(prompt.NewPhoenixFetcher(cfg.PhoenixBaseURL, cfg.PhoenixTag, cfg.PhoenixAPIKey),
+			time.Duration(cfg.PhoenixTTL)*time.Second)
+		log.Printf("phoenix prompt hub: %s (tag=%s, ttl=%ds)", cfg.PhoenixBaseURL, cfg.PhoenixTag, cfg.PhoenixTTL)
+	}
 
 	lc, err := llm.NewClient(cfg)
 	if err != nil {
