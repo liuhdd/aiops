@@ -210,12 +210,30 @@ export default function KnowledgeBase() {
               </Descriptions.Item>
             </Descriptions>
             {detail.chunks.length === 0 && <Empty description="暂无分块" />}
-            {detail.chunks.map((c) => (
-              <div key={c.id} style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#2a3346' }}>
-                {c.heading && <Typography.Text strong>{c.heading}</Typography.Text>}
-                <div>{c.content}</div>
-              </div>
-            ))}
+            {detail.chunks.map((c) => {
+              const srcIds = c.source_doc_ids ?? []
+              return (
+                <div key={c.id} style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#2a3346' }}>
+                  {c.heading && <Typography.Text strong>{c.heading}</Typography.Text>}
+                  {c.summary && (
+                    <div style={{ marginTop: 4 }}>
+                      <Typography.Text type="secondary">摘要：{c.summary}</Typography.Text>
+                    </div>
+                  )}
+                  <div style={{ marginTop: 4 }}>{c.content}</div>
+                  {srcIds.length > 1 && (
+                    <div style={{ marginTop: 4 }}>
+                      <Typography.Text type="secondary">多文档合并（{srcIds.length} 个来源）：{srcIds.join(', ')}</Typography.Text>
+                    </div>
+                  )}
+                  {srcIds.length === 1 && srcIds[0] !== detail.id && (
+                    <div style={{ marginTop: 4 }}>
+                      <Typography.Text type="secondary">来源：{srcIds[0]}</Typography.Text>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </>
         )}
       </Drawer>

@@ -63,11 +63,27 @@ describe('KnowledgeBase', () => {
     vi.mocked(fetchKbDocs).mockResolvedValue([doc('d1', '交换机手册', 'manual')])
     vi.mocked(fetchKbDoc).mockResolvedValue({
       ...doc('d1', '交换机手册', 'manual'),
-      chunks: [{ id: 'c1', doc_id: 'd1', seq: 1, heading: '概述', content: '本手册介绍交换机', created_at: '' }],
+      chunks: [{ id: 'c1', doc_id: 'd1', seq: 1, heading: '概述', content: '本手册介绍交换机', summary: '', source_doc_ids: ['d1'], created_at: '' }],
     })
     render(<KnowledgeBase />)
     await screen.findByText('交换机手册')
     fireEvent.click(screen.getByText('详情'))
     expect(await screen.findByText('本手册介绍交换机')).toBeTruthy()
+  })
+
+  it('详情展示摘要与多文档来源', async () => {
+    vi.mocked(fetchKbDocs).mockResolvedValue([doc('d1', '交换机手册', 'manual')])
+    vi.mocked(fetchKbDoc).mockResolvedValue({
+      ...doc('d1', '交换机手册', 'manual'),
+      chunks: [{
+        id: 'c1', doc_id: 'd1', seq: 1, heading: '概述', content: '正文内容',
+        summary: '核心处置摘要', source_doc_ids: ['d1', 'd2'], created_at: '',
+      }],
+    })
+    render(<KnowledgeBase />)
+    await screen.findByText('交换机手册')
+    fireEvent.click(screen.getByText('详情'))
+    expect(await screen.findByText(/核心处置摘要/)).toBeTruthy()
+    expect(await screen.findByText(/d1.*d2|2 个来源|多文档/)).toBeTruthy()
   })
 })

@@ -128,6 +128,8 @@ export interface KbChunk {
   seq: number
   heading: string
   content: string
+  summary: string
+  source_doc_ids: string[]
   created_at: string
 }
 
