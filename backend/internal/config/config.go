@@ -39,6 +39,12 @@ func Load() Config {
 	return LoadFromEnv(os.Getenv)
 }
 
+// Default 返回空环境下的默认配置（不读进程环境），供库构造与测试显式注入使用。
+// 入口（cmd/*）仍应使用 Load() 读取真实环境。
+func Default() Config {
+	return LoadFromEnv(func(string) string { return "" })
+}
+
 func LoadFromEnv(lookup func(string) string) Config {
 	base := lookup("LLM_BASE_URL")
 	if base == "" {

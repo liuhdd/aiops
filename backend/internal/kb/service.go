@@ -76,15 +76,14 @@ func NewService(st *store.Store, leaves func() []model.LeafSpec) *Service {
 }
 
 // NewServiceWithEmbedder 构造 Service；embed 可为 nil（不上向量）。
+// 使用确定性 config.Default()，不读进程环境；需定制请用 NewServiceWithEnrich 显式传 cfg。
 func NewServiceWithEmbedder(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder) *Service {
-	return NewServiceWithEnrich(st, leaves, embed, nil, config.Load())
+	return NewServiceWithEnrich(st, leaves, embed, nil, config.Default())
 }
 
-// NewServiceWithEnrich 构造 Service；lc 可为 nil（富化回退），cfg 为零值时回退到 config.Load()。
+// NewServiceWithEnrich 构造 Service；lc 可为 nil（富化回退），cfg 按原样使用（不隐式 Load）。
+// 调用方（cmd/*）负责 config.Load() 后显式传入；测试请传 config.Default() 或定制值。
 func NewServiceWithEnrich(st *store.Store, leaves func() []model.LeafSpec, embed retrieve.Embedder, lc Completer, cfg config.Config) *Service {
-	if cfg == (config.Config{}) {
-		cfg = config.Load()
-	}
 	return &Service{st: st, leaves: leaves, embed: embed, enrichLC: lc, cfg: cfg}
 }
 
@@ -1055,31 +1054,6 @@ func (s *Service) RechunkDoc(ctx context.Context, docID string) (*RechunkStat, e
 		return nil, err
 	}
 	return stat, nil
-}
-
-func (s *Service) embedChunks(ctx context.Context, docID string, chunks []ChunkResult, ids []string, now time.Time) []model.KbEmbedding {
-	if s.embed == nil {
-		return nil
-	}
-	texts := make([]string, len(chunks))
-	for i, c := range chunks {
-		texts[i] = truncateRunes(c.Content, 8000)
-	}
-	vecs, err := s.embed.Embed(ctx, texts)
-	if err != nil {
-		return nil
-	}
-	if len(vecs) > len(ids) {
-		vecs = vecs[:len(ids)]
-	}
-	out := make([]model.KbEmbedding, 0, len(chunks))
-	for i, v := range vecs {
-		if len(v) == 0 {
-			continue
-		}
-		out = append(out, model.KbEmbedding{ChunkID: ids[i], DocID: docID, Embedding: v, Model: s.embed.Model(), CreatedAt: now})
-	}
-	return out
 }
 
 func truncateRunes(s string, n int) string {

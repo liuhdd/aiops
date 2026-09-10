@@ -72,7 +72,7 @@ func main() {
 	intentsvc := intent.NewService(st, intent.NewMemCache())
 	var enrichLC kb.Completer
 	if lc != nil {
-		enrichLC = llm.NewKbCompleter(lc)
+		enrichLC = kb.AdaptCompleter(lc)
 	}
 	kbsvc := kb.NewServiceWithEnrich(st, func() []model.LeafSpec {
 		leaves, _ := intentsvc.ActiveLeaves(context.Background())

@@ -59,14 +59,10 @@ func NewSearcherWithConfig(st *store.Store, embedder Embedder, rr Reranker, cfg 
 	return &searcher{st: st, embedder: embedder, reranker: rr, cfg: cfg}
 }
 
-// NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。兼容旧构造，默认开关全开但无精排。
+// NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。
+// 使用确定性 config.Default()（不读环境），需定制请用 NewSearcherWithConfig 显式传 cfg。
 func NewSearcher(st *store.Store, embedder Embedder) Searcher {
-	return NewSearcherWithConfig(st, embedder, nil, config.Config{
-		RetrieveFingerprint: true,
-		RetrieveRRF:         true,
-		RerankModel:         "rerank",
-		RerankFloor:         0.2,
-	})
+	return NewSearcherWithConfig(st, embedder, nil, config.Default())
 }
 
 // isFingerprintEnabled 指纹快路径是否启用。

@@ -37,7 +37,7 @@ func main() {
 	}
 	var lc kb.Completer
 	if c, err := llm.NewClient(cfg); err == nil && c != nil {
-		lc = llm.NewKbCompleter(c)
+		lc = kb.AdaptCompleter(c)
 	}
 	svc := kb.NewServiceWithEnrich(st, nil, embedder, lc, cfg)
 

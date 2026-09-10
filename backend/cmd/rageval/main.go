@@ -131,7 +131,7 @@ func main() {
 	}
 	var llmCompleter kb.Completer
 	if lc, err := llm.NewClient(cfg); err == nil && lc != nil {
-		llmCompleter = llm.NewKbCompleter(lc)
+		llmCompleter = kb.AdaptCompleter(lc)
 	}
 	svc := kb.NewServiceWithEnrich(s, nil, embedder, llmCompleter, cfg)
 	if err := svc.Seed(seeds); err != nil {
