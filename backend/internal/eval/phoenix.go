@@ -54,7 +54,7 @@ func taskExample(t Task) phoenix.Example {
 	}
 	return phoenix.Example{
 		ID: t.ID, Input: input, Output: output,
-		Metadata: map[string]any{"task_id": t.ID, "object": t.Object, "configs": t.Configs},
+		Metadata: map[string]any{"task_id": t.ID, "object": t.Object, "configs": t.Configs, "extended": t.Extended},
 		Splits:   []string{t.Object},
 	}
 }

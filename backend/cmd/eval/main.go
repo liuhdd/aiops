@@ -136,17 +136,19 @@ func cmdRun(args []string) {
 func cmdCI(args []string) {
 	fs := flag.NewFlagSet("ci", flag.ContinueOnError)
 	threshold := fs.Float64("threshold", 0.9, "pass@k 最低阈值")
+	all := fs.Bool("all", false, "包含 Extended 任务（默认跳过）")
 	fs.Parse(args)
 	cfg := config.Load()
 	lc := mustClient(cfg)
 	mockdata.GenerateAll(42)
+	tasks := selectCITasks(*all)
 
 	var configsList = []eval.Config{{Name: "rule"}}
 	if !isNilClient(lc) {
 		configsList = append(configsList, eval.EvalConfigs[1:]...)
 	}
 	scored := map[string][]eval.ScoredTrial{}
-	for _, t := range eval.DefaultTasks() {
+	for _, t := range tasks {
 		for _, c := range configsList {
 			if len(t.Configs) > 0 && !containsStr(t.Configs, c.Name) {
 				continue
@@ -189,12 +191,24 @@ func cmdCI(args []string) {
 			}
 		}
 	}
-	rep := eval.BuildReport(eval.DefaultTasks(), configsList, scored)
+	rep := eval.BuildReport(tasks, configsList, scored)
 	fmt.Print(rep.Summarize())
 	if rep.Summary.Overall.PassAtK < *threshold {
 		fmt.Fprintf(os.Stderr, "CI 失败: pass@k=%.2f < %.2f\n", rep.Summary.Overall.PassAtK, *threshold)
 		os.Exit(1)
 	}
+}
+
+// selectCITasks 返回 CI 门禁任务集：默认跳过 Extended，all=true 时全量。
+func selectCITasks(all bool) []eval.Task {
+	var out []eval.Task
+	for _, t := range eval.DefaultTasks() {
+		if t.Extended && !all {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // export-samples: 从评测报告导出含 {task, transcript, LLM 判定} 的样本供人工标注

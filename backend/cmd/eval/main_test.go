@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"aiops/internal/eval"
 )
 
 // 用 go run 编译运行 CLI（集成冒烟测试）
@@ -77,6 +79,27 @@ func TestCLIExportCalibrate(t *testing.T) {
 	}
 	if !fileContains(calib, `"agreement"`) {
 		t.Fatalf("calib.json 缺 agreement 字段\n%s", readFile(calib))
+	}
+}
+
+func TestSelectCITasksSkipsExtended(t *testing.T) {
+	all := eval.DefaultTasks()
+	if len(all) == 0 {
+		t.Fatal("任务集为空")
+	}
+	// 人为标记一条为 Extended（通过任务集副本无法改，改为直接测过滤函数对真实扩展题的判断）
+	kept := selectCITasks(false)
+	keptAll := selectCITasks(true)
+	if len(keptAll) != len(all) {
+		t.Fatalf("--all 应保留全部: got %d want %d", len(keptAll), len(all))
+	}
+	if len(kept) > len(keptAll) {
+		t.Fatalf("默认不应多于 --all")
+	}
+	for _, tk := range kept {
+		if tk.Extended {
+			t.Fatalf("默认 CI 不应含 Extended 任务 %s", tk.ID)
+		}
 	}
 }
 

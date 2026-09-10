@@ -28,6 +28,7 @@ type Task struct {
 	Expected  Expected    // ground-truth
 	Configs   []string    // 适用配置；空=全部
 	ChatInput string      // Object==chat 时用户输入
+	Extended  bool        // true=仅 eval run 全量跑，cmd/eval ci 默认跳过（CI 耗时/token 控制）
 }
 
 // Expected ground-truth
