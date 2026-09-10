@@ -49,7 +49,9 @@ type TrialResult struct {
 	Trial     int
 	Config    string
 	RunStatus string
-	ErrMsg    string `json:"err_msg,omitempty"`
+	ErrMsg    string    `json:"err_msg,omitempty"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+	EndedAt   time.Time `json:"ended_at,omitempty"`
 	Intent    string
 	Intents   []string `json:"intents,omitempty"`
 	Reply     string

@@ -93,6 +93,7 @@ func cmdRun(args []string) {
 				// 每次 trial 独立超时：同一 ctx 覆盖整次 trial（流水线运行 + LLM 评委），
 				// 避免挂起的评委 LLM 无限阻塞评测。评分完成后才 cancel。
 				trialCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				start := time.Now()
 				res, err := eval.RunTask(trialCtx, t, c, lc, trial)
 				if err != nil && res == nil {
 					cancel()
@@ -100,6 +101,10 @@ func cmdRun(args []string) {
 					continue
 				}
 				scores := eval.Grade(trialCtx, t, c, res, lc)
+				if res != nil {
+					res.StartedAt = start
+					res.EndedAt = time.Now()
+				}
 				cancel()
 				st := eval.ScoredTrial{TrialResult: res, Scores: scores}
 				if err != nil {
@@ -157,6 +162,7 @@ func cmdCI(args []string) {
 				// 每次 trial 独立超时：同一 ctx 覆盖整次 trial（流水线运行 + LLM 评委），
 				// 避免挂起的评委 LLM 无限阻塞评测。评分完成后才 cancel。
 				trialCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				start := time.Now()
 				res, err := eval.RunTask(trialCtx, t, c, lc, trial)
 				if err != nil && res == nil {
 					cancel()
@@ -164,6 +170,10 @@ func cmdCI(args []string) {
 					continue
 				}
 				scores := eval.Grade(trialCtx, t, c, res, lc)
+				if res != nil {
+					res.StartedAt = start
+					res.EndedAt = time.Now()
+				}
 				cancel()
 				st := eval.ScoredTrial{TrialResult: res, Scores: scores}
 				if err != nil {

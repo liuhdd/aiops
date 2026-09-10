@@ -1,6 +1,11 @@
 package eval
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestAgentDatasetExamplesCoverAllTasks(t *testing.T) {
 	tasks := DefaultTasks()
@@ -46,5 +51,18 @@ func TestAgentDatasetExampleShapes(t *testing.T) {
 	}
 	if chat.Output["intent"] != "ListAlerts" {
 		t.Fatalf("chat output = %v", chat.Output)
+	}
+}
+
+func TestTrialResultSerializesTimestamps(t *testing.T) {
+	start := time.Date(2026, 9, 10, 1, 2, 3, 0, time.UTC)
+	tr := TrialResult{Trial: 1, Config: "rule", StartedAt: start, EndedAt: start.Add(time.Second)}
+	b, err := json.Marshal(tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `"started_at"`) || !strings.Contains(s, `"ended_at"`) {
+		t.Fatalf("缺少时间戳字段: %s", s)
 	}
 }
