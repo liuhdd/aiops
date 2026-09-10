@@ -167,6 +167,14 @@ func TestNewChatTasks(t *testing.T) {
 		if len(tk.Expected.Intents) != len(want) {
 			t.Fatalf("%s intents = %v, want %v", id, tk.Expected.Intents, want)
 		}
+		for i := range want {
+			if tk.Expected.Intents[i] != want[i] {
+				t.Fatalf("%s intents = %v, want %v", id, tk.Expected.Intents, want)
+			}
+		}
+		if !tk.Extended {
+			t.Fatalf("%s 多意图题应为 Extended: %+v", id, tk)
+		}
 		if len(tk.Configs) == 0 {
 			t.Fatalf("%s 多意图题应限定 Configs", id)
 		}
