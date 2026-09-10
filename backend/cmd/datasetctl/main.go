@@ -50,7 +50,9 @@ func cmdPush(c *phoenix.Client, args []string) {
 	fs := flag.NewFlagSet("push", flag.ContinueOnError)
 	which := fs.String("dataset", "all", "agents|rag|all")
 	goldenPath := fs.String("golden", "testdata/golden_set.jsonl", "RAG 标注集路径")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		log.Fatal(err)
+	}
 	if *which == "agents" || *which == "all" {
 		res, err := pushDataset(c, eval.AgentDatasetName, eval.AgentDatasetExamples())
 		if err != nil {
