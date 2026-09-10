@@ -10,6 +10,15 @@ type Experiment struct {
 	ID, DatasetID, DatasetVersionID, Name string
 }
 
+// ExperimentSummary 一次实验回写的结果汇总。
+type ExperimentSummary struct {
+	Name         string
+	ID           string
+	RunsWritten  int
+	EvalsWritten int
+	Failures     int
+}
+
 // RunRequest 一条实验 run（对应一个 dataset example 的一次执行）。
 type RunRequest struct {
 	DatasetExampleID string    `json:"dataset_example_id"`

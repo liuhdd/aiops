@@ -61,10 +61,11 @@ func taskExample(t Task) phoenix.Example {
 
 // PushAgentExperiment 把评测报告回写为 Phoenix 实验：每 config 一实验，每 trial 一 run，
 // 每非 NA grader 一条 evaluation，另加一条 WeightedScore 总体评测。
-func PushAgentExperiment(w phoenix.Writer, datasetID string, report Report, cfgFilter []string, namePrefix string) error {
+// 回写按项继续，返回各实验汇总与首个错误。
+func PushAgentExperiment(w phoenix.Writer, datasetID string, report Report, cfgFilter []string, namePrefix string) ([]phoenix.ExperimentSummary, error) {
 	exs, err := w.ListExamples(datasetID, "")
 	if err != nil {
-		return fmt.Errorf("列数据集失败: %w", err)
+		return nil, fmt.Errorf("列数据集失败: %w", err)
 	}
 	byTask := map[string]string{}
 	for _, e := range exs {
@@ -72,6 +73,7 @@ func PushAgentExperiment(w phoenix.Writer, datasetID string, report Report, cfgF
 			byTask[id] = e.ID
 		}
 	}
+	var summaries []phoenix.ExperimentSummary
 	var firstErr error
 	for _, cfgName := range report.Meta.Configs {
 		if len(cfgFilter) > 0 && !contains(cfgFilter, cfgName) {
@@ -109,9 +111,11 @@ func PushAgentExperiment(w phoenix.Writer, datasetID string, report Report, cfgF
 			}
 			continue
 		}
+		sum := phoenix.ExperimentSummary{Name: namePrefix + "/" + cfgName, ID: exp.ID}
 		for _, r := range refs {
 			exID, ok := byTask[r.taskID]
 			if !ok {
+				sum.Failures++
 				continue
 			}
 			sc := r.tr
@@ -134,8 +138,10 @@ func PushAgentExperiment(w phoenix.Writer, datasetID string, report Report, cfgF
 				if firstErr == nil {
 					firstErr = err
 				}
+				sum.Failures++
 				continue
 			}
+			sum.RunsWritten++
 			for _, g := range sc.Scores {
 				if g.NA {
 					continue
@@ -150,8 +156,13 @@ func PushAgentExperiment(w phoenix.Writer, datasetID string, report Report, cfgF
 					StartTime: start, EndTime: end,
 					Result:   &phoenix.EvaluationResult{Score: &score, Label: passLabel(g.Pass), Explanation: g.Detail},
 					Metadata: map[string]any{"weight": g.Weight},
-				}); err != nil && firstErr == nil {
-					firstErr = err
+				}); err != nil {
+					if firstErr == nil {
+						firstErr = err
+					}
+					sum.Failures++
+				} else {
+					sum.EvalsWritten++
 				}
 			}
 			score := sc.Score
@@ -159,16 +170,25 @@ func PushAgentExperiment(w phoenix.Writer, datasetID string, report Report, cfgF
 				ExperimentRunID: runID, Name: "WeightedScore", AnnotatorKind: "CODE",
 				StartTime: start, EndTime: end,
 				Result: &phoenix.EvaluationResult{Score: &score, Label: passLabel(sc.Pass), Explanation: sc.RunStatus},
-			}); err != nil && firstErr == nil {
-				firstErr = err
+			}); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				sum.Failures++
+			} else {
+				sum.EvalsWritten++
 			}
 		}
+		summaries = append(summaries, sum)
 	}
-	return firstErr
+	return summaries, firstErr
 }
 
 func runOutput(res *TrialResult) map[string]any {
-	// mustJSON 把嵌套结构转为可序列化 map，避免 Phoenix 收到 Go 结构体字段名。
+	if res == nil {
+		return map[string]any{}
+	}
+	// 展开为可序列化 map，避免 Phoenix 收到 Go 结构体字段名。
 	return map[string]any{
 		"run_status": res.RunStatus,
 		"rca":        res.Outcome.RCA,

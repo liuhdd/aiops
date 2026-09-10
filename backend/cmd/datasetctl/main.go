@@ -142,10 +142,12 @@ func cmdExperiment(c *phoenix.Client, args []string) {
 		if *configs != "" {
 			filter = strings.Split(*configs, ",")
 		}
-		if err := eval.PushAgentExperiment(c, dsID, rep, filter, prefix); err != nil {
-			log.Fatalf("回写失败: %v", err)
+		sums, err := eval.PushAgentExperiment(c, dsID, rep, filter, prefix)
+		printExperimentSummaries(sums)
+		if err != nil {
+			log.Printf("warn: 回写失败: %v", err)
+			os.Exit(1)
 		}
-		fmt.Printf("experiment 已回写: %s（%d configs）\n", prefix, len(rep.Meta.Configs))
 	case "rag":
 		var rep goldenset.RagReport
 		if err := json.Unmarshal(b, &rep); err != nil {
@@ -159,11 +161,25 @@ func cmdExperiment(c *phoenix.Client, args []string) {
 		if prefix == "" {
 			prefix = goldenset.RagDatasetName
 		}
-		if err := goldenset.PushRagExperiment(c, dsID, rep, prefix); err != nil {
-			log.Fatalf("回写失败: %v", err)
+		sum, err := goldenset.PushRagExperiment(c, dsID, rep, prefix)
+		printExperimentSummaries([]phoenix.ExperimentSummary{sum})
+		if err != nil {
+			log.Printf("warn: 回写失败: %v", err)
+			os.Exit(1)
 		}
-		fmt.Printf("experiment 已回写: %s/rag（%d items）\n", prefix, len(rep.Items))
 	}
+}
+
+// printExperimentSummaries 逐实验打印回写结果并汇总总数。
+func printExperimentSummaries(sums []phoenix.ExperimentSummary) {
+	var runs, evals, failures int
+	for _, s := range sums {
+		fmt.Printf("实验 %s id=%s runs=%d evals=%d 失败=%d\n", s.Name, s.ID, s.RunsWritten, s.EvalsWritten, s.Failures)
+		runs += s.RunsWritten
+		evals += s.EvalsWritten
+		failures += s.Failures
+	}
+	fmt.Printf("合计 runs=%d evals=%d 失败=%d\n", runs, evals, failures)
 }
 
 // findDataset 按名称查数据集 id。

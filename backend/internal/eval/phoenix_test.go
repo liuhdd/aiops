@@ -110,8 +110,18 @@ func TestPushAgentExperimentFullMapping(t *testing.T) {
 		},
 	}
 	w := &fakeWriter{}
-	if err := PushAgentExperiment(w, "DS", rep, nil, "aiops-agents-eval"); err != nil {
+	sums, err := PushAgentExperiment(w, "DS", rep, nil, "aiops-agents-eval")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(sums) != 1 {
+		t.Fatalf("summaries = %+v", sums)
+	}
+	if sums[0].Name != "aiops-agents-eval/rule" || sums[0].ID != "E-aiops-agents-eval/rule" {
+		t.Fatalf("summary name/id = %+v", sums[0])
+	}
+	if sums[0].RunsWritten != 1 || sums[0].EvalsWritten != 2 || sums[0].Failures != 0 {
+		t.Fatalf("summary counts = %+v", sums[0])
 	}
 	if len(w.experiments) != 1 || w.experiments[0] != "aiops-agents-eval/rule" {
 		t.Fatalf("experiments = %v", w.experiments)
@@ -142,10 +152,38 @@ func TestPushAgentExperimentJudgeUsesLLMKind(t *testing.T) {
 		},
 	}
 	w := &fakeWriter{}
-	if err := PushAgentExperiment(w, "DS", rep, nil, "p"); err != nil {
+	if _, err := PushAgentExperiment(w, "DS", rep, nil, "p"); err != nil {
 		t.Fatal(err)
 	}
 	if w.evals[0].AnnotatorKind != "LLM" {
 		t.Fatalf("judge 应用 LLM kind: %+v", w.evals[0])
+	}
+}
+
+func TestPushAgentExperimentCountsMissingExampleAsFailure(t *testing.T) {
+	rep := Report{
+		Meta: Meta{Configs: []string{"rule"}},
+		Tasks: []TaskReport{
+			{ID: "t-missing", Configs: map[string]ConfigStats{
+				"rule": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "rule", Trial: 1, RunStatus: "completed"}}}},
+			}},
+		},
+	}
+	w := &fakeWriter{}
+	sums, err := PushAgentExperiment(w, "DS", rep, nil, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.runs) != 0 || len(w.evals) != 0 {
+		t.Fatalf("缺失 example 不应写 run/eval: runs=%d evals=%d", len(w.runs), len(w.evals))
+	}
+	if len(sums) != 1 || sums[0].Failures != 1 || sums[0].RunsWritten != 0 || sums[0].EvalsWritten != 0 {
+		t.Fatalf("summary = %+v", sums)
+	}
+}
+
+func TestRunOutputNilGuard(t *testing.T) {
+	if got := runOutput(nil); len(got) != 0 {
+		t.Fatalf("runOutput(nil) = %+v", got)
 	}
 }

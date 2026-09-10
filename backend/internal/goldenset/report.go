@@ -52,10 +52,12 @@ func (r RagReport) ToJSON() ([]byte, error) {
 
 // PushRagExperiment 把 rageval 报告回写为单个 Phoenix 实验：每 item 一 run，
 // 每项指标一条 evaluation（CODE），reject 题额外一条 RejectOK。
-func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, namePrefix string) error {
+// 回写按项继续，返回实验汇总与首个错误。
+func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, namePrefix string) (phoenix.ExperimentSummary, error) {
+	sum := phoenix.ExperimentSummary{Name: namePrefix + "/rag"}
 	exs, err := w.ListExamples(datasetID, "")
 	if err != nil {
-		return fmt.Errorf("列数据集失败: %w", err)
+		return sum, fmt.Errorf("列数据集失败: %w", err)
 	}
 	byID := map[string]string{}
 	for _, e := range exs {
@@ -67,12 +69,14 @@ func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, nam
 		"enhance": report.Meta.Enhance, "top_k": report.Meta.TopK, "ts": report.Meta.Timestamp.Format(time.RFC3339),
 	})
 	if err != nil {
-		return err
+		return sum, err
 	}
+	sum.ID = exp.ID
 	var firstErr error
 	for _, it := range report.Items {
 		exID, ok := byID[it.ID]
 		if !ok {
+			sum.Failures++
 			continue
 		}
 		start, end := it.StartedAt, it.EndedAt
@@ -90,8 +94,10 @@ func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, nam
 			if firstErr == nil {
 				firstErr = err
 			}
+			sum.Failures++
 			continue
 		}
+		sum.RunsWritten++
 		metrics := []struct {
 			name string
 			val  float64
@@ -104,8 +110,13 @@ func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, nam
 				ExperimentRunID: runID, Name: m.name, AnnotatorKind: "CODE",
 				StartTime: start, EndTime: end,
 				Result: &phoenix.EvaluationResult{Score: &v, Explanation: it.Behavior},
-			}); err != nil && firstErr == nil {
-				firstErr = err
+			}); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				sum.Failures++
+			} else {
+				sum.EvalsWritten++
 			}
 		}
 		if it.Behavior == "reject" {
@@ -117,12 +128,17 @@ func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, nam
 				ExperimentRunID: runID, Name: "RejectOK", AnnotatorKind: "CODE",
 				StartTime: start, EndTime: end,
 				Result: &phoenix.EvaluationResult{Score: &v, Label: passFail(it.RejectOK)},
-			}); err != nil && firstErr == nil {
-				firstErr = err
+			}); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				sum.Failures++
+			} else {
+				sum.EvalsWritten++
 			}
 		}
 	}
-	return firstErr
+	return sum, firstErr
 }
 
 func passFail(b bool) string {

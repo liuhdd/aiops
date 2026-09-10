@@ -78,8 +78,16 @@ func TestPushRagExperiment(t *testing.T) {
 		Items: []ItemResult{hit, rejectOK, rejectFail},
 	}
 	w := &fakeWriter{}
-	if err := PushRagExperiment(w, "DS", rep, "aiops-rag-golden"); err != nil {
+	sum, err := PushRagExperiment(w, "DS", rep, "aiops-rag-golden")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if sum.Name != "aiops-rag-golden/rag" || sum.ID != "E1" {
+		t.Fatalf("summary name/id = %+v", sum)
+	}
+	// 3 runs；q1=4 evals，q2/q3 各 4+RejectOK=5 → 共 14
+	if sum.RunsWritten != 3 || sum.EvalsWritten != 14 || sum.Failures != 0 {
+		t.Fatalf("summary counts = %+v", sum)
 	}
 	if len(w.exp) != 1 || w.exp[0] != "aiops-rag-golden/rag" {
 		t.Fatalf("exp = %v", w.exp)
@@ -132,5 +140,23 @@ func TestPushRagExperiment(t *testing.T) {
 	}
 	if e.Result == nil || e.Result.Score == nil || *e.Result.Score != 0 || e.Result.Label != "FAIL" {
 		t.Fatalf("RejectOK(false) = %+v", e.Result)
+	}
+}
+
+func TestPushRagExperimentCountsMissingExampleAsFailure(t *testing.T) {
+	rep := RagReport{
+		Meta:  RagMeta{Enhance: false, TopK: 3},
+		Items: []ItemResult{{ID: "q-missing", Type: "fact", TopK: 3, Behavior: "hit"}},
+	}
+	w := &fakeWriter{}
+	sum, err := PushRagExperiment(w, "DS", rep, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.runs) != 0 || len(w.evals) != 0 {
+		t.Fatalf("缺失 example 不应写 run/eval: runs=%d evals=%d", len(w.runs), len(w.evals))
+	}
+	if sum.RunsWritten != 0 || sum.EvalsWritten != 0 || sum.Failures != 1 {
+		t.Fatalf("summary = %+v", sum)
 	}
 }
