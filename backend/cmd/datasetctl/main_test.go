@@ -40,3 +40,15 @@ func TestPushDatasetPropagatesNonConflict(t *testing.T) {
 		t.Fatalf("不应重试, calls = %v", u.calls)
 	}
 }
+
+func TestExperimentRequiresDatasetAndReport(t *testing.T) {
+	if err := validateExperimentArgs("", "x.json"); err == nil {
+		t.Fatal("缺 dataset 应报错")
+	}
+	if err := validateExperimentArgs("agents", ""); err == nil {
+		t.Fatal("缺 report 应报错")
+	}
+	if err := validateExperimentArgs("agents", "x.json"); err != nil {
+		t.Fatalf("合法参数不应报错: %v", err)
+	}
+}

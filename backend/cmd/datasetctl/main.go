@@ -7,10 +7,12 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"aiops/internal/config"
 	"aiops/internal/eval"
@@ -33,6 +35,8 @@ func main() {
 		cmdPush(c, os.Args[2:])
 	case "list":
 		cmdList(c)
+	case "experiment":
+		cmdExperiment(c, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -92,4 +96,71 @@ func pushDataset(u phoenix.Uploader, name string, exs []phoenix.Example) (phoeni
 		return u.UploadDataset("update", name, "", exs)
 	}
 	return res, err
+}
+
+func validateExperimentArgs(dataset, report string) error {
+	if dataset != "agents" && dataset != "rag" {
+		return fmt.Errorf("--dataset 必填且为 agents|rag")
+	}
+	if report == "" {
+		return fmt.Errorf("--report 必填")
+	}
+	return nil
+}
+
+func cmdExperiment(c *phoenix.Client, args []string) {
+	fs := flag.NewFlagSet("experiment", flag.ContinueOnError)
+	dataset := fs.String("dataset", "", "agents|rag")
+	reportPath := fs.String("report", "", "报告 JSON 路径")
+	name := fs.String("name", "", "实验名前缀")
+	configs := fs.String("config", "", "逗号分隔，仅 agents；空=全部")
+	if err := fs.Parse(args); err != nil {
+		log.Fatal(err)
+	}
+	if err := validateExperimentArgs(*dataset, *reportPath); err != nil {
+		log.Fatal(err)
+	}
+	b, err := os.ReadFile(*reportPath)
+	if err != nil {
+		log.Fatalf("读报告失败: %v", err)
+	}
+	switch *dataset {
+	case "agents":
+		var rep eval.Report
+		if err := json.Unmarshal(b, &rep); err != nil {
+			log.Fatalf("报告解析失败: %v", err)
+		}
+		dsID, err := findDataset(c, eval.AgentDatasetName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		prefix := *name
+		if prefix == "" {
+			prefix = eval.AgentDatasetName
+		}
+		var filter []string
+		if *configs != "" {
+			filter = strings.Split(*configs, ",")
+		}
+		if err := eval.PushAgentExperiment(c, dsID, rep, filter, prefix); err != nil {
+			log.Fatalf("回写失败: %v", err)
+		}
+		fmt.Printf("experiment 已回写: %s（%d configs）\n", prefix, len(rep.Meta.Configs))
+	case "rag":
+		log.Fatal("rag 回写将在后续任务提供")
+	}
+}
+
+// findDataset 按名称查数据集 id。
+func findDataset(c *phoenix.Client, name string) (string, error) {
+	ds, err := c.ListDatasets()
+	if err != nil {
+		return "", err
+	}
+	for _, d := range ds {
+		if d.Name == name {
+			return d.ID, nil
+		}
+	}
+	return "", fmt.Errorf("未找到数据集 %s（先执行 datasetctl push）", name)
 }
