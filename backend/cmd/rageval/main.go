@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +9,7 @@ import (
 	"strings"
 
 	"aiops/internal/config"
+	"aiops/internal/goldenset"
 	"aiops/internal/kb"
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
@@ -18,18 +17,6 @@ import (
 	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
-
-type GoldenItem struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Question string `json:"question"`
-	Expect   struct {
-		DocIDs           []string `json:"doc_ids"`
-		DistractorDocIDs []string `json:"distractor_doc_ids"`
-		Behavior         string   `json:"behavior"`
-	} `json:"expect"`
-	TopK int `json:"top_k"`
-}
 
 func main() {
 	golden := flag.String("golden", "testdata/golden_set.jsonl", "golden set jsonl path")
@@ -56,41 +43,10 @@ func main() {
 	}
 	defer f.Close()
 
-	var items []GoldenItem
-	scanner := bufio.NewScanner(f)
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var it GoldenItem
-		if err := json.Unmarshal([]byte(line), &it); err != nil {
-			fmt.Fprintf(os.Stderr, "标注集第 %d 行 JSON 解析失败: %v\n", lineNo, err)
-			os.Exit(1)
-		}
-		if it.TopK == 0 {
-			it.TopK = 3
-		}
-		if it.Expect.DocIDs == nil {
-			it.Expect.DocIDs = []string{}
-		}
-		if it.Expect.DistractorDocIDs == nil {
-			it.Expect.DistractorDocIDs = []string{}
-		}
-		// 兼容旧字段行为：空 behavior 视为 hit 若 doc_ids 非空，否则 reject
-		if it.Expect.Behavior == "" {
-			if len(it.Expect.DocIDs) > 0 {
-				it.Expect.Behavior = "hit"
-			} else {
-				it.Expect.Behavior = "reject"
-			}
-		}
-		items = append(items, it)
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "读取标注集失败: %v\n", err)
+	var items []goldenset.Item
+	items, err = goldenset.Load(goldenPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "标注集解析失败: %v\n", err)
 		os.Exit(1)
 	}
 	if len(items) == 0 {
