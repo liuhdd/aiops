@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"aiops/internal/model"
+	"aiops/internal/phoenix"
 )
 
 func TestAgentDatasetExamplesCoverAllTasks(t *testing.T) {
@@ -64,5 +67,85 @@ func TestTrialResultSerializesTimestamps(t *testing.T) {
 	s := string(b)
 	if !strings.Contains(s, `"started_at"`) || !strings.Contains(s, `"ended_at"`) {
 		t.Fatalf("缺少时间戳字段: %s", s)
+	}
+}
+
+type fakeWriter struct {
+	runs        []phoenix.RunRequest
+	evals       []phoenix.EvaluationRequest
+	experiments []string
+	exID        string
+}
+
+func (f *fakeWriter) ListExamples(datasetID, versionID string) ([]phoenix.Example, error) {
+	return []phoenix.Example{
+		{ID: "EX-t1", Metadata: map[string]any{"task_id": "t1"}},
+		{ID: "EX-t2", Metadata: map[string]any{"task_id": "t2"}},
+	}, nil
+}
+func (f *fakeWriter) CreateExperiment(datasetID, name string, repetitions int, metadata map[string]any) (phoenix.Experiment, error) {
+	f.experiments = append(f.experiments, name)
+	return phoenix.Experiment{ID: "E-" + name}, nil
+}
+func (f *fakeWriter) LogRun(experimentID string, r phoenix.RunRequest) (string, error) {
+	f.runs = append(f.runs, r)
+	return "R", nil
+}
+func (f *fakeWriter) LogEvaluation(e phoenix.EvaluationRequest) (string, error) {
+	f.evals = append(f.evals, e)
+	return "EV", nil
+}
+
+func TestPushAgentExperimentFullMapping(t *testing.T) {
+	rep := Report{
+		Meta: Meta{Configs: []string{"rule"}, LLMEnabled: false},
+		Tasks: []TaskReport{
+			{ID: "t1", Configs: map[string]ConfigStats{
+				"rule": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "rule", Trial: 1, RunStatus: "completed", Outcome: RunOutcome{RCA: model.RCA{RootCause: "x"}}},
+					Scores: []GraderResult{
+						{Name: "RootCauseMatch", Pass: true, Score: 1, Weight: 0.3, Detail: "ok"},
+						{Name: "JudgeAccuracy", NA: true},
+					}, Pass: true, Score: 1}}},
+			}},
+		},
+	}
+	w := &fakeWriter{}
+	if err := PushAgentExperiment(w, "DS", rep, nil, "aiops-agents-eval"); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.experiments) != 1 || w.experiments[0] != "aiops-agents-eval/rule" {
+		t.Fatalf("experiments = %v", w.experiments)
+	}
+	if len(w.runs) != 1 || w.runs[0].DatasetExampleID != "EX-t1" || w.runs[0].RepetitionNumber != 1 {
+		t.Fatalf("runs = %+v", w.runs)
+	}
+	// 1 个 grader(NA 跳过) + 1 个 WeightedScore = 2
+	if len(w.evals) != 2 {
+		t.Fatalf("evals = %+v", w.evals)
+	}
+	if w.evals[0].Name != "RootCauseMatch" || w.evals[0].AnnotatorKind != "CODE" {
+		t.Fatalf("eval0 = %+v", w.evals[0])
+	}
+	if w.evals[1].Name != "WeightedScore" {
+		t.Fatalf("eval1 = %+v", w.evals[1])
+	}
+}
+
+func TestPushAgentExperimentJudgeUsesLLMKind(t *testing.T) {
+	rep := Report{
+		Meta: Meta{Configs: []string{"llm-single"}},
+		Tasks: []TaskReport{
+			{ID: "t1", Configs: map[string]ConfigStats{
+				"llm-single": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "llm-single", Trial: 1},
+					Scores: []GraderResult{{Name: "JudgeAccuracy", Pass: true, Score: 0.9, Weight: 0.2}}, Pass: true, Score: 0.9}}},
+			}},
+		},
+	}
+	w := &fakeWriter{}
+	if err := PushAgentExperiment(w, "DS", rep, nil, "p"); err != nil {
+		t.Fatal(err)
+	}
+	if w.evals[0].AnnotatorKind != "LLM" {
+		t.Fatalf("judge 应用 LLM kind: %+v", w.evals[0])
 	}
 }
