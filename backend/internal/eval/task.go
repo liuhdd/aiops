@@ -267,6 +267,22 @@ func DefaultTasks() []Task {
 			},
 			Configs: []string{ConfigLLMReact},
 		},
+		{ID: "react-cpu-evidence", Object: ObjectContext,
+			Alert:    mkAlert("compute-01", "cpu_usage", "warning", "CPU使用率持续高于85%"),
+			Expected: Expected{ToolUse: []string{"write_scratchpad"}},
+			Configs:  []string{ConfigLLMReact}, Extended: true},
+		{ID: "react-disk-evidence", Object: ObjectContext,
+			Alert:    mkAlert("db-01", "disk_usage", "critical", "磁盘使用率超过95%"),
+			Expected: Expected{ToolUse: []string{"write_scratchpad"}},
+			Configs:  []string{ConfigLLMReact}, Extended: true},
+		{ID: "react-mem-evidence", Object: ObjectContext,
+			Alert:    mkAlert("web-01", "mem_usage", "warning", "内存使用率持续高于90%"),
+			Expected: Expected{ToolUse: []string{"write_scratchpad"}},
+			Configs:  []string{ConfigLLMReact}, Extended: true},
+		{ID: "react-net-evidence", Object: ObjectContext,
+			Alert:    mkAlert("switch-core-01", "net_in", "critical", "核心交换机入口流量中断"),
+			Expected: Expected{ToolUse: []string{"write_scratchpad"}},
+			Configs:  []string{ConfigLLMReact}, Extended: true},
 	}
 	return tasks
 }

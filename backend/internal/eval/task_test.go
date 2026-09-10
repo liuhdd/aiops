@@ -180,3 +180,18 @@ func TestNewChatTasks(t *testing.T) {
 		}
 	}
 }
+
+func TestNewContextTasks(t *testing.T) {
+	for _, id := range []string{"react-cpu-evidence", "react-disk-evidence", "react-mem-evidence", "react-net-evidence"} {
+		tk, ok := TaskByID(id)
+		if !ok {
+			t.Fatalf("缺 context 任务 %s", id)
+		}
+		if tk.Object != ObjectContext || !tk.Extended {
+			t.Fatalf("%s 应为 ObjectContext 且 Extended: %+v", id, tk)
+		}
+		if len(tk.Configs) != 1 || tk.Configs[0] != ConfigLLMReact {
+			t.Fatalf("%s 应仅 llm-react: %v", id, tk.Configs)
+		}
+	}
+}
