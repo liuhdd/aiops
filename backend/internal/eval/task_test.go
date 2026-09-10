@@ -111,3 +111,19 @@ func TestChatMultiRecommendExists(t *testing.T) {
 		t.Fatalf("chat-multi-recommend 期望 2 个意图, got %v", tk.Expected.Intents)
 	}
 }
+
+func TestNewPipelineTasks(t *testing.T) {
+	ids := map[string]bool{}
+	for _, tk := range DefaultTasks() {
+		ids[tk.ID] = true
+	}
+	for _, id := range []string{"cpu-hot-db-01", "mem-oom-compute-01", "disk-full-web-01", "disk-full-storage-01"} {
+		if !ids[id] {
+			t.Fatalf("缺 pipeline 任务 %s", id)
+		}
+	}
+	tk, _ := TaskByID("mem-oom-compute-01")
+	if !tk.Extended {
+		t.Fatalf("新题应为 Extended: %+v", tk)
+	}
+}

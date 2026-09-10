@@ -113,6 +113,46 @@ func DefaultTasks() []Task {
 				NoGaps:    true,
 			},
 		},
+		{
+			ID: "cpu-hot-db-01", Object: ObjectPipeline,
+			Alert: mkAlert("db-01", "cpu_usage", "warning", "CPU使用率持续高于90%"),
+			Expected: Expected{
+				RootCause: []string{"CPU热点进程", "负载饱和"},
+				Logs:      []string{"cpu"},
+				NoGaps:    true, Runbook: "cpu_usage",
+			},
+			Extended: true,
+		},
+		{
+			ID: "mem-oom-compute-01", Object: ObjectPipeline,
+			Alert: mkAlert("compute-01", "mem_usage", "warning", "内存使用率持续高于90%"),
+			Expected: Expected{
+				RootCause: []string{"内存泄漏", "OOM"},
+				Logs:      []string{"OutOfMemory"},
+				NoGaps:    true, Runbook: "mem_usage",
+			},
+			Extended: true,
+		},
+		{
+			ID: "disk-full-web-01", Object: ObjectPipeline,
+			Alert: mkAlert("web-01", "disk_usage", "critical", "磁盘使用率超过95%"),
+			Expected: Expected{
+				RootCause: []string{"磁盘空间不足"},
+				Logs:      []string{"no space"},
+				NoGaps:    true, Runbook: "disk_usage",
+			},
+			Extended: true,
+		},
+		{
+			ID: "disk-full-storage-01", Object: ObjectPipeline,
+			Alert: mkAlert("storage-01", "disk_usage", "critical", "磁盘使用率超过95%"),
+			Expected: Expected{
+				RootCause: []string{"磁盘空间不足"},
+				Logs:      []string{"no space"},
+				NoGaps:    true, Runbook: "disk_usage",
+			},
+			Extended: true,
+		},
 		// ---- L3 Chat Agent 任务（含正反例） ----
 		{
 			ID: "chat-root-cause-db", Object: ObjectChat,
