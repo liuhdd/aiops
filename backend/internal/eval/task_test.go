@@ -82,6 +82,10 @@ func TestChatTasksIntentCoverage(t *testing.T) {
 		"chat-ambiguous":        true,
 		"chat-greeting":         true,
 		"chat-weather-offtopic": true,
+		"chat-reverse-thanks":   true,
+		"chat-reverse-time":     true,
+		"chat-reverse-meaning":  true,
+		"chat-reverse-nonsense": true,
 	}
 	found := map[string]bool{}
 	for _, tk := range DefaultTasks() {
@@ -125,5 +129,46 @@ func TestNewPipelineTasks(t *testing.T) {
 	tk, _ := TaskByID("mem-oom-compute-01")
 	if !tk.Extended {
 		t.Fatalf("新题应为 Extended: %+v", tk)
+	}
+}
+
+func TestNewChatTasks(t *testing.T) {
+	single := map[string]string{
+		"chat-root-cause-cpu":    "AskRootCause",
+		"chat-recommend-disk":    "AskRecommendation",
+		"chat-status-progress-2": "AskStatus",
+		"chat-list-alerts-2":     "ListAlerts",
+		"chat-inspect-db":        "InspectAlert",
+		"chat-root-cause-gpu":    "AskRootCause",
+		"chat-recommend-mem":     "AskRecommendation",
+		"chat-root-cause-net":    "AskRootCause",
+		"chat-recommend-storage": "AskRecommendation",
+		"chat-status-db":         "AskStatus",
+	}
+	for id, want := range single {
+		tk, ok := TaskByID(id)
+		if !ok {
+			t.Fatalf("缺 chat 任务 %s", id)
+		}
+		if tk.Expected.Intent != want || !tk.Extended {
+			t.Fatalf("%s = %+v（want intent=%s, Extended）", id, tk.Expected, want)
+		}
+	}
+	multi := map[string][]string{
+		"chat-multi-rootcause-recommend": {"AskRootCause", "AskRecommendation"},
+		"chat-multi-list-status":         {"ListAlerts", "AskStatus"},
+		"chat-multi-three":               {"AskRootCause", "AskRecommendation", "AskStatus"},
+	}
+	for id, want := range multi {
+		tk, ok := TaskByID(id)
+		if !ok {
+			t.Fatalf("缺 chat 任务 %s", id)
+		}
+		if len(tk.Expected.Intents) != len(want) {
+			t.Fatalf("%s intents = %v, want %v", id, tk.Expected.Intents, want)
+		}
+		if len(tk.Configs) == 0 {
+			t.Fatalf("%s 多意图题应限定 Configs", id)
+		}
 	}
 }
