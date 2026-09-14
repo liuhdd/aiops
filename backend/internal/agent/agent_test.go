@@ -640,44 +640,89 @@ func (c *captureSearcher) SearchManuals(_ context.Context, q retrieve.Query, o r
 	return c.res, nil
 }
 
-// TestAgentChatSearchCarriesHistoryAndProfile 校验聊天路径把会话历史与 profile 下传到检索：
-// 改写已迁移进链路（chat 默认 rewrite=llm），agent 只负责透传 History/Profile。
-func TestAgentChatSearchCarriesHistoryAndProfile(t *testing.T) {
+// chatRewriteLight 同时服务 RewriteAndSplit / RewriteQuery / ClassifyWithLight 三个调用：
+// 以 user 区分——改写指令含“历史：”、原始问句等于 original、其余视为分类输入。
+type chatRewriteLight struct {
+	original   string
+	split      string
+	rewrite    string
+	classify   string
+	classified []string
+}
+
+func (l *chatRewriteLight) Complete(_ context.Context, _ string, user string) (string, error) {
+	l.classified = append(l.classified, user)
+	switch {
+	case strings.Contains(user, "历史："):
+		return l.rewrite, nil
+	case user == l.original:
+		return l.split, nil
+	default:
+		return l.classify, nil
+	}
+}
+
+// TestAgentRewriteFeedsIntentClassificationAndRetrieval 固化旧行为：agent 先改写子问题，
+// 改写文本 qText 同时喂给 LLM 分类与检索；检索不再下传 History（避免链路二次改写）。
+func TestAgentRewriteFeedsIntentClassificationAndRetrieval(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
+	conv, _ := s.CreateConversation("")
+	_ = s.SaveMessage(model.Message{ID: "m1", Role: model.RoleUser, Content: "我的设备是 db-01", ConversationID: conv.ID, CreatedAt: time.Now()})
+	_ = s.SaveMessage(model.Message{ID: "m2", Role: model.RoleAssistant, Content: "已记录 db-01", ConversationID: conv.ID, CreatedAt: time.Now()})
 	cs := ctxpkg.NewStore(s)
+	light := &chatRewriteLight{
+		original: "帮我看看",
+		split:    `{"rewritten":"帮我看看","sub_questions":["它怎么处理"]}`,
+		rewrite:  "db-01 磁盘告警怎么处理",
+		classify: `{"intent":"DiskFull","confidence":0.9}`,
+	}
+	leaves := []model.LeafSpec{{Code: "DiskFull", Name: "DiskFull", Description: "磁盘满", RuleKeywords: []string{"磁盘满了"}}}
 	rec := &captureSearcher{res: []retrieve.Result{{
 		DocID: "d1", Title: "磁盘案例", Category: model.KBCase,
 		Content: "磁盘扩容处置", Intents: []string{"DiskFull"},
 	}}}
-	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, nil)
+	ag := NewWithLeaves(s, nil, light, nil, cs, 3, 3, func() []model.LeafSpec { return leaves })
 	ag.SetSearcher(rec)
-	history := []string{"我的设备是 db-01", "已记录 db-01"}
-	content, ok := ag.kbReply(context.Background(), "conv-1", "DiskFull", "它怎么处理", history)
-	if !ok || !strings.Contains(content, "磁盘扩容处置") {
-		t.Fatalf("kbReply 应命中知识, ok=%v content=%q", ok, content)
+
+	reply := ag.answer(context.Background(), conv.ID, "帮我看看")
+	if !strings.Contains(reply, "磁盘扩容处置") {
+		t.Fatalf("应经 kbReply 返回知识, got %q", reply)
 	}
-	if rec.lastQ == nil || len(rec.lastQ.History) != 2 || rec.lastQ.History[1] != "已记录 db-01" {
-		t.Fatalf("检索应收到会话历史, got %+v", rec.lastQ)
+	// 改写文本进入 LLM 分类
+	classifiedQText := false
+	for _, c := range light.classified {
+		if c == "db-01 磁盘告警怎么处理" {
+			classifiedQText = true
+		}
+	}
+	if !classifiedQText {
+		t.Fatalf("LLM 分类应看到改写文本, classified=%v", light.classified)
+	}
+	// 改写文本进入检索，且不再下传 History
+	if rec.lastQ == nil || !strings.Contains(rec.lastQ.Text, "db-01 磁盘告警怎么处理") {
+		t.Fatalf("检索应使用改写文本, got %+v", rec.lastQ)
+	}
+	if len(rec.lastQ.History) != 0 {
+		t.Fatalf("预改写路径不应再下传 History, got %+v", rec.lastQ.History)
 	}
 	if rec.lastO == nil || rec.lastO.Profile != "chat" {
 		t.Fatalf("检索应以 chat profile 选链, got %+v", rec.lastO)
 	}
 }
 
-// TestAgentChatSearchNoHistoryLeavesHistoryEmpty 校验无历史时不做无谓透传。
-func TestAgentChatSearchNoHistoryLeavesHistoryEmpty(t *testing.T) {
-	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
-	defer s.Close()
-	cs := ctxpkg.NewStore(s)
-	rec := &captureSearcher{res: []retrieve.Result{{
-		DocID: "d1", Title: "磁盘案例", Category: model.KBCase,
-		Content: "磁盘扩容处置", Intents: []string{"DiskFull"},
-	}}}
-	ag := NewWithLeaves(s, nil, nil, nil, cs, 3, 3, nil)
-	ag.SetSearcher(rec)
-	_, _ = ag.kbReply(context.Background(), "conv-1", "DiskFull", "磁盘满了", nil)
-	if rec.lastQ == nil || len(rec.lastQ.History) != 0 {
-		t.Fatalf("无历史应透传空 History, got %+v", rec.lastQ)
+// TestAgentRewriteHelperSemantics 校验改写辅助的回退语义与旧 rewriteWithHistory 一致。
+func TestAgentRewriteHelperSemantics(t *testing.T) {
+	ag := NewWithLeaves(nil, nil, nil, nil, nil, 3, 3, nil)
+	if got := ag.rewrite(context.Background(), []string{"h"}, "它怎么处理"); got != "它怎么处理" {
+		t.Fatalf("nil light 应直通, got %q", got)
+	}
+	light := &chatRewriteLight{rewrite: "改写后"}
+	ag2 := NewWithLeaves(nil, nil, light, nil, nil, 3, 3, nil)
+	if got := ag2.rewrite(context.Background(), nil, "它怎么处理"); got != "它怎么处理" {
+		t.Fatalf("无历史应直通, got %q", got)
+	}
+	if got := ag2.rewrite(context.Background(), []string{"h"}, "它怎么处理"); got != "改写后" {
+		t.Fatalf("有历史应改写, got %q", got)
 	}
 }

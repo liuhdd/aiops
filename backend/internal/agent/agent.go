@@ -124,7 +124,8 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 	}
 	history := a.fetchHistory(conversationID, userText)
 	if len(subs) == 1 {
-		return a.answerOne(ctx, conversationID, subs[0], history)
+		qText := a.rewrite(ctx, history, subs[0])
+		return a.answerOne(ctx, conversationID, qText)
 	}
 	limit := a.maxSplit
 	if limit <= 0 {
@@ -136,7 +137,8 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 			fmt.Fprintf(&b, "[%d] %s → skipped（超出上限 %d）\n", i+1, sub, limit)
 			continue
 		}
-		content, status := a.answerOneStatus(ctx, conversationID, sub, history)
+		qText := a.rewrite(ctx, history, sub)
+		content, status := a.answerOneStatus(ctx, conversationID, qText)
 		fmt.Fprintf(&b, "[%d] %s → %s\n%s\n", i+1, sub, status, content)
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -199,7 +201,7 @@ func (a *Agent) answerSingle(ctx context.Context, conversationID string, userTex
 		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, conversationID, intent, userText, nil); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent, userText); ok {
 				return content
 			}
 		}
@@ -208,14 +210,13 @@ func (a *Agent) answerSingle(ctx context.Context, conversationID string, userTex
 }
 
 // answerOne 单子问题的回复（不带头部状态行）。
-func (a *Agent) answerOne(ctx context.Context, conversationID string, sub string, history []string) string {
-	content, _ := a.answerOneStatus(ctx, conversationID, sub, history)
+func (a *Agent) answerOne(ctx context.Context, conversationID string, sub string) string {
+	content, _ := a.answerOneStatus(ctx, conversationID, sub)
 	return content
 }
 
 // answerOneStatus 单个子问题：规则意图优先，Unknown 用轻量 LLM 分类；返回内容与状态。
-func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub string, history []string) (string, string) {
-	ctx = retrieve.WithHistory(ctx, history)
+func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub string) (string, string) {
 	intent, _ := ParseIntentWithLight(ctx, a.activeLeaves(), sub, a.lightLLM)
 	switch intent {
 	case ListAlerts:
@@ -243,7 +244,7 @@ func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub 
 		return a.answerFor(conversationID, alertID, intent), "success"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, conversationID, intent, sub, history); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent, sub); ok {
 				return content, "success"
 			}
 			return a.placeholderReply(intent), statusFor(intent)
@@ -271,15 +272,15 @@ func isSystemIntent(code Intent) bool {
 
 // kbReply 按意图 code 检索知识库并返回命中文档行；无命中返回 ok=false。
 // question 作为检索文本，使 Searcher 的 BM25/向量/信号通道都能参与召回；
-// history 透传检索链路改写环节（chat 路径 rewrite=llm）。
-func (a *Agent) kbReply(ctx context.Context, conversationID, code, question string, history []string) (string, bool) {
+// 每路径的 question 已由 agent 预先改写（见 rewrite），故不再下传 History 以免二次改写。
+func (a *Agent) kbReply(ctx context.Context, conversationID, code, question string) (string, bool) {
 	if a.ctxStore == nil {
 		return "", false
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
 	asm.SetSearcher(a.search)
 	asm.SetLeaves(a.leaves)
-	as, err := asm.Assemble(ctxpkg.Query{Text: question, Stage: "chat", Intents: []string{code}, ConversationID: conversationID, Profile: "chat", History: history}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Text: question, Stage: "chat", Intents: []string{code}, ConversationID: conversationID, Profile: "chat"}, false, nil)
 	if err != nil {
 		return "", false
 	}
@@ -457,4 +458,25 @@ func (a *Agent) fetchHistory(conversationID, currentUserText string) []string {
 		}
 	}
 	return out
+}
+
+// rewrite 用会话历史把子问题改写为独立问句；与链路 rewrite=llm 复用同一实现
+// （retrieve.RewriteQuery），保证「单一改写来源」。light 为空/无历史直通，
+// 失败或空输出回退原文。
+func (a *Agent) rewrite(ctx context.Context, history []string, q string) string {
+	if a.lightLLM == nil || ctxpkg.IsNilCompleter(a.lightLLM) {
+		return q
+	}
+	rw, err := retrieve.RewriteQuery(ctx, retrieveCompleter{c: a.lightLLM}, history, q)
+	if err != nil || strings.TrimSpace(rw) == "" {
+		return q
+	}
+	return rw
+}
+
+// retrieveCompleter 把 ctxpkg.Completer(双参) 适配为 retrieve.Completer(单 prompt)。
+type retrieveCompleter struct{ c ctxpkg.Completer }
+
+func (r retrieveCompleter) Complete(ctx context.Context, prompt string) (string, error) {
+	return r.c.Complete(ctx, "", prompt)
 }
