@@ -32,6 +32,13 @@ func TestBuildChainRejectsUnknownImpl(t *testing.T) {
 	}
 }
 
+func TestBuildChainRejectsUnknownKind(t *testing.T) {
+	v := Variant{Steps: map[string]string{"recall": "hybrid", "typo": "x"}}
+	if _, err := BuildChain(v, Deps{Env: newSearchEnv(nil, nil, nil, config.Default())}); err == nil {
+		t.Fatal("未知环节应报错")
+	}
+}
+
 func TestBuildChainSkipsNone(t *testing.T) {
 	v := BaselineVariant()
 	v.Steps["fingerprint"] = "none"

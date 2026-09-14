@@ -39,6 +39,11 @@ func (c *Chain) Run(ctx context.Context, qc *QueryCtx) error {
 // 已注册的 none/off（fingerprint/off、rerank/none）保留，由 Link 自身处理禁用态，
 // 以复刻重构前链路；未注册的 none/off 视为跳过该环节；其余未注册实现报错。
 func BuildChain(v Variant, deps Deps) (*Chain, error) {
+	for k := range v.Steps {
+		if !canonicalKind(k) {
+			return nil, fmt.Errorf("未知环节 %q", k)
+		}
+	}
 	base := BaselineVariant()
 	steps := base.Steps
 	for k, impl := range v.Steps {
