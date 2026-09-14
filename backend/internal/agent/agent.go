@@ -54,7 +54,7 @@ func (a *Agent) buildAssembled(conversationID, device, metric string, intents []
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
 	asm.SetSearcher(a.search)
 	asm.SetLeaves(a.leaves)
-	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents, ConversationID: conversationID}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents, ConversationID: conversationID, Profile: "chat"}, false, nil)
 	if err != nil {
 		return nil
 	}
@@ -76,6 +76,7 @@ func (a *Agent) memorySuffix(conversationID, device, metric string) string {
 }
 
 func (a *Agent) Handle(ctx context.Context, conversationID string, userText string) (model.Message, error) {
+	ctx = retrieve.WithProfile(ctx, "chat")
 	userMsg := model.Message{
 		ID: model.NewID("msg"), Role: model.RoleUser,
 		Content: userText, ConversationID: conversationID, CreatedAt: time.Now(),
@@ -123,8 +124,7 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 	}
 	history := a.fetchHistory(conversationID, userText)
 	if len(subs) == 1 {
-		qText := a.rewriteWithHistory(ctx, history, subs[0])
-		return a.answerOne(ctx, conversationID, qText)
+		return a.answerOne(ctx, conversationID, subs[0], history)
 	}
 	limit := a.maxSplit
 	if limit <= 0 {
@@ -136,8 +136,7 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 			fmt.Fprintf(&b, "[%d] %s → skipped（超出上限 %d）\n", i+1, sub, limit)
 			continue
 		}
-		qText := a.rewriteWithHistory(ctx, history, sub)
-		content, status := a.answerOneStatus(ctx, conversationID, qText)
+		content, status := a.answerOneStatus(ctx, conversationID, sub, history)
 		fmt.Fprintf(&b, "[%d] %s → %s\n%s\n", i+1, sub, status, content)
 	}
 	return strings.TrimRight(b.String(), "\n")
@@ -200,7 +199,7 @@ func (a *Agent) answerSingle(ctx context.Context, conversationID string, userTex
 		return "告警状态可在左侧列表查看，点击告警查看排查时间线。"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, conversationID, intent, userText); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent, userText, nil); ok {
 				return content
 			}
 		}
@@ -209,13 +208,14 @@ func (a *Agent) answerSingle(ctx context.Context, conversationID string, userTex
 }
 
 // answerOne 单子问题的回复（不带头部状态行）。
-func (a *Agent) answerOne(ctx context.Context, conversationID string, sub string) string {
-	content, _ := a.answerOneStatus(ctx, conversationID, sub)
+func (a *Agent) answerOne(ctx context.Context, conversationID string, sub string, history []string) string {
+	content, _ := a.answerOneStatus(ctx, conversationID, sub, history)
 	return content
 }
 
 // answerOneStatus 单个子问题：规则意图优先，Unknown 用轻量 LLM 分类；返回内容与状态。
-func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub string) (string, string) {
+func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub string, history []string) (string, string) {
+	ctx = retrieve.WithHistory(ctx, history)
 	intent, _ := ParseIntentWithLight(ctx, a.activeLeaves(), sub, a.lightLLM)
 	switch intent {
 	case ListAlerts:
@@ -243,7 +243,7 @@ func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub 
 		return a.answerFor(conversationID, alertID, intent), "success"
 	default:
 		if !isSystemIntent(intent) {
-			if content, ok := a.kbReply(ctx, conversationID, intent, sub); ok {
+			if content, ok := a.kbReply(ctx, conversationID, intent, sub, history); ok {
 				return content, "success"
 			}
 			return a.placeholderReply(intent), statusFor(intent)
@@ -270,15 +270,16 @@ func isSystemIntent(code Intent) bool {
 }
 
 // kbReply 按意图 code 检索知识库并返回命中文档行；无命中返回 ok=false。
-// question 作为检索文本，使 Searcher 的 BM25/向量/信号通道都能参与召回。
-func (a *Agent) kbReply(ctx context.Context, conversationID, code, question string) (string, bool) {
+// question 作为检索文本，使 Searcher 的 BM25/向量/信号通道都能参与召回；
+// history 透传检索链路改写环节（chat 路径 rewrite=llm）。
+func (a *Agent) kbReply(ctx context.Context, conversationID, code, question string, history []string) (string, bool) {
 	if a.ctxStore == nil {
 		return "", false
 	}
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
 	asm.SetSearcher(a.search)
 	asm.SetLeaves(a.leaves)
-	as, err := asm.Assemble(ctxpkg.Query{Text: question, Stage: "chat", Intents: []string{code}, ConversationID: conversationID}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Text: question, Stage: "chat", Intents: []string{code}, ConversationID: conversationID, Profile: "chat", History: history}, false, nil)
 	if err != nil {
 		return "", false
 	}
@@ -456,52 +457,4 @@ func (a *Agent) fetchHistory(conversationID, currentUserText string) []string {
 		}
 	}
 	return out
-}
-
-// rewriteWithHistory 用已取好的 history 调 retrieve.RewriteQuery，失败回退原文。
-func (a *Agent) rewriteWithHistory(ctx context.Context, history []string, q string) string {
-	if a.lightLLM == nil || ctxpkg.IsNilCompleter(a.lightLLM) {
-		return q
-	}
-	adapted := lightAdapter{c: a.lightLLM}
-	rw, err := retrieve.RewriteQuery(ctx, adapted, history, q)
-	if err != nil || strings.TrimSpace(rw) == "" {
-		return q
-	}
-	return rw
-}
-
-// rewriteQuery 对外保留的便捷包装（供测试直接调用，内部走 fetchHistory 简化）。
-func (a *Agent) rewriteQuery(ctx context.Context, conversationID, q string) string {
-	// 尝试按 conversation 维度取历史（不剔除 current，因为调用方已明确历史边界）
-	var history []string
-	if a.store != nil {
-		if msgs, err := a.store.RecentMessages(conversationID, 6); err == nil {
-			for _, m := range msgs {
-				if strings.TrimSpace(m.Content) != "" {
-					history = append(history, m.Content)
-				}
-			}
-		}
-	} else if a.ctxStore != nil {
-		if msgs, err := a.ctxStore.RecentMessages(conversationID, 6); err == nil {
-			for _, m := range msgs {
-				if strings.TrimSpace(m.Content) != "" {
-					history = append(history, m.Content)
-				}
-			}
-		}
-	}
-	// 若末条即为 q 本身（直接调用场景），视为空历史以保持直通语义与 answer 路径一致的过滤
-	if len(history) > 0 && history[len(history)-1] == q {
-		history = history[:len(history)-1]
-	}
-	return a.rewriteWithHistory(ctx, history, q)
-}
-
-// lightAdapter 将 ctxpkg.Completer(双参) 适配为 retrieve.Completer(单 prompt)。
-type lightAdapter struct{ c ctxpkg.Completer }
-
-func (l lightAdapter) Complete(ctx context.Context, prompt string) (string, error) {
-	return l.c.Complete(ctx, "", prompt)
 }

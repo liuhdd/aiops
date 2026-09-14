@@ -100,6 +100,7 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 	}
 
 	taskScope := scope.Task(run.ID, alert.Device)
+	ctx = retrieve.WithProfile(ctx, "pipeline")
 	st := &State{
 		Run:       run,
 		Alert:     alert,

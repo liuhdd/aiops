@@ -14,7 +14,8 @@ import (
 
 // Options 检索选项。
 type Options struct {
-	TopK int
+	TopK    int
+	Profile string // 检索路径标识（pipeline/chat），空则回退 ctx 或 "pipeline"
 }
 
 // Result 检索结果块（供工具与组装器消费）。
@@ -35,10 +36,11 @@ type Searcher interface {
 	SearchManuals(ctx context.Context, q Query, opts Options) ([]Result, error)
 }
 
-// searcher 混合检索引擎：持有共享检索环境与默认链路。
+// searcher 混合检索引擎：持有共享检索环境与按 profile 绑定的链路。
 type searcher struct {
-	env          *searchEnv
-	defaultChain *Chain
+	env      *searchEnv
+	chains   map[string]*Chain
+	fallback *Chain
 }
 
 // searchEnv 检索共享环境：数据源、索引态与融合参数；供各 Link 读取。
@@ -72,13 +74,28 @@ func NewSearcherVariant(st *store.Store, embedder Embedder, rr Reranker, cfg con
 	if err != nil {
 		return nil, err
 	}
-	return &searcher{env: env, defaultChain: ch}, nil
+	return &searcher{env: env, chains: map[string]*Chain{"pipeline": ch}, fallback: ch}, nil
+}
+
+// NewSearcherProfiles 生产构造：pipeline/chat 各绑一个 chain。
+func NewSearcherProfiles(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config, completer Completer, params map[string]map[string]string) (Searcher, error) {
+	env := newSearchEnv(st, embedder, rr, cfg)
+	pipeline, err := BuildChain(VariantFromConfig(cfg, "pipeline", params), Deps{Env: env, Completer: completer})
+	if err != nil {
+		return nil, err
+	}
+	chat, err := BuildChain(VariantFromConfig(cfg, "chat", params), Deps{Env: env, Completer: completer})
+	if err != nil {
+		return nil, err
+	}
+	return &searcher{env: env, chains: map[string]*Chain{"pipeline": pipeline, "chat": chat}, fallback: pipeline}, nil
 }
 
 // NewSearcherWithConfig 构造混合检索器；reranker 可为 nil（精排跳过）。
 func NewSearcherWithConfig(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config) Searcher {
 	env := newSearchEnv(st, embedder, rr, cfg)
-	return &searcher{env: env, defaultChain: defaultChainFromEnv(env)}
+	ch := defaultChainFromEnv(env)
+	return &searcher{env: env, chains: map[string]*Chain{"pipeline": ch}, fallback: ch}
 }
 
 // defaultChainFromEnv 由 cfg 单项构造 baseline（保持既有 NewSearcherWithConfig 语义）。
@@ -143,13 +160,21 @@ func (s *searcher) SearchManuals(ctx context.Context, q Query, opts Options) ([]
 
 func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, isManual bool, opts Options) ([]Result, error) {
 	qc := &QueryCtx{Raw: q, Text: q.Text, Options: opts, Category: cat, IsManual: isManual}
-	if err := s.defaultChain.Run(ctx, qc); err != nil {
+	if err := s.chainFor(ProfileOf(ctx, opts)).Run(ctx, qc); err != nil {
 		return nil, err
 	}
 	if qc.Results == nil {
 		return []Result{}, nil
 	}
 	return qc.Results, nil
+}
+
+// chainFor 按 profile 选链；未注册的 profile 回退 fallback。
+func (s *searcher) chainFor(profile string) *Chain {
+	if ch, ok := s.chains[profile]; ok && ch != nil {
+		return ch
+	}
+	return s.fallback
 }
 
 // fingerprintFastPath 指纹快路径：命中返回 (results,true,nil)，未命中 (nil,false,nil)。
