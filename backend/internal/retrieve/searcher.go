@@ -251,7 +251,7 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 
 // dualRecall 双路召回：BM25 + 向量 + 信号 + 时效，返回未排序候选供融合阶段处理。
 // 扩展问题通道：拉问题向量与问题文本，对每块计算 QVec/QBM25 取 max 后与块通道取 max 再进 RRF。
-func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat model.KBCategory) []cand {
+func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat model.KBCategory) []Candidate {
 	kcs, err := s.st.ListKnowledgeChunksFiltered(q.Version)
 	if err != nil {
 		return nil
@@ -336,7 +336,7 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 		}
 	}
 	now := time.Now()
-	var cands []cand
+	var cands []Candidate
 	for _, kc := range kcs {
 		if isManual {
 			if kc.Category != model.KBManual && kc.Category != model.KBRunbook {
@@ -348,7 +348,7 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 		} else if kc.Category != cat {
 			continue
 		}
-		c := cand{Chunk: kc}
+		c := Candidate{Chunk: kc}
 		c.BM25 = bmScores[kc.ChunkID]
 		if v, ok := qBM25Max[kc.ChunkID]; ok && v > c.BM25 {
 			c.BM25 = v
@@ -371,7 +371,7 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 }
 
 // applyRerank 精排：取前 20 调 rerank，按分重排，失败原样返回。
-func (s *searcher) applyRerank(ctx context.Context, qText string, cands []cand) []cand {
+func (s *searcher) applyRerank(ctx context.Context, qText string, cands []Candidate) []Candidate {
 	if s.reranker == nil || len(cands) == 0 {
 		return cands
 	}
@@ -396,7 +396,7 @@ func (s *searcher) applyRerank(ctx context.Context, qText string, cands []cand) 
 }
 
 // gateB 精排分低于 floor 的剔除（无 rerank 时透传，由调用方确保仅在精排后调用）。
-func gateB(cands []cand, floor float64) []cand {
+func gateB(cands []Candidate, floor float64) []Candidate {
 	if floor <= 0 {
 		return cands
 	}
@@ -466,7 +466,7 @@ func hasIntent(intents []string, code string) bool {
 const vectorRelevanceFloor = 0.5
 
 // hasRelevance 是否存在相关候选：关键词(BM25)、信号或纯语义向量(原始余弦≥门限)任一命中即相关。
-func hasRelevance(cands []cand) bool {
+func hasRelevance(cands []Candidate) bool {
 	for _, c := range cands {
 		if c.BM25 > 0 || c.Signal > 0 || c.Vec >= vectorRelevanceFloor {
 			return true

@@ -233,13 +233,13 @@ func TestSearchRRFVsWeightedToggle(t *testing.T) {
 		t.Fatalf("两开关下均应有结果 RRF=%+v Weighted=%+v", resRRF, resW)
 	}
 	// 同一批候选的 RRF 与加权融合应至少有一项实现差异（通过直接对比 FuseRRF 与 RankCases 的序）
-	cands := []cand{
+	cands := []Candidate{
 		{Chunk: model.KbKnowledgeChunk{ChunkID: "a"}, BM25: 0.1, Vec: 0.95, Signal: 0.5},
 		{Chunk: model.KbKnowledgeChunk{ChunkID: "b"}, BM25: 0.95, Vec: 0.1, Signal: 0.5},
 		{Chunk: model.KbKnowledgeChunk{ChunkID: "c"}, BM25: 0.5, Vec: 0.5, Signal: 0.5},
 	}
-	gotRRF := FuseRRF(append([]cand(nil), cands...), false)
-	gotW := RankCases(append([]cand(nil), cands...), time.Now())
+	gotRRF := FuseRRF(append([]Candidate(nil), cands...), false)
+	gotW := RankCases(append([]Candidate(nil), cands...), time.Now())
 	if gotRRF[0].Chunk.ChunkID == gotW[0].Chunk.ChunkID && len(gotRRF) > 1 {
 		// 允许偶发相同，但至少验证两路径可独立开关且结果非空；若相同则仅校验非空已足够
 		t.Logf("RRF 与加权首位相同 rrf=%v weighted=%v", gotRRF[0].Chunk.ChunkID, gotW[0].Chunk.ChunkID)

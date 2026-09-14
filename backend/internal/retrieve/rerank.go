@@ -18,8 +18,8 @@ const (
 	manualVecWeight   = 0.20
 )
 
-// cand 融合候选：各通道原始分 + 融合分。
-type cand struct {
+// Candidate 融合候选：各通道原始分 + 融合分。
+type Candidate struct {
 	Chunk   model.KbKnowledgeChunk
 	BM25    float64
 	Vec     float64
@@ -29,11 +29,11 @@ type cand struct {
 }
 
 // RankCases 运维案例融合排序（语义为主）。输入候选原地排序后返回。
-func RankCases(cands []cand, now time.Time) []cand {
-	bm := minmax(get(cands, func(c cand) float64 { return c.BM25 }))
-	vec := minmax(get(cands, func(c cand) float64 { return c.Vec }))
-	sig := minmax(get(cands, func(c cand) float64 { return c.Signal }))
-	rec := minmax(get(cands, func(c cand) float64 { return c.Recency }))
+func RankCases(cands []Candidate, now time.Time) []Candidate {
+	bm := minmax(get(cands, func(c Candidate) float64 { return c.BM25 }))
+	vec := minmax(get(cands, func(c Candidate) float64 { return c.Vec }))
+	sig := minmax(get(cands, func(c Candidate) float64 { return c.Signal }))
+	rec := minmax(get(cands, func(c Candidate) float64 { return c.Recency }))
 	for i := range cands {
 		cands[i].Final = caseVecWeight*vec[i] + caseLabelWeight*sig[i] +
 			caseBM25Weight*bm[i] + caseRecencyW*rec[i]
@@ -43,10 +43,10 @@ func RankCases(cands []cand, now time.Time) []cand {
 }
 
 // RankManuals 手册融合排序（关键词为主，无时效）。输入候选原地排序后返回。
-func RankManuals(cands []cand, now time.Time) []cand {
-	bm := minmax(get(cands, func(c cand) float64 { return c.BM25 }))
-	vec := minmax(get(cands, func(c cand) float64 { return c.Vec }))
-	sig := minmax(get(cands, func(c cand) float64 { return c.Signal }))
+func RankManuals(cands []Candidate, now time.Time) []Candidate {
+	bm := minmax(get(cands, func(c Candidate) float64 { return c.BM25 }))
+	vec := minmax(get(cands, func(c Candidate) float64 { return c.Vec }))
+	sig := minmax(get(cands, func(c Candidate) float64 { return c.Signal }))
 	for i := range cands {
 		cands[i].Final = manualBM25Weight*bm[i] + manualFieldWeight*sig[i] + manualVecWeight*vec[i]
 	}
@@ -54,7 +54,7 @@ func RankManuals(cands []cand, now time.Time) []cand {
 	return cands
 }
 
-func get(cands []cand, f func(cand) float64) []float64 {
+func get(cands []Candidate, f func(Candidate) float64) []float64 {
 	out := make([]float64, len(cands))
 	for i, c := range cands {
 		out[i] = f(c)
@@ -64,7 +64,7 @@ func get(cands []cand, f func(cand) float64) []float64 {
 
 const rrfK = 60.0
 
-func rankMap(cands []cand, key func(cand) float64) map[string]int {
+func rankMap(cands []Candidate, key func(Candidate) float64) map[string]int {
 	idx := make([]int, len(cands))
 	for i := range idx {
 		idx[i] = i
@@ -78,14 +78,14 @@ func rankMap(cands []cand, key func(cand) float64) map[string]int {
 }
 
 // FuseRRF 按类型权重计算 RRF 加权和并重排（k=60）。isManual=false 为 case（语义权重高），true 为 manual（关键词权重高）。
-func FuseRRF(cands []cand, isManual bool) []cand {
+func FuseRRF(cands []Candidate, isManual bool) []Candidate {
 	if len(cands) == 0 {
 		return cands
 	}
-	rBM := rankMap(cands, func(c cand) float64 { return c.BM25 })
-	rVec := rankMap(cands, func(c cand) float64 { return c.Vec })
-	rSig := rankMap(cands, func(c cand) float64 { return c.Signal })
-	rRec := rankMap(cands, func(c cand) float64 { return c.Recency })
+	rBM := rankMap(cands, func(c Candidate) float64 { return c.BM25 })
+	rVec := rankMap(cands, func(c Candidate) float64 { return c.Vec })
+	rSig := rankMap(cands, func(c Candidate) float64 { return c.Signal })
+	rRec := rankMap(cands, func(c Candidate) float64 { return c.Recency })
 	var wVec, wSig, wBM, wRec float64
 	if isManual {
 		wVec, wSig, wBM = 0.5, 0.8, 1.0
