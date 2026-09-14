@@ -160,7 +160,11 @@ func (s *searcher) SearchManuals(ctx context.Context, q Query, opts Options) ([]
 
 func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, isManual bool, opts Options) ([]Result, error) {
 	qc := &QueryCtx{Raw: q, Text: q.Text, Options: opts, Category: cat, IsManual: isManual}
-	if err := s.chainFor(ProfileOf(ctx, opts)).Run(ctx, qc); err != nil {
+	err := s.chainFor(ProfileOf(ctx, opts)).Run(ctx, qc)
+	if sink := traceSinkFromCtx(ctx); sink != nil {
+		sink(qc.Trace)
+	}
+	if err != nil {
 		return nil, err
 	}
 	if qc.Results == nil {

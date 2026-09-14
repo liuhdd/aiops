@@ -16,6 +16,7 @@ import (
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
+	"aiops/internal/phoenix"
 	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
@@ -225,6 +226,29 @@ func main() {
 		}
 		fmt.Printf("报告已写入 %s\n", *out)
 	}
+
+	// Phoenix 逐变体回写：未配置 PHOENIX_BASE_URL 时零外呼，仅本地报告照常。
+	if cfg.PhoenixBaseURL != "" {
+		pc := phoenix.NewClient(cfg.PhoenixBaseURL, cfg.PhoenixAPIKey)
+		dsID, err := findRagDataset(pc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Phoenix 数据集解析失败，跳过回写: %v\n", err)
+		} else {
+			for _, r := range reports {
+				rep := goldenset.RagReport{
+					Meta:    goldenset.RagMeta{Timestamp: time.Now(), Enhance: *enhance, TopK: 3, Variant: r.Name, VariantSpec: r.Spec},
+					Items:   r.Items,
+					Overall: toOverall(r),
+				}
+				sum, err := goldenset.PushRagExperiment(pc, dsID, rep, goldenset.RagDatasetName+"/"+r.Name)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Phoenix 回写变体 %s: %v (%d failures)\n", r.Name, err, sum.Failures)
+					continue
+				}
+				fmt.Printf("Phoenix 变体 %s → experiment %s\n", r.Name, sum.ID)
+			}
+		}
+	}
 }
 
 // evaluateItems 在给定检索器上跑完 golden 题并按既有口径计算逐题指标。
@@ -235,7 +259,8 @@ func evaluateItems(searcher retrieve.Searcher, items []goldenset.Item) []goldens
 		if k <= 0 {
 			k = 3
 		}
-		ctx := context.Background()
+		var traces []retrieve.LinkTrace
+		ctx := retrieve.WithTraceSink(context.Background(), func(t []retrieve.LinkTrace) { traces = t })
 		qStart := time.Now()
 		res, err := searcher.SearchCases(ctx, retrieve.Query{Text: it.Question, History: it.History}, retrieve.Options{TopK: k})
 		qEnd := time.Now()
@@ -249,7 +274,7 @@ func evaluateItems(searcher retrieve.Searcher, items []goldenset.Item) []goldens
 		ir := goldenset.ItemResult{
 			ID: it.ID, Type: it.Type, Question: it.Question, TopK: k,
 			RankedDocIDs: ranked, Behavior: it.Expect.Behavior,
-			StartedAt: qStart, EndedAt: qEnd,
+			StartedAt: qStart, EndedAt: qEnd, Traces: convertTraces(traces),
 		}
 		if it.Expect.Behavior == "reject" {
 			if len(ranked) == 0 {

@@ -161,7 +161,7 @@ func cmdExperiment(c *phoenix.Client, args []string) {
 		if prefix == "" {
 			prefix = goldenset.RagDatasetName
 		}
-		sum, err := goldenset.PushRagExperiment(c, dsID, rep, prefix)
+		sum, err := goldenset.PushRagExperiment(c, dsID, rep, prefix+"/rag")
 		printExperimentSummaries([]phoenix.ExperimentSummary{sum})
 		if err != nil {
 			log.Printf("warn: 回写失败: %v", err)

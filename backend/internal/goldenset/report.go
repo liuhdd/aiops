@@ -8,26 +8,38 @@ import (
 	"aiops/internal/phoenix"
 )
 
+// LinkTrace 单环节运行痕迹的本地镜像（避免 goldenset 依赖 retrieve）。
+type LinkTrace struct {
+	Kind       string `json:"kind"`
+	Impl       string `json:"impl"`
+	DurationMS int64  `json:"duration_ms"`
+	Hit        bool   `json:"hit"`
+	Note       string `json:"note,omitempty"`
+}
+
 type ItemResult struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Question     string    `json:"question"`
-	TopK         int       `json:"top_k"`
-	RankedDocIDs []string  `json:"ranked_doc_ids"`
-	Behavior     string    `json:"behavior"`
-	MRR          float64   `json:"mrr"`
-	NDCG         float64   `json:"ndcg"`
-	Recall       float64   `json:"recall"`
-	Precision    float64   `json:"precision"`
-	RejectOK     bool      `json:"reject_ok"`
-	StartedAt    time.Time `json:"started_at"`
-	EndedAt      time.Time `json:"ended_at"`
+	ID           string      `json:"id"`
+	Type         string      `json:"type"`
+	Question     string      `json:"question"`
+	TopK         int         `json:"top_k"`
+	RankedDocIDs []string    `json:"ranked_doc_ids"`
+	Behavior     string      `json:"behavior"`
+	MRR          float64     `json:"mrr"`
+	NDCG         float64     `json:"ndcg"`
+	Recall       float64     `json:"recall"`
+	Precision    float64     `json:"precision"`
+	RejectOK     bool        `json:"reject_ok"`
+	StartedAt    time.Time   `json:"started_at"`
+	EndedAt      time.Time   `json:"ended_at"`
+	Traces       []LinkTrace `json:"traces,omitempty"`
 }
 
 type RagMeta struct {
-	Timestamp time.Time `json:"ts"`
-	Enhance   bool      `json:"enhance"`
-	TopK      int       `json:"top_k"`
+	Timestamp   time.Time         `json:"ts"`
+	Enhance     bool              `json:"enhance"`
+	TopK        int               `json:"top_k"`
+	Variant     string            `json:"variant"`
+	VariantSpec map[string]string `json:"variant_spec,omitempty"`
 }
 
 type Overall struct {
@@ -50,11 +62,11 @@ func (r RagReport) ToJSON() ([]byte, error) {
 	return json.MarshalIndent(r, "", "  ")
 }
 
-// PushRagExperiment 把 rageval 报告回写为单个 Phoenix 实验：每 item 一 run，
-// 每项指标一条 evaluation（CODE），reject 题额外一条 RejectOK。
+// PushRagExperiment 把 rageval 报告回写为单个 Phoenix 实验（实验名即 namePrefix，由调用方拼变体）：
+// 每 item 一 run，每项指标一条 evaluation（CODE），reject 题额外一条 RejectOK。
 // 回写按项继续，返回实验汇总与首个错误。
 func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, namePrefix string) (phoenix.ExperimentSummary, error) {
-	sum := phoenix.ExperimentSummary{Name: namePrefix + "/rag"}
+	sum := phoenix.ExperimentSummary{Name: namePrefix}
 	exs, err := w.ListExamples(datasetID, "")
 	if err != nil {
 		return sum, fmt.Errorf("列数据集失败: %w", err)
@@ -65,8 +77,9 @@ func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, nam
 			byID[id] = e.ID
 		}
 	}
-	exp, err := w.CreateExperiment(datasetID, namePrefix+"/rag", 1, map[string]any{
+	exp, err := w.CreateExperiment(datasetID, namePrefix, 1, map[string]any{
 		"enhance": report.Meta.Enhance, "top_k": report.Meta.TopK, "ts": report.Meta.Timestamp.Format(time.RFC3339),
+		"variant": report.Meta.Variant,
 	})
 	if err != nil {
 		return sum, err

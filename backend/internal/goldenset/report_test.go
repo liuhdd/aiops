@@ -13,8 +13,9 @@ import (
 
 func TestRagReportRoundTrip(t *testing.T) {
 	rep := RagReport{
-		Meta:    RagMeta{Timestamp: time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC), Enhance: true, TopK: 3},
-		Items:   []ItemResult{{ID: "q1", Type: "fact", TopK: 3, RankedDocIDs: []string{"d1"}, Behavior: "hit", MRR: 1, NDCG: 1, Recall: 1, Precision: 0.33}},
+		Meta: RagMeta{Timestamp: time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC), Enhance: true, TopK: 3,
+			Variant: "rerank=none", VariantSpec: map[string]string{"rerank": "none"}},
+		Items:   []ItemResult{{ID: "q1", Type: "fact", TopK: 3, RankedDocIDs: []string{"d1"}, Behavior: "hit", MRR: 1, NDCG: 1, Recall: 1, Precision: 0.33, Traces: []LinkTrace{{Kind: "recall", Impl: "hybrid", DurationMS: 3, Hit: true, Note: "n"}}}},
 		Overall: Overall{HitCount: 1, MRR: 1, NDCG: 1, Recall: 1, Precision: 0.33},
 	}
 	b, err := rep.ToJSON()
@@ -28,15 +29,23 @@ func TestRagReportRoundTrip(t *testing.T) {
 	if got.Items[0].ID != "q1" || got.Overall.HitCount != 1 {
 		t.Fatalf("got = %+v", got)
 	}
-	if !strings.Contains(string(b), `"meta"`) || !strings.Contains(string(b), `"overall"`) {
+	if got.Meta.Variant != "rerank=none" || got.Meta.VariantSpec["rerank"] != "none" {
+		t.Fatalf("meta variant = %+v", got.Meta)
+	}
+	if len(got.Items[0].Traces) != 1 || got.Items[0].Traces[0].Impl != "hybrid" || !got.Items[0].Traces[0].Hit {
+		t.Fatalf("traces = %+v", got.Items[0].Traces)
+	}
+	if !strings.Contains(string(b), `"meta"`) || !strings.Contains(string(b), `"overall"`) || !strings.Contains(string(b), `"traces"`) {
 		t.Fatalf("json = %s", b)
 	}
 }
 
 type fakeWriter struct {
-	runs  []phoenix.RunRequest
-	evals []phoenix.EvaluationRequest
-	exp   []string
+	runs               []phoenix.RunRequest
+	evals              []phoenix.EvaluationRequest
+	exp                []string
+	lastExperimentName string
+	lastExperimentMeta map[string]any
 }
 
 func (f *fakeWriter) ListExamples(datasetID, versionID string) ([]phoenix.Example, error) {
@@ -48,6 +57,8 @@ func (f *fakeWriter) ListExamples(datasetID, versionID string) ([]phoenix.Exampl
 }
 func (f *fakeWriter) CreateExperiment(datasetID, name string, repetitions int, metadata map[string]any) (phoenix.Experiment, error) {
 	f.exp = append(f.exp, name)
+	f.lastExperimentName = name
+	f.lastExperimentMeta = metadata
 	return phoenix.Experiment{ID: "E1"}, nil
 }
 func (f *fakeWriter) LogRun(experimentID string, r phoenix.RunRequest) (string, error) {
@@ -78,7 +89,7 @@ func TestPushRagExperiment(t *testing.T) {
 		Items: []ItemResult{hit, rejectOK, rejectFail},
 	}
 	w := &fakeWriter{}
-	sum, err := PushRagExperiment(w, "DS", rep, "aiops-rag-golden")
+	sum, err := PushRagExperiment(w, "DS", rep, "aiops-rag-golden/rag")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,13 +154,34 @@ func TestPushRagExperiment(t *testing.T) {
 	}
 }
 
+func TestPushRagExperimentUsesGivenName(t *testing.T) {
+	w := &fakeWriter{}
+	_, err := PushRagExperiment(w, "DS", RagReport{Meta: RagMeta{Variant: "rerank=none"}}, "aiops-rag-golden/rerank=none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.lastExperimentName != "aiops-rag-golden/rerank=none" {
+		t.Fatalf("name=%q", w.lastExperimentName)
+	}
+}
+
+func TestPushRagExperimentCarriesVariantMeta(t *testing.T) {
+	w := &fakeWriter{}
+	if _, err := PushRagExperiment(w, "DS", RagReport{Meta: RagMeta{Variant: "fuse=weighted"}}, "p"); err != nil {
+		t.Fatal(err)
+	}
+	if w.lastExperimentMeta["variant"] != "fuse=weighted" {
+		t.Fatalf("metadata = %+v", w.lastExperimentMeta)
+	}
+}
+
 func TestPushRagExperimentCountsMissingExampleAsFailure(t *testing.T) {
 	rep := RagReport{
 		Meta:  RagMeta{Enhance: false, TopK: 3},
 		Items: []ItemResult{{ID: "q-missing", Type: "fact", TopK: 3, Behavior: "hit"}},
 	}
 	w := &fakeWriter{}
-	sum, err := PushRagExperiment(w, "DS", rep, "p")
+	sum, err := PushRagExperiment(w, "DS", rep, "p/rag")
 	if err != nil {
 		t.Fatal(err)
 	}

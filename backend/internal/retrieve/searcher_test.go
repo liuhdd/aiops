@@ -77,6 +77,22 @@ func TestSearchCasesSemanticRank(t *testing.T) {
 	}
 }
 
+func TestSearchCasesTraceSink(t *testing.T) {
+	s := seedRetrieveStore(t)
+	se := NewSearcher(s, fakeEmbedder{})
+	var traces []LinkTrace
+	ctx := WithTraceSink(context.Background(), func(ts []LinkTrace) { traces = ts })
+	if _, err := se.SearchCases(ctx, Query{Text: "GPU 掉卡"}, Options{TopK: 2}); err != nil {
+		t.Fatalf("SearchCases: %v", err)
+	}
+	if len(traces) == 0 {
+		t.Fatal("TraceSink 未收到轨迹")
+	}
+	if traces[0].Kind != "fingerprint" || traces[0].Impl != "exact" {
+		t.Fatalf("首环节 = %+v, want fingerprint/exact", traces[0])
+	}
+}
+
 func TestSearchCasesOnlyCases(t *testing.T) {
 	s := seedRetrieveStore(t)
 	se := NewSearcher(s, fakeEmbedder{})
