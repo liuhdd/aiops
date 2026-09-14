@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"aiops/internal/config"
 )
 
 // CanonicalKinds 链路环节规范顺序；变体按 Kind 覆盖，装配固定按此序。
@@ -134,6 +136,16 @@ func ParseVariantsJSON(data []byte) ([]Variant, error) {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// VariantFromConfig 由 config 单项/覆盖串构造某 profile 的 Variant。
+func VariantFromConfig(cfg config.Config, profile string, params map[string]map[string]string) Variant {
+	steps := cfg.RetrieveSteps(profile)
+	name := "baseline"
+	if profile == "chat" {
+		name = "chat"
+	}
+	return Variant{Name: name, Steps: steps, Params: params}
 }
 
 func cloneVariant(v Variant) Variant {

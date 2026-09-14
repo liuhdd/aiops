@@ -43,14 +43,14 @@ type searcher struct {
 
 // searchEnv 检索共享环境：数据源、索引态与融合参数；供各 Link 读取。
 type searchEnv struct {
-	st         *store.Store
-	embedder   Embedder
-	reranker   Reranker
-	cfg        config.Config
-	now        func() time.Time
-	mu         sync.Mutex // 保护 idx/docCount/idxVersion 的懒加载
-	idx        *BM25Index
-	docCount   int
+	st       *store.Store
+	embedder Embedder
+	reranker Reranker
+	cfg      config.Config
+	now      func() time.Time
+	mu       sync.Mutex // 保护 idx/docCount/idxVersion 的懒加载
+	idx      *BM25Index
+	docCount int
 	// idxVersion 索引构建时的版本过滤条件；不同版本各自建索引，避免串味。
 	idxVersion string
 }
@@ -65,10 +65,39 @@ func newSearchEnv(st *store.Store, embedder Embedder, rr Reranker, cfg config.Co
 	return &searchEnv{st: st, embedder: embedder, reranker: rr, cfg: cfg, now: time.Now}
 }
 
+// NewSearcherVariant 按变体装配链路；未知实现返回错误。
+func NewSearcherVariant(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config, completer Completer, v Variant) (Searcher, error) {
+	env := newSearchEnv(st, embedder, rr, cfg)
+	ch, err := BuildChain(v, Deps{Env: env, Completer: completer})
+	if err != nil {
+		return nil, err
+	}
+	return &searcher{env: env, defaultChain: ch}, nil
+}
+
 // NewSearcherWithConfig 构造混合检索器；reranker 可为 nil（精排跳过）。
 func NewSearcherWithConfig(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config) Searcher {
 	env := newSearchEnv(st, embedder, rr, cfg)
-	return &searcher{env: env, defaultChain: baselineChain(env)}
+	return &searcher{env: env, defaultChain: defaultChainFromEnv(env)}
+}
+
+// defaultChainFromEnv 由 cfg 单项构造 baseline（保持既有 NewSearcherWithConfig 语义）。
+func defaultChainFromEnv(env *searchEnv) *Chain {
+	v := BaselineVariant()
+	if !env.cfg.RetrieveFingerprint {
+		v.Steps["fingerprint"] = "off"
+	}
+	if !env.cfg.RetrieveRRF {
+		v.Steps["fuse"] = "weighted"
+	}
+	if env.reranker == nil {
+		v.Steps["rerank"] = "none"
+	}
+	ch, err := BuildChain(v, Deps{Env: env})
+	if err != nil { // 不应发生：内置实现
+		panic(err)
+	}
+	return ch
 }
 
 // NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。

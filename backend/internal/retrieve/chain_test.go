@@ -42,7 +42,10 @@ func TestEffectiveTopK(t *testing.T) {
 }
 
 func TestBaselineChainHasAllKinds(t *testing.T) {
-	ch := baselineChain(newSearchEnv(nil, nil, nil, configDefaultForTest()))
+	ch, err := BuildChain(BaselineVariant(), Deps{Env: newSearchEnv(nil, nil, nil, config.Default())})
+	if err != nil {
+		t.Fatal(err)
+	}
 	got := map[string]bool{}
 	for _, l := range ch.links {
 		got[l.link.Kind()] = true
@@ -53,5 +56,3 @@ func TestBaselineChainHasAllKinds(t *testing.T) {
 		}
 	}
 }
-
-func configDefaultForTest() (c config.Config) { return config.Default() }

@@ -2,6 +2,7 @@ package retrieve
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -34,25 +35,26 @@ func (c *Chain) Run(ctx context.Context, qc *QueryCtx) error {
 	return nil
 }
 
-func baselineChain(env *searchEnv) *Chain {
-	cfg := env.cfg
-	fp, fuse, rr := "exact", "rrf", "openai"
-	if !cfg.RetrieveFingerprint {
-		fp = "off"
+// BuildChain 按 CanonicalKinds 顺序装配；未指定用 baseline 默认。
+// 已注册的 none/off（fingerprint/off、rerank/none）保留，由 Link 自身处理禁用态，
+// 以复刻重构前链路；未注册的 none/off 视为跳过该环节；其余未注册实现报错。
+func BuildChain(v Variant, deps Deps) (*Chain, error) {
+	base := BaselineVariant()
+	steps := base.Steps
+	for k, impl := range v.Steps {
+		steps[k] = impl
 	}
-	if !cfg.RetrieveRRF {
-		fuse = "weighted"
+	var links []chainLink
+	for _, kind := range CanonicalKinds {
+		impl := steps[kind]
+		f, ok := linkRegistry[linkKey{kind, impl}]
+		if !ok {
+			if impl == "none" || impl == "off" {
+				continue
+			}
+			return nil, fmt.Errorf("未注册的实现 %s/%s", kind, impl)
+		}
+		links = append(links, chainLink{impl: impl, link: f(deps)})
 	}
-	if env.reranker == nil {
-		rr = "none"
-	}
-	return &Chain{links: []chainLink{
-		{impl: fp, link: &fingerprintLink{env: env, impl: fp}},
-		{impl: "passthrough", link: &rewriteLink{env: env, impl: "passthrough"}},
-		{impl: "hybrid", link: &recallLink{env: env, impl: "hybrid"}},
-		{impl: fuse, link: &fuseLink{env: env, impl: fuse}},
-		{impl: "default", link: &relevanceLink{}},
-		{impl: rr, link: &rerankLink{env: env, impl: rr}},
-		{impl: "floor", link: &gateLink{env: env, impl: "floor"}},
-	}}
+	return &Chain{links: links}, nil
 }
