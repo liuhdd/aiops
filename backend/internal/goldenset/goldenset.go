@@ -17,11 +17,12 @@ type Expect struct {
 }
 
 type Item struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Question string `json:"question"`
-	Expect   Expect `json:"expect"`
-	TopK     int    `json:"top_k"`
+	ID       string   `json:"id"`
+	Type     string   `json:"type"`
+	Question string   `json:"question"`
+	History  []string `json:"history"`
+	Expect   Expect   `json:"expect"`
+	TopK     int      `json:"top_k"`
 }
 
 // Load 读取 JSONL 标注集，逐行归一（TopK 缺省 3、behavior 缺省按 doc_ids 推断、切片非 nil）。

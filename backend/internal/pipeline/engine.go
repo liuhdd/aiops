@@ -100,6 +100,9 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 	}
 
 	taskScope := scope.Task(run.ID, alert.Device)
+	ctx = retrieve.WithProfile(ctx, "pipeline")
+	// 显式清空可能由 chat 路径经 ctx 泄漏的对话历史：pipeline 检索/ReAct 不去改写。
+	ctx = retrieve.WithHistory(ctx, nil)
 	st := &State{
 		Run:       run,
 		Alert:     alert,

@@ -54,7 +54,7 @@ func (a *Agent) buildAssembled(conversationID, device, metric string, intents []
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
 	asm.SetSearcher(a.search)
 	asm.SetLeaves(a.leaves)
-	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents, ConversationID: conversationID}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Device: device, Metric: metric, Stage: "chat", Intents: intents, ConversationID: conversationID, Profile: "chat"}, false, nil)
 	if err != nil {
 		return nil
 	}
@@ -76,6 +76,7 @@ func (a *Agent) memorySuffix(conversationID, device, metric string) string {
 }
 
 func (a *Agent) Handle(ctx context.Context, conversationID string, userText string) (model.Message, error) {
+	ctx = retrieve.WithProfile(ctx, "chat")
 	userMsg := model.Message{
 		ID: model.NewID("msg"), Role: model.RoleUser,
 		Content: userText, ConversationID: conversationID, CreatedAt: time.Now(),
@@ -123,7 +124,7 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 	}
 	history := a.fetchHistory(conversationID, userText)
 	if len(subs) == 1 {
-		qText := a.rewriteWithHistory(ctx, history, subs[0])
+		qText := a.rewrite(ctx, history, subs[0])
 		return a.answerOne(ctx, conversationID, qText)
 	}
 	limit := a.maxSplit
@@ -136,7 +137,7 @@ func (a *Agent) answer(ctx context.Context, conversationID string, userText stri
 			fmt.Fprintf(&b, "[%d] %s → skipped（超出上限 %d）\n", i+1, sub, limit)
 			continue
 		}
-		qText := a.rewriteWithHistory(ctx, history, sub)
+		qText := a.rewrite(ctx, history, sub)
 		content, status := a.answerOneStatus(ctx, conversationID, qText)
 		fmt.Fprintf(&b, "[%d] %s → %s\n%s\n", i+1, sub, status, content)
 	}
@@ -270,7 +271,8 @@ func isSystemIntent(code Intent) bool {
 }
 
 // kbReply 按意图 code 检索知识库并返回命中文档行；无命中返回 ok=false。
-// question 作为检索文本，使 Searcher 的 BM25/向量/信号通道都能参与召回。
+// question 作为检索文本，使 Searcher 的 BM25/向量/信号通道都能参与召回；
+// 每路径的 question 已由 agent 预先改写（见 rewrite），故不再下传 History 以免二次改写。
 func (a *Agent) kbReply(ctx context.Context, conversationID, code, question string) (string, bool) {
 	if a.ctxStore == nil {
 		return "", false
@@ -278,7 +280,7 @@ func (a *Agent) kbReply(ctx context.Context, conversationID, code, question stri
 	asm := ctxpkg.NewAssembler(a.ctxStore, a.topK)
 	asm.SetSearcher(a.search)
 	asm.SetLeaves(a.leaves)
-	as, err := asm.Assemble(ctxpkg.Query{Text: question, Stage: "chat", Intents: []string{code}, ConversationID: conversationID}, false, nil)
+	as, err := asm.Assemble(ctxpkg.Query{Text: question, Stage: "chat", Intents: []string{code}, ConversationID: conversationID, Profile: "chat"}, false, nil)
 	if err != nil {
 		return "", false
 	}
@@ -458,50 +460,23 @@ func (a *Agent) fetchHistory(conversationID, currentUserText string) []string {
 	return out
 }
 
-// rewriteWithHistory 用已取好的 history 调 retrieve.RewriteQuery，失败回退原文。
-func (a *Agent) rewriteWithHistory(ctx context.Context, history []string, q string) string {
+// rewrite 用会话历史把子问题改写为独立问句；与链路 rewrite=llm 复用同一实现
+// （retrieve.RewriteQuery），保证「单一改写来源」。light 为空/无历史直通，
+// 失败或空输出回退原文。
+func (a *Agent) rewrite(ctx context.Context, history []string, q string) string {
 	if a.lightLLM == nil || ctxpkg.IsNilCompleter(a.lightLLM) {
 		return q
 	}
-	adapted := lightAdapter{c: a.lightLLM}
-	rw, err := retrieve.RewriteQuery(ctx, adapted, history, q)
+	rw, err := retrieve.RewriteQuery(ctx, retrieveCompleter{c: a.lightLLM}, history, q)
 	if err != nil || strings.TrimSpace(rw) == "" {
 		return q
 	}
 	return rw
 }
 
-// rewriteQuery 对外保留的便捷包装（供测试直接调用，内部走 fetchHistory 简化）。
-func (a *Agent) rewriteQuery(ctx context.Context, conversationID, q string) string {
-	// 尝试按 conversation 维度取历史（不剔除 current，因为调用方已明确历史边界）
-	var history []string
-	if a.store != nil {
-		if msgs, err := a.store.RecentMessages(conversationID, 6); err == nil {
-			for _, m := range msgs {
-				if strings.TrimSpace(m.Content) != "" {
-					history = append(history, m.Content)
-				}
-			}
-		}
-	} else if a.ctxStore != nil {
-		if msgs, err := a.ctxStore.RecentMessages(conversationID, 6); err == nil {
-			for _, m := range msgs {
-				if strings.TrimSpace(m.Content) != "" {
-					history = append(history, m.Content)
-				}
-			}
-		}
-	}
-	// 若末条即为 q 本身（直接调用场景），视为空历史以保持直通语义与 answer 路径一致的过滤
-	if len(history) > 0 && history[len(history)-1] == q {
-		history = history[:len(history)-1]
-	}
-	return a.rewriteWithHistory(ctx, history, q)
-}
+// retrieveCompleter 把 ctxpkg.Completer(双参) 适配为 retrieve.Completer(单 prompt)。
+type retrieveCompleter struct{ c ctxpkg.Completer }
 
-// lightAdapter 将 ctxpkg.Completer(双参) 适配为 retrieve.Completer(单 prompt)。
-type lightAdapter struct{ c ctxpkg.Completer }
-
-func (l lightAdapter) Complete(ctx context.Context, prompt string) (string, error) {
-	return l.c.Complete(ctx, "", prompt)
+func (r retrieveCompleter) Complete(ctx context.Context, prompt string) (string, error) {
+	return r.c.Complete(ctx, "", prompt)
 }

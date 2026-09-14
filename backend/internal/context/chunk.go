@@ -25,6 +25,8 @@ type Query struct {
 	ConversationID string
 	Keywords       []string
 	Intents        []string
-	Text           string // 自由文本（如用户原问句），参与检索文本组装
-	Version        string // 目标版本，透传给检索链路做版本区间过滤
+	Text           string   // 自由文本（如用户原问句），参与检索文本组装
+	Version        string   // 目标版本，透传给检索链路做版本区间过滤
+	Profile        string   // 检索路径标识（pipeline/chat），透传给 Searcher 选链
+	History        []string // 对话历史，透传检索链路改写环节
 }

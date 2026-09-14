@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
+	"aiops/internal/phoenix"
 	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
@@ -24,6 +27,8 @@ func main() {
 	generate := flag.Bool("generate", false, "生成模式：按种子文档批量出题")
 	enhance := flag.Bool("enhance", true, "是否启用富化")
 	out := flag.String("o", "", "结构化报告输出路径（JSON）")
+	variantsFlag := flag.String("variants", "", "变体串，如 baseline;rerank=none;fuse=weighted")
+	variantsFile := flag.String("variants-file", "", "变体 JSON 文件")
 	flag.Parse()
 
 	if *generate {
@@ -80,8 +85,12 @@ func main() {
 	if e, err := retrieve.NewLLMEmbedder(cfg); err == nil {
 		embedder = e
 	}
+	var lc *llm.Client
+	if c, err := llm.NewClient(cfg); err == nil {
+		lc = c
+	}
 	var llmCompleter kb.Completer
-	if lc, err := llm.NewClient(cfg); err == nil && lc != nil {
+	if lc != nil {
 		llmCompleter = kb.AdaptCompleter(lc)
 	}
 	svc := kb.NewServiceWithEnrich(s, nil, embedder, llmCompleter, cfg)
@@ -146,158 +155,201 @@ func main() {
 		os.Exit(1)
 	}
 
-	searcher := retrieve.NewSearcher(s, embedder)
-
-	// per-type 聚合
-	type agg struct {
-		Count        int
-		HitCount     int
-		RejectCount  int
-		SumMRR       float64
-		SumNDCG      float64
-		SumRecall    float64
-		SumPrecision float64
-		RejectOK     int
+	// 变体解析：-variants-file 提供具名变体，-variants 为 ";" 分隔的规格串
+	var fileVariants []retrieve.Variant
+	if *variantsFile != "" {
+		data, err := os.ReadFile(*variantsFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "读变体文件失败: %v\n", err)
+			os.Exit(1)
+		}
+		fileVariants, err = retrieve.ParseVariantsJSON(data)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "解析变体文件失败: %v\n", err)
+			os.Exit(1)
+		}
 	}
-	perType := map[string]*agg{}
-	overallHit := &agg{}
-	overallRejectTotal := 0
-	overallRejectOK := 0
+	variants, err := selectVariants(*variantsFlag, fileVariants)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "解析变体失败: %v\n", err)
+		os.Exit(1)
+	}
 
-	// 用于 ComputeRejectRate 的输入
-	resultsMap := map[string][]string{}
-	expectsMap := map[string]string{}
+	var reranker retrieve.Reranker
+	if rr, err := retrieve.NewReranker(cfg); err == nil {
+		reranker = rr
+	}
+	var rewriteC retrieve.Completer
+	if lc != nil {
+		rewriteC = rewriteAdapter{c: lc}
+	}
+
+	var reports []VariantReport
+	for _, v := range variants {
+		searcher, err := retrieve.NewSearcherVariant(s, embedder, reranker, cfg, rewriteC, v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "构造变体 %s 失败: %v\n", v.Name, err)
+			os.Exit(1)
+		}
+		itemResults := evaluateItems(searcher, items)
+		overall, byType := aggregate(itemResults)
+		reports = append(reports, VariantReport{Name: v.Name, Spec: v.Steps, Overall: overall, ByType: byType, Items: itemResults})
+	}
+
+	// 以 Name=="baseline" 定位基准并置于首位，避免依赖输入顺序
+	reports = baselineFirst(reports)
+	baseReport := reports[0]
+	base := baseReport.Overall
+	cmp := ComparisonReport{
+		Meta: CompareMeta{
+			Timestamp: time.Now().Format(time.RFC3339), Golden: goldenPath, Enhance: *enhance, Baseline: baseReport.Name,
+		},
+		Variants: reports,
+		Deltas:   map[string]Metrics{},
+	}
+	for _, r := range reports[1:] {
+		cmp.Deltas[r.Name] = delta(base, r.Overall)
+	}
+	printComparison(os.Stdout, cmp)
+	if *out != "" {
+		b, _ := json.MarshalIndent(cmp, "", "  ")
+		if err := os.WriteFile(*out, b, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "写报告失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("报告已写入 %s\n", *out)
+	}
+
+	// Phoenix 逐变体回写：未配置 PHOENIX_BASE_URL 时零外呼，仅本地报告照常。
+	if cfg.PhoenixBaseURL != "" {
+		pc := phoenix.NewClient(cfg.PhoenixBaseURL, cfg.PhoenixAPIKey)
+		dsID, err := findRagDataset(pc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Phoenix 数据集解析失败，跳过回写: %v\n", err)
+		} else {
+			for _, r := range reports {
+				rep := goldenset.RagReport{
+					Meta:    goldenset.RagMeta{Timestamp: time.Now(), Enhance: *enhance, TopK: 3, Variant: r.Name, VariantSpec: r.Spec},
+					Items:   r.Items,
+					Overall: toOverall(r),
+				}
+				sum, err := goldenset.PushRagExperiment(pc, dsID, rep, goldenset.RagDatasetName+"/"+r.Name)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Phoenix 回写变体 %s: %v (%d failures)\n", r.Name, err, sum.Failures)
+					continue
+				}
+				fmt.Printf("Phoenix 变体 %s → experiment %s\n", r.Name, sum.ID)
+			}
+		}
+	}
+}
+
+// evaluateItems 在给定检索器上跑完 golden 题并按既有口径计算逐题指标。
+func evaluateItems(searcher retrieve.Searcher, items []goldenset.Item) []goldenset.ItemResult {
 	var itemResults []goldenset.ItemResult
-
 	for _, it := range items {
 		k := it.TopK
 		if k <= 0 {
 			k = 3
 		}
-		// 检索：统一走 SearchCases（种子库均为 case；manual 通道命中为 0 亦不影响指标）
-		ctx := context.Background()
+		var traces []retrieve.LinkTrace
+		ctx := retrieve.WithTraceSink(context.Background(), func(t []retrieve.LinkTrace) { traces = t })
 		qStart := time.Now()
-		res, err := searcher.SearchCases(ctx, retrieve.Query{Text: it.Question}, retrieve.Options{TopK: k})
+		res, err := searcher.SearchCases(ctx, retrieve.Query{Text: it.Question, History: it.History}, retrieve.Options{TopK: k})
 		qEnd := time.Now()
 		if err != nil {
-			// 静默降级：按空结果计
 			res = nil
 		}
 		ranked := make([]string, len(res))
 		for i, r := range res {
 			ranked[i] = r.DocID
 		}
-		resultsMap[it.ID] = ranked
-		expectsMap[it.ID] = it.Expect.Behavior
-
-		ag := perType[it.Type]
-		if ag == nil {
-			ag = &agg{}
-			perType[it.Type] = ag
-		}
-		ag.Count++
-
 		ir := goldenset.ItemResult{
 			ID: it.ID, Type: it.Type, Question: it.Question, TopK: k,
 			RankedDocIDs: ranked, Behavior: it.Expect.Behavior,
-			StartedAt: qStart, EndedAt: qEnd,
+			StartedAt: qStart, EndedAt: qEnd, Traces: convertTraces(traces),
 		}
 		if it.Expect.Behavior == "reject" {
-			ag.RejectCount++
-			overallRejectTotal++
 			if len(ranked) == 0 {
-				ag.RejectOK++
-				overallRejectOK++
 				ir.RejectOK = true
 			}
 		} else {
-			ag.HitCount++
-			overallHit.Count++
 			relevant := map[string]bool{}
 			for _, id := range it.Expect.DocIDs {
 				relevant[id] = true
 			}
-			// 即使 relevant 为空（标注缺失），指标计算仍正常返回 0，不崩溃
 			mrr := ComputeMRR(ranked, relevant)
 			ndcg := ComputeNDCG(ranked, relevant, k)
 			rec := ComputeRecallAtK(ranked, relevant, k)
 			prec := ComputePrecisionAtK(ranked, relevant, k)
-			ag.SumMRR += mrr
-			ag.SumNDCG += ndcg
-			ag.SumRecall += rec
-			ag.SumPrecision += prec
-			overallHit.SumMRR += mrr
-			overallHit.SumNDCG += ndcg
-			overallHit.SumRecall += rec
-			overallHit.SumPrecision += prec
 			ir.MRR, ir.NDCG, ir.Recall, ir.Precision = mrr, ndcg, rec, prec
 		}
 		itemResults = append(itemResults, ir)
 	}
+	return itemResults
+}
 
-	fmt.Printf("rageval: loaded %s (%d items)\n", goldenPath, len(items))
-	// 按固定 8 类型顺序输出，无数据时仍占行
-	orderedTypes := []string{"fact", "multi_doc", "negative", "ambiguous", "reasoning", "no_answer", "cross_object", "misleading_premise"}
-	fmt.Printf("%-18s %4s %6s %8s %8s %10s\n", "type", "n", "MRR", "NDCG", "Recall", "RejectRate")
-	for _, tp := range orderedTypes {
-		ag := perType[tp]
-		if ag == nil {
-			fmt.Printf("%-18s %4d %6s %8s %8s %10s\n", tp, 0, "-", "-", "-", "-")
-			continue
-		}
-		avgMRR, avgNDCG, avgRec := "-", "-", "-"
-		if ag.HitCount > 0 {
-			avgMRR = fmt.Sprintf("%.3f", ag.SumMRR/float64(ag.HitCount))
-			avgNDCG = fmt.Sprintf("%.3f", ag.SumNDCG/float64(ag.HitCount))
-			avgRec = fmt.Sprintf("%.3f", ag.SumRecall/float64(ag.HitCount))
-		}
-		rejRate := "-"
-		if ag.RejectCount > 0 {
-			rejRate = fmt.Sprintf("%.3f", float64(ag.RejectOK)/float64(ag.RejectCount))
-		} else if ag.Count > 0 && tp == "no_answer" {
-			// no_answer 类型若全为 reject，HitCount=0 时已在上分支处理
-		}
-		// 对于混合类型（如 cross_object/misleading_premise）同时含 hit 与 reject，分别展示 hit 均值与 reject 率
-		fmt.Printf("%-18s %4d %6s %8s %8s %10s\n", tp, ag.Count, avgMRR, avgNDCG, avgRec, rejRate)
-	}
-	// 总分
-	overallAvgMRR, overallAvgNDCG, overallAvgRec := "-", "-", "-"
-	if overallHit.Count > 0 {
-		overallAvgMRR = fmt.Sprintf("%.3f", overallHit.SumMRR/float64(overallHit.Count))
-		overallAvgNDCG = fmt.Sprintf("%.3f", overallHit.SumNDCG/float64(overallHit.Count))
-		overallAvgRec = fmt.Sprintf("%.3f", overallHit.SumRecall/float64(overallHit.Count))
-	}
-	var overallMRRf, overallNDCGf, overallRecf, overallPrecf float64
-	if overallHit.Count > 0 {
-		overallMRRf = overallHit.SumMRR / float64(overallHit.Count)
-		overallNDCGf = overallHit.SumNDCG / float64(overallHit.Count)
-		overallRecf = overallHit.SumRecall / float64(overallHit.Count)
-		overallPrecf = overallHit.SumPrecision / float64(overallHit.Count)
-	}
-	overallRejectRate := "-"
-	if overallRejectTotal > 0 {
-		overallRejectRate = fmt.Sprintf("%.3f", float64(overallRejectOK)/float64(overallRejectTotal))
-		// 也可用统一函数校验一致性
-		_ = ComputeRejectRate(resultsMap, expectsMap)
-	}
-	fmt.Printf("%-18s %4d %6s %8s %8s %10s\n", "overall", len(items), overallAvgMRR, overallAvgNDCG, overallAvgRec, overallRejectRate)
-	fmt.Printf("hit_items=%d reject_items=%d reject_ok=%d\n", overallHit.Count, overallRejectTotal, overallRejectOK)
+// rewriteAdapter 把双参 llm.Client 适配为单参 retrieve.Completer（system 置空）。
+type rewriteAdapter struct{ c *llm.Client }
 
-	if *out != "" {
-		rep := goldenset.RagReport{
-			Meta:  goldenset.RagMeta{Timestamp: time.Now(), Enhance: *enhance, TopK: 3},
-			Items: itemResults,
-			Overall: goldenset.Overall{
-				HitCount: overallHit.Count, RejectCount: overallRejectTotal, RejectOK: overallRejectOK,
-				MRR: overallMRRf, NDCG: overallNDCGf, Recall: overallRecf, Precision: overallPrecf,
-			},
+func (r rewriteAdapter) Complete(ctx context.Context, prompt string) (string, error) {
+	return r.c.Complete(ctx, "", prompt)
+}
+
+func hasVariant(vs []retrieve.Variant, name string) bool {
+	for _, v := range vs {
+		if v.Name == name {
+			return true
 		}
-		b, _ := rep.ToJSON()
-		if err := os.WriteFile(*out, b, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "写报告失败: %v\n", err)
-			os.Exit(1)
+	}
+	return false
+}
+
+// selectVariants 解析变体选择：-variants 非空时按规格解析（可引用文件具名变体）；
+// 仅给 -variants-file 时直接使用文件内全部变体；两者皆空时默认 baseline。
+// baseline 始终作为对比基准前插（未显式列出时）。
+func selectVariants(spec string, fileVariants []retrieve.Variant) ([]retrieve.Variant, error) {
+	named := make(map[string]retrieve.Variant, len(fileVariants))
+	for _, v := range fileVariants {
+		named[v.Name] = v
+	}
+	var out []retrieve.Variant
+	if strings.TrimSpace(spec) == "" && len(fileVariants) > 0 {
+		out = append(out, fileVariants...)
+	} else {
+		vs, err := retrieve.ParseVariants(spec, named)
+		if err != nil {
+			return nil, err
 		}
-		fmt.Printf("报告已写入 %s\n", *out)
+		out = vs
+	}
+	if !hasVariant(out, "baseline") {
+		b, _ := retrieve.ParseVariantPatch("baseline", "", retrieve.BaselineVariant())
+		out = append([]retrieve.Variant{b}, out...)
+	}
+	return out, nil
+}
+
+func printComparison(w io.Writer, c ComparisonReport) {
+	fmt.Fprintf(w, "rageval: %s baseline=%s\n", c.Meta.Golden, c.Meta.Baseline)
+	fmt.Fprintf(w, "%-24s %6s %8s %8s %10s %8s\n", "variant", "MRR", "NDCG", "Recall", "Precision", "Reject")
+	for _, v := range c.Variants {
+		m := v.Overall
+		fmt.Fprintf(w, "%-24s %6.3f %8.3f %8.3f %10.3f %8.3f\n", v.Name, m.MRR, m.NDCG, m.Recall, m.Precision, m.RejectRate)
+	}
+	if len(c.Deltas) > 0 {
+		fmt.Fprintf(w, "-- delta vs %s --\n", c.Meta.Baseline)
+		// 按 variants 顺序输出（跳过基线），保证可复现，不依赖 map 遍历顺序。
+		for _, v := range c.Variants {
+			if v.Name == c.Meta.Baseline {
+				continue
+			}
+			d, ok := c.Deltas[v.Name]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(w, "%-24s ΔMRR %+.3f ΔNDCG %+.3f ΔRecall %+.3f ΔPrec %+.3f ΔReject %+.3f\n", v.Name, d.MRR, d.NDCG, d.Recall, d.Precision, d.RejectRate)
+		}
 	}
 }
 

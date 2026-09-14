@@ -25,6 +25,13 @@ import (
 	"aiops/internal/store"
 )
 
+// lightAdapter 把 ctxpkg.Completer(双参) 适配为 retrieve.Completer(单 prompt)。
+type lightAdapter struct{ c ctxpkg.Completer }
+
+func (l lightAdapter) Complete(ctx context.Context, prompt string) (string, error) {
+	return l.c.Complete(ctx, "", prompt)
+}
+
 func main() {
 	cfg := config.Load()
 
@@ -69,7 +76,14 @@ func main() {
 		}
 		reranker = nil
 	}
-	searcher := retrieve.NewSearcherWithConfig(st, embedder, reranker, cfg)
+	var rewriteCompleter retrieve.Completer
+	if light != nil {
+		rewriteCompleter = lightAdapter{c: light}
+	}
+	searcher, err := retrieve.NewSearcherProfiles(st, embedder, reranker, cfg, rewriteCompleter, nil)
+	if err != nil {
+		log.Fatalf("searcher: %v", err)
+	}
 
 	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
 	eng.Publish = h.Publish

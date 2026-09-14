@@ -104,8 +104,8 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 		casesTopK, manualsTopK := retrieve.Router(q.Stage, q.Intents, a.leafList())
 		if casesTopK > 0 {
 			res, err := a.search.SearchCases(context.Background(), retrieve.Query{
-				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents, Version: q.Version,
-			}, retrieve.Options{TopK: casesTopK})
+				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents, Version: q.Version, History: q.History,
+			}, retrieve.Options{TopK: casesTopK, Profile: q.Profile})
 			// 单次检索失败静默降级为空知识（不阻断组装）；nil searcher 走下方全量扫描回退。
 			if err == nil {
 				for _, r := range res {
@@ -117,8 +117,8 @@ func (a *Assembler) candidates(q Query, now time.Time) ([]Chunk, error) {
 		}
 		if manualsTopK > 0 {
 			res, err := a.search.SearchManuals(context.Background(), retrieve.Query{
-				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents, Version: q.Version,
-			}, retrieve.Options{TopK: manualsTopK})
+				Text: qText(q), Metric: q.Metric, Device: q.Device, Intents: q.Intents, Version: q.Version, History: q.History,
+			}, retrieve.Options{TopK: manualsTopK, Profile: q.Profile})
 			// 单次检索失败静默降级为空知识（不阻断组装）；nil searcher 走下方全量扫描回退。
 			if err == nil {
 				for _, r := range res {

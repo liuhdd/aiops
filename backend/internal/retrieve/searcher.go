@@ -14,7 +14,8 @@ import (
 
 // Options 检索选项。
 type Options struct {
-	TopK int
+	TopK    int
+	Profile string // 检索路径标识（pipeline/chat），空则回退 ctx 或 "pipeline"
 }
 
 // Result 检索结果块（供工具与组装器消费）。
@@ -35,12 +36,20 @@ type Searcher interface {
 	SearchManuals(ctx context.Context, q Query, opts Options) ([]Result, error)
 }
 
-// searcher 混合检索引擎：BM25 + 向量 + 信号，按类型差异化融合。
+// searcher 混合检索引擎：持有共享检索环境与按 profile 绑定的链路。
 type searcher struct {
+	env      *searchEnv
+	chains   map[string]*Chain
+	fallback *Chain
+}
+
+// searchEnv 检索共享环境：数据源、索引态与融合参数；供各 Link 读取。
+type searchEnv struct {
 	st       *store.Store
 	embedder Embedder
 	reranker Reranker
 	cfg      config.Config
+	now      func() time.Time
 	mu       sync.Mutex // 保护 idx/docCount/idxVersion 的懒加载
 	idx      *BM25Index
 	docCount int
@@ -48,15 +57,64 @@ type searcher struct {
 	idxVersion string
 }
 
-// NewSearcherWithConfig 构造混合检索器；reranker 可为 nil（精排跳过）。
-func NewSearcherWithConfig(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config) Searcher {
+func newSearchEnv(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config) *searchEnv {
 	if cfg.RerankModel == "" {
 		cfg.RerankModel = "rerank"
 	}
 	if cfg.RerankFloor == 0 {
 		cfg.RerankFloor = 0.2
 	}
-	return &searcher{st: st, embedder: embedder, reranker: rr, cfg: cfg}
+	return &searchEnv{st: st, embedder: embedder, reranker: rr, cfg: cfg, now: time.Now}
+}
+
+// NewSearcherVariant 按变体装配链路；未知实现返回错误。
+func NewSearcherVariant(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config, completer Completer, v Variant) (Searcher, error) {
+	env := newSearchEnv(st, embedder, rr, cfg)
+	ch, err := BuildChain(v, Deps{Env: env, Completer: completer})
+	if err != nil {
+		return nil, err
+	}
+	return &searcher{env: env, chains: map[string]*Chain{"pipeline": ch}, fallback: ch}, nil
+}
+
+// NewSearcherProfiles 生产构造：pipeline/chat 各绑一个 chain。
+func NewSearcherProfiles(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config, completer Completer, params map[string]map[string]string) (Searcher, error) {
+	env := newSearchEnv(st, embedder, rr, cfg)
+	pipeline, err := BuildChain(VariantFromConfig(cfg, "pipeline", params), Deps{Env: env, Completer: completer})
+	if err != nil {
+		return nil, err
+	}
+	chat, err := BuildChain(VariantFromConfig(cfg, "chat", params), Deps{Env: env, Completer: completer})
+	if err != nil {
+		return nil, err
+	}
+	return &searcher{env: env, chains: map[string]*Chain{"pipeline": pipeline, "chat": chat}, fallback: pipeline}, nil
+}
+
+// NewSearcherWithConfig 构造混合检索器；reranker 可为 nil（精排跳过）。
+func NewSearcherWithConfig(st *store.Store, embedder Embedder, rr Reranker, cfg config.Config) Searcher {
+	env := newSearchEnv(st, embedder, rr, cfg)
+	ch := defaultChainFromEnv(env)
+	return &searcher{env: env, chains: map[string]*Chain{"pipeline": ch}, fallback: ch}
+}
+
+// defaultChainFromEnv 由 cfg 单项构造 baseline（保持既有 NewSearcherWithConfig 语义）。
+func defaultChainFromEnv(env *searchEnv) *Chain {
+	v := BaselineVariant()
+	if !env.cfg.RetrieveFingerprint {
+		v.Steps["fingerprint"] = "off"
+	}
+	if !env.cfg.RetrieveRRF {
+		v.Steps["fuse"] = "weighted"
+	}
+	if env.reranker == nil {
+		v.Steps["rerank"] = "none"
+	}
+	ch, err := BuildChain(v, Deps{Env: env})
+	if err != nil { // 不应发生：内置实现
+		panic(err)
+	}
+	return ch
 }
 
 // NewSearcher 构造混合检索器；embedder 可为 nil（向量通道回退）。
@@ -65,33 +123,18 @@ func NewSearcher(st *store.Store, embedder Embedder) Searcher {
 	return NewSearcherWithConfig(st, embedder, nil, config.Default())
 }
 
-// isFingerprintEnabled 指纹快路径是否启用。
-func (s *searcher) isFingerprintEnabled() bool {
-	return s.cfg.RetrieveFingerprint
-}
-
-// isRRFEnabled RRF 融合是否启用。
-func (s *searcher) isRRFEnabled() bool {
-	return s.cfg.RetrieveRRF
-}
-
-// effectiveRerankFloor 返回生效的精排门限（已在构造时归一）。
-func (s *searcher) effectiveRerankFloor() float64 {
-	return s.cfg.RerankFloor
-}
-
 // ensureIndex 知识库文档数或版本过滤变化时重建 BM25 索引（并发安全：check-then-act 加锁）。
-func (s *searcher) ensureIndex(version string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n, err := s.st.CountKbDocuments()
+func (e *searchEnv) ensureIndex(version string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	n, err := e.st.CountKbDocuments()
 	if err != nil {
 		return err
 	}
-	if s.idx != nil && n == s.docCount && version == s.idxVersion {
+	if e.idx != nil && n == e.docCount && version == e.idxVersion {
 		return nil
 	}
-	kcs, err := s.st.ListKnowledgeChunksFiltered(version)
+	kcs, err := e.st.ListKnowledgeChunksFiltered(version)
 	if err != nil {
 		return err
 	}
@@ -99,9 +142,9 @@ func (s *searcher) ensureIndex(version string) error {
 	for i, kc := range kcs {
 		ids[i] = kc.ChunkID
 	}
-	s.idx = BuildBM25(kcs, ids)
-	s.docCount = n
-	s.idxVersion = version
+	e.idx = BuildBM25(kcs, ids)
+	e.docCount = n
+	e.idxVersion = version
 	return nil
 }
 
@@ -116,64 +159,35 @@ func (s *searcher) SearchManuals(ctx context.Context, q Query, opts Options) ([]
 }
 
 func (s *searcher) search(ctx context.Context, q Query, cat model.KBCategory, isManual bool, opts Options) ([]Result, error) {
-	topK := opts.TopK
-	if topK <= 0 {
-		topK = 3
+	qc := &QueryCtx{Raw: q, Text: q.Text, Options: opts, Category: cat, IsManual: isManual}
+	err := s.chainFor(ProfileOf(ctx, opts)).Run(ctx, qc)
+	if sink := traceSinkFromCtx(ctx); sink != nil {
+		sink(qc.Trace)
 	}
-	// 指纹快路径（无需 BM25 索引，失败静默降级为 miss）
-	if s.isFingerprintEnabled() {
-		if res, hit, err := s.fingerprintFastPath(q, cat, isManual, topK); hit {
-			return res, err
-		}
-	}
-	if err := s.ensureIndex(q.Version); err != nil {
+	if err != nil {
 		return nil, err
 	}
-	cands := s.dualRecall(ctx, q, isManual, cat)
-	if s.isRRFEnabled() {
-		cands = FuseRRF(cands, isManual)
-	} else {
-		if isManual {
-			cands = RankManuals(cands, time.Now())
-		} else {
-			cands = RankCases(cands, time.Now())
-		}
+	if qc.Results == nil {
+		return []Result{}, nil
 	}
-	if !hasRelevance(cands) {
-		return []Result{}, nil // 无相关候选：返回空（spec: 库空/无候选返回空数组）
+	return qc.Results, nil
+}
+
+// chainFor 按 profile 选链；未注册的 profile 回退 fallback。
+func (s *searcher) chainFor(profile string) *Chain {
+	if ch, ok := s.chains[profile]; ok && ch != nil {
+		return ch
 	}
-	cands = s.applyRerank(ctx, q.Text, cands)
-	if s.reranker != nil {
-		n := len(cands)
-		if n > 20 {
-			n = 20
-		}
-		if n > 0 {
-			head := gateB(cands[:n], s.effectiveRerankFloor())
-			cands = append(head, cands[n:]...)
-		}
-	}
-	if len(cands) > topK {
-		cands = cands[:topK]
-	}
-	res := make([]Result, 0, len(cands))
-	for _, c := range cands {
-		res = append(res, Result{
-			DocID: c.Chunk.DocID, Title: c.Chunk.Title, Category: c.Chunk.Category,
-			Heading: c.Chunk.Heading, Content: c.Chunk.Content, Score: c.Final,
-			Intents: c.Chunk.Intents, SourceDocIDs: c.Chunk.SourceDocIDs,
-		})
-	}
-	return res, nil
+	return s.fallback
 }
 
 // fingerprintFastPath 指纹快路径：命中返回 (results,true,nil)，未命中 (nil,false,nil)。
-func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual bool, topK int) ([]Result, bool, error) {
+func (e *searchEnv) fingerprintFastPath(q Query, cat model.KBCategory, isManual bool, topK int) ([]Result, bool, error) {
 	fps := extractFingerprints(q.Text)
 	if len(fps) == 0 {
 		return nil, false, nil
 	}
-	docs, err := s.st.ListKbDocumentsByFingerprints(fps)
+	docs, err := e.st.ListKbDocumentsByFingerprints(fps)
 	if err != nil {
 		return nil, false, nil // 失败静默降级为未命中
 	}
@@ -204,7 +218,7 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 	// 空版本直通不过滤。视图加载失败则降级为未命中，走主链路判定。
 	var allowed map[string]struct{}
 	if strings.TrimSpace(q.Version) != "" {
-		kcs, err := s.st.ListKnowledgeChunksFiltered(q.Version)
+		kcs, err := e.st.ListKnowledgeChunksFiltered(q.Version)
 		if err != nil {
 			return nil, false, nil
 		}
@@ -215,7 +229,7 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 	}
 	var res []Result
 	for _, d := range filtered {
-		chunks, err := s.st.ListKbChunksByDoc(d.ID)
+		chunks, err := e.st.ListKbChunksByDoc(d.ID)
 		if err != nil {
 			continue // 单文档加载失败静默跳过
 		}
@@ -251,15 +265,15 @@ func (s *searcher) fingerprintFastPath(q Query, cat model.KBCategory, isManual b
 
 // dualRecall 双路召回：BM25 + 向量 + 信号 + 时效，返回未排序候选供融合阶段处理。
 // 扩展问题通道：拉问题向量与问题文本，对每块计算 QVec/QBM25 取 max 后与块通道取 max 再进 RRF。
-func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat model.KBCategory) []cand {
-	kcs, err := s.st.ListKnowledgeChunksFiltered(q.Version)
+func (e *searchEnv) dualRecall(ctx context.Context, q Query, isManual bool, cat model.KBCategory) []Candidate {
+	kcs, err := e.st.ListKnowledgeChunksFiltered(q.Version)
 	if err != nil {
 		return nil
 	}
 	embeds := map[string][]float64{}
 	qEmbeds := map[string][]float64{} // questionID -> vec（去掉 q_ 前缀）
-	if s.embedder != nil {
-		if evs, err := s.st.ListKbEmbeddings(); err == nil {
+	if e.embedder != nil {
+		if evs, err := e.st.ListKbEmbeddings(); err == nil {
 			for _, e := range evs {
 				if strings.HasPrefix(e.ChunkID, "q_") {
 					qid := strings.TrimPrefix(e.ChunkID, "q_")
@@ -272,18 +286,18 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 	}
 	// idx 可能为 nil（如空库），此时 BM25 分数为 0
 	bmScores := map[string]float64{}
-	if s.idx != nil {
-		bmScores = s.idx.Score(q.Text)
+	if e.idx != nil {
+		bmScores = e.idx.Score(q.Text)
 	}
 	var qVec []float64
-	if s.embedder != nil && q.Text != "" {
-		if vs, err := s.embedder.Embed(ctx, []string{q.Text}); err == nil && len(vs) > 0 {
+	if e.embedder != nil && q.Text != "" {
+		if vs, err := e.embedder.Embed(ctx, []string{q.Text}); err == nil && len(vs) > 0 {
 			qVec = vs[0]
 		}
 	}
 	// 拉问题文本，按 chunkID 聚合
 	questionsByChunk := map[string][]model.KbChunkQuestion{}
-	if qs, err := s.st.ListKbChunkQuestions(); err == nil {
+	if qs, err := e.st.ListKbChunkQuestions(); err == nil {
 		for _, qq := range qs {
 			questionsByChunk[qq.ChunkID] = append(questionsByChunk[qq.ChunkID], qq)
 		}
@@ -336,7 +350,7 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 		}
 	}
 	now := time.Now()
-	var cands []cand
+	var cands []Candidate
 	for _, kc := range kcs {
 		if isManual {
 			if kc.Category != model.KBManual && kc.Category != model.KBRunbook {
@@ -348,7 +362,7 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 		} else if kc.Category != cat {
 			continue
 		}
-		c := cand{Chunk: kc}
+		c := Candidate{Chunk: kc}
 		c.BM25 = bmScores[kc.ChunkID]
 		if v, ok := qBM25Max[kc.ChunkID]; ok && v > c.BM25 {
 			c.BM25 = v
@@ -371,8 +385,8 @@ func (s *searcher) dualRecall(ctx context.Context, q Query, isManual bool, cat m
 }
 
 // applyRerank 精排：取前 20 调 rerank，按分重排，失败原样返回。
-func (s *searcher) applyRerank(ctx context.Context, qText string, cands []cand) []cand {
-	if s.reranker == nil || len(cands) == 0 {
+func (e *searchEnv) applyRerank(ctx context.Context, qText string, cands []Candidate) []Candidate {
+	if e.reranker == nil || len(cands) == 0 {
 		return cands
 	}
 	n := len(cands)
@@ -383,7 +397,7 @@ func (s *searcher) applyRerank(ctx context.Context, qText string, cands []cand) 
 	for i := 0; i < n; i++ {
 		docs[i] = cands[i].Chunk.Content
 	}
-	scores, err := s.reranker.Rerank(ctx, qText, docs)
+	scores, err := e.reranker.Rerank(ctx, qText, docs)
 	if err != nil || len(scores) != n {
 		return cands // 失败静默降级
 	}
@@ -396,7 +410,7 @@ func (s *searcher) applyRerank(ctx context.Context, qText string, cands []cand) 
 }
 
 // gateB 精排分低于 floor 的剔除（无 rerank 时透传，由调用方确保仅在精排后调用）。
-func gateB(cands []cand, floor float64) []cand {
+func gateB(cands []Candidate, floor float64) []Candidate {
 	if floor <= 0 {
 		return cands
 	}
@@ -466,7 +480,7 @@ func hasIntent(intents []string, code string) bool {
 const vectorRelevanceFloor = 0.5
 
 // hasRelevance 是否存在相关候选：关键词(BM25)、信号或纯语义向量(原始余弦≥门限)任一命中即相关。
-func hasRelevance(cands []cand) bool {
+func hasRelevance(cands []Candidate) bool {
 	for _, c := range cands {
 		if c.BM25 > 0 || c.Signal > 0 || c.Vec >= vectorRelevanceFloor {
 			return true

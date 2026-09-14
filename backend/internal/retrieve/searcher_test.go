@@ -77,6 +77,22 @@ func TestSearchCasesSemanticRank(t *testing.T) {
 	}
 }
 
+func TestSearchCasesTraceSink(t *testing.T) {
+	s := seedRetrieveStore(t)
+	se := NewSearcher(s, fakeEmbedder{})
+	var traces []LinkTrace
+	ctx := WithTraceSink(context.Background(), func(ts []LinkTrace) { traces = ts })
+	if _, err := se.SearchCases(ctx, Query{Text: "GPU 掉卡"}, Options{TopK: 2}); err != nil {
+		t.Fatalf("SearchCases: %v", err)
+	}
+	if len(traces) == 0 {
+		t.Fatal("TraceSink 未收到轨迹")
+	}
+	if traces[0].Kind != "fingerprint" || traces[0].Impl != "exact" {
+		t.Fatalf("首环节 = %+v, want fingerprint/exact", traces[0])
+	}
+}
+
 func TestSearchCasesOnlyCases(t *testing.T) {
 	s := seedRetrieveStore(t)
 	se := NewSearcher(s, fakeEmbedder{})
@@ -233,13 +249,13 @@ func TestSearchRRFVsWeightedToggle(t *testing.T) {
 		t.Fatalf("两开关下均应有结果 RRF=%+v Weighted=%+v", resRRF, resW)
 	}
 	// 同一批候选的 RRF 与加权融合应至少有一项实现差异（通过直接对比 FuseRRF 与 RankCases 的序）
-	cands := []cand{
+	cands := []Candidate{
 		{Chunk: model.KbKnowledgeChunk{ChunkID: "a"}, BM25: 0.1, Vec: 0.95, Signal: 0.5},
 		{Chunk: model.KbKnowledgeChunk{ChunkID: "b"}, BM25: 0.95, Vec: 0.1, Signal: 0.5},
 		{Chunk: model.KbKnowledgeChunk{ChunkID: "c"}, BM25: 0.5, Vec: 0.5, Signal: 0.5},
 	}
-	gotRRF := FuseRRF(append([]cand(nil), cands...), false)
-	gotW := RankCases(append([]cand(nil), cands...), time.Now())
+	gotRRF := FuseRRF(append([]Candidate(nil), cands...), false)
+	gotW := RankCases(append([]Candidate(nil), cands...), time.Now())
 	if gotRRF[0].Chunk.ChunkID == gotW[0].Chunk.ChunkID && len(gotRRF) > 1 {
 		// 允许偶发相同，但至少验证两路径可独立开关且结果非空；若相同则仅校验非空已足够
 		t.Logf("RRF 与加权首位相同 rrf=%v weighted=%v", gotRRF[0].Chunk.ChunkID, gotW[0].Chunk.ChunkID)

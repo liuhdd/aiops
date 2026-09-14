@@ -8,13 +8,13 @@ import (
 	"aiops/internal/model"
 )
 
-func mkCand(id string, bm25, vec, sig, rec float64) cand {
-	return cand{Chunk: model.KbKnowledgeChunk{ChunkID: id}, BM25: bm25, Vec: vec, Signal: sig, Recency: rec}
+func mkCand(id string, bm25, vec, sig, rec float64) Candidate {
+	return Candidate{Chunk: model.KbKnowledgeChunk{ChunkID: id}, BM25: bm25, Vec: vec, Signal: sig, Recency: rec}
 }
 
 func TestRankCasesOrderByFinal(t *testing.T) {
 	now := time.Now()
-	cands := []cand{
+	cands := []Candidate{
 		mkCand("semantic", 0.0, 1.0, 0.0, 0.5),
 		mkCand("labeled", 0.0, 0.0, 1.0, 0.5),
 	}
@@ -26,7 +26,7 @@ func TestRankCasesOrderByFinal(t *testing.T) {
 
 func TestRankManualsBM25Dominates(t *testing.T) {
 	now := time.Now()
-	cands := []cand{
+	cands := []Candidate{
 		mkCand("kw", 1.0, 0.0, 0.0, 0.0),
 		mkCand("vec", 0.0, 0.9, 0.0, 0.0),
 	}
@@ -39,7 +39,7 @@ func TestRankManualsBM25Dominates(t *testing.T) {
 func TestRankManualsNoRecency(t *testing.T) {
 	now := time.Now()
 	// 时效与 BM25 相反：若时效参与融合，b 会因高 recency 反超 a；实际应仅由 BM25 定序。
-	cands := []cand{mkCand("a", 1.0, 0, 0, 0.1), mkCand("b", 0.5, 0, 0, 0.9)}
+	cands := []Candidate{mkCand("a", 1.0, 0, 0, 0.1), mkCand("b", 0.5, 0, 0, 0.9)}
 	got := RankManuals(cands, now)
 	if got[0].Chunk.ChunkID != "a" || got[0].Final <= got[1].Final {
 		t.Fatalf("手册应仅由BM25定序且不受时效影响: a=%+v b=%+v", got[0], got[1])
@@ -57,12 +57,12 @@ func TestRankEmpty(t *testing.T) {
 }
 
 func TestFuseRRF_RespectsTypeWeights(t *testing.T) {
-	cands := []cand{{Chunk: model.KbKnowledgeChunk{ChunkID: "a"}, BM25: 0.1, Vec: 0.95, Signal: 0.5}, {Chunk: model.KbKnowledgeChunk{ChunkID: "b"}, BM25: 0.95, Vec: 0.1, Signal: 0.5}, {Chunk: model.KbKnowledgeChunk{ChunkID: "c"}, BM25: 0.5, Vec: 0.5, Signal: 0.5}}
-	got := FuseRRF(append([]cand(nil), cands...), false) // false=case, 语义权重高 → a 应排前
+	cands := []Candidate{{Chunk: model.KbKnowledgeChunk{ChunkID: "a"}, BM25: 0.1, Vec: 0.95, Signal: 0.5}, {Chunk: model.KbKnowledgeChunk{ChunkID: "b"}, BM25: 0.95, Vec: 0.1, Signal: 0.5}, {Chunk: model.KbKnowledgeChunk{ChunkID: "c"}, BM25: 0.5, Vec: 0.5, Signal: 0.5}}
+	got := FuseRRF(append([]Candidate(nil), cands...), false) // false=case, 语义权重高 → a 应排前
 	if got[0].Chunk.ChunkID != "a" {
 		t.Fatalf("case top want a got %v", got[0].Chunk.ChunkID)
 	}
-	gotM := FuseRRF(append([]cand(nil), cands...), true) // manual, 关键词权重高 → b 应排前
+	gotM := FuseRRF(append([]Candidate(nil), cands...), true) // manual, 关键词权重高 → b 应排前
 	if gotM[0].Chunk.ChunkID != "b" {
 		t.Fatalf("manual top want b got %v", gotM[0].Chunk.ChunkID)
 	}

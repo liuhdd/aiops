@@ -115,7 +115,8 @@ func NewSearchCaseTool(s retrieve.Searcher) Tool {
 			}
 			return s.SearchCases(ctx, retrieve.Query{
 				Text: strArg(args, "query"), Metric: strArg(args, "metric"), Device: strArg(args, "device"),
-			}, retrieve.Options{TopK: intArg(args, "top_k", 3)})
+				History: retrieve.HistoryFromCtx(ctx),
+			}, retrieve.Options{TopK: intArg(args, "top_k", 3), Profile: retrieve.ProfileFromCtx(ctx)})
 		},
 	}
 }
@@ -131,8 +132,9 @@ func NewSearchManualTool(s retrieve.Searcher) Tool {
 			}
 			return s.SearchManuals(ctx, retrieve.Query{
 				Text: strArg(args, "query"), Category: model.KBCategory(strArg(args, "category")),
-				Metric: strArg(args, "metric"),
-			}, retrieve.Options{TopK: intArg(args, "top_k", 3)})
+				Metric:  strArg(args, "metric"),
+				History: retrieve.HistoryFromCtx(ctx),
+			}, retrieve.Options{TopK: intArg(args, "top_k", 3), Profile: retrieve.ProfileFromCtx(ctx)})
 		},
 	}
 }

@@ -619,110 +619,110 @@ func TestAgentRewriteDoesNotAffectPipelinePath(t *testing.T) {
 type captureSearcher struct {
 	res     []retrieve.Result
 	capture *string
+	lastQ   *retrieve.Query
+	lastO   *retrieve.Options
 }
 
-func (c *captureSearcher) SearchCases(_ context.Context, q retrieve.Query, _ retrieve.Options) ([]retrieve.Result, error) {
+func (c *captureSearcher) SearchCases(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
 	if c.capture != nil {
 		*c.capture = q.Text
 	}
+	c.lastQ = &q
+	c.lastO = &o
 	return c.res, nil
 }
-func (c *captureSearcher) SearchManuals(_ context.Context, q retrieve.Query, _ retrieve.Options) ([]retrieve.Result, error) {
+func (c *captureSearcher) SearchManuals(_ context.Context, q retrieve.Query, o retrieve.Options) ([]retrieve.Result, error) {
 	if c.capture != nil {
 		*c.capture = q.Text
 	}
+	c.lastQ = &q
+	c.lastO = &o
 	return c.res, nil
 }
 
-// TestAgentChatRewriteIntegration 校验聊天路径改写：有历史时子查询会经 RewriteQuery 改写后检索。
-func TestAgentChatRewriteIntegration(t *testing.T) {
+// chatRewriteLight 同时服务 RewriteAndSplit / RewriteQuery / ClassifyWithLight 三个调用：
+// 以 user 区分——改写指令含“历史：”、原始问句等于 original、其余视为分类输入。
+type chatRewriteLight struct {
+	original   string
+	split      string
+	rewrite    string
+	classify   string
+	classified []string
+}
+
+func (l *chatRewriteLight) Complete(_ context.Context, _ string, user string) (string, error) {
+	l.classified = append(l.classified, user)
+	switch {
+	case strings.Contains(user, "历史："):
+		return l.rewrite, nil
+	case user == l.original:
+		return l.split, nil
+	default:
+		return l.classify, nil
+	}
+}
+
+// TestAgentRewriteFeedsIntentClassificationAndRetrieval 固化旧行为：agent 先改写子问题，
+// 改写文本 qText 同时喂给 LLM 分类与检索；检索不再下传 History（避免链路二次改写）。
+func TestAgentRewriteFeedsIntentClassificationAndRetrieval(t *testing.T) {
 	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
 	defer s.Close()
 	conv, _ := s.CreateConversation("")
-	_ = s.SaveMessage(model.Message{ID: "m1", Role: model.RoleUser, Content: "我的设备是 db-01，出现磁盘告警", ConversationID: conv.ID, CreatedAt: time.Now()})
+	_ = s.SaveMessage(model.Message{ID: "m1", Role: model.RoleUser, Content: "我的设备是 db-01", ConversationID: conv.ID, CreatedAt: time.Now()})
 	_ = s.SaveMessage(model.Message{ID: "m2", Role: model.RoleAssistant, Content: "已记录 db-01", ConversationID: conv.ID, CreatedAt: time.Now()})
 	cs := ctxpkg.NewStore(s)
-	light := &rewriteAwareLight{
-		rewritten:  `{"rewritten":"有哪些告警？它怎么处理？","sub_questions":["有哪些告警","它怎么处理"]}`,
-		rewriteMap: map[string]string{"它怎么处理": "db-01 磁盘告警怎么处理"},
+	light := &chatRewriteLight{
+		original: "帮我看看",
+		split:    `{"rewritten":"帮我看看","sub_questions":["它怎么处理"]}`,
+		rewrite:  "db-01 磁盘告警怎么处理",
+		classify: `{"intent":"DiskFull","confidence":0.9}`,
 	}
-	ag := NewWithLight(s, nil, light, nil, cs, 3, 3)
-	// 直接校验 rewriteQuery 会利用历史改写
-	got := ag.rewriteQuery(context.Background(), conv.ID, "它怎么处理")
-	if got != "db-01 磁盘告警怎么处理" {
-		t.Fatalf("聊天改写未生效, got %q", got)
-	}
-	// 无历史时应直通
-	conv2, _ := s.CreateConversation("")
-	ag2 := NewWithLight(s, nil, light, nil, cs, 3, 3)
-	got2 := ag2.rewriteQuery(context.Background(), conv2.ID, "它怎么处理")
-	if got2 != "它怎么处理" {
-		t.Fatalf("无历史应直通, got %q", got2)
-	}
-	// 已独立长句直通
-	long := strings.Repeat("a", 41) + "怎么"
-	got3 := ag.rewriteQuery(context.Background(), conv.ID, long)
-	if got3 != long {
-		t.Fatalf("已独立查询应直通, got %q", got3)
-	}
-}
+	leaves := []model.LeafSpec{{Code: "DiskFull", Name: "DiskFull", Description: "磁盘满", RuleKeywords: []string{"磁盘满了"}}}
+	rec := &captureSearcher{res: []retrieve.Result{{
+		DocID: "d1", Title: "磁盘案例", Category: model.KBCase,
+		Content: "磁盘扩容处置", Intents: []string{"DiskFull"},
+	}}}
+	ag := NewWithLeaves(s, nil, light, nil, cs, 3, 3, func() []model.LeafSpec { return leaves })
+	ag.SetSearcher(rec)
 
-// rewriteAwareLight 同时支持 RewriteAndSplit（2-arg JSON）与 RewriteQuery（单 prompt 含"历史"）
-type rewriteAwareLight struct {
-	rewritten  string
-	rewriteMap map[string]string
-}
-
-func (r *rewriteAwareLight) Complete(_ context.Context, system, user string) (string, error) {
-	// RewriteQuery 适配器会以 system="" 且 user=prompt（含"历史："）调用
-	if strings.Contains(user, "历史：") {
-		// 提取"查询："后的原文
-		idx := strings.Index(user, "查询：")
-		q := user
-		if idx >= 0 {
-			q = strings.TrimSpace(user[idx+len("查询："):])
+	reply := ag.answer(context.Background(), conv.ID, "帮我看看")
+	if !strings.Contains(reply, "磁盘扩容处置") {
+		t.Fatalf("应经 kbReply 返回知识, got %q", reply)
+	}
+	// 改写文本进入 LLM 分类
+	classifiedQText := false
+	for _, c := range light.classified {
+		if c == "db-01 磁盘告警怎么处理" {
+			classifiedQText = true
 		}
-		if v, ok := r.rewriteMap[q]; ok {
-			return v, nil
-		}
-		return q, nil
 	}
-	// 否则为 RewriteAndSplit
-	return r.rewritten, nil
-}
-
-func TestAgentRewriteFallbackOnError(t *testing.T) {
-	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
-	defer s.Close()
-	conv, _ := s.CreateConversation("")
-	_ = s.SaveMessage(model.Message{ID: "m1", Role: model.RoleUser, Content: "历史1", ConversationID: conv.ID, CreatedAt: time.Now()})
-	cs := ctxpkg.NewStore(s)
-	// light 对改写返回错误，应回退原文
-	errLight := &errorLight{rewritten: `{"rewritten":"它怎么处理？","sub_questions":["它怎么处理"]}`}
-	ag := NewWithLight(s, nil, errLight, nil, cs, 3, 3)
-	got := ag.rewriteQuery(context.Background(), conv.ID, "它怎么处理")
-	if got != "它怎么处理" {
-		t.Fatalf("改写失败应回退原文, got %q", got)
+	if !classifiedQText {
+		t.Fatalf("LLM 分类应看到改写文本, classified=%v", light.classified)
 	}
-	// 空输出也回退
-	emptyLight := &rewriteAwareLight{
-		rewritten:  `{"rewritten":"它怎么处理？","sub_questions":["它怎么处理"]}`,
-		rewriteMap: map[string]string{"它怎么处理": "   "},
+	// 改写文本进入检索，且不再下传 History
+	if rec.lastQ == nil || !strings.Contains(rec.lastQ.Text, "db-01 磁盘告警怎么处理") {
+		t.Fatalf("检索应使用改写文本, got %+v", rec.lastQ)
 	}
-	ag2 := NewWithLight(s, nil, emptyLight, nil, cs, 3, 3)
-	got2 := ag2.rewriteQuery(context.Background(), conv.ID, "它怎么处理")
-	if got2 != "它怎么处理" {
-		t.Fatalf("空输出应回退原文, got %q", got2)
+	if len(rec.lastQ.History) != 0 {
+		t.Fatalf("预改写路径不应再下传 History, got %+v", rec.lastQ.History)
+	}
+	if rec.lastO == nil || rec.lastO.Profile != "chat" {
+		t.Fatalf("检索应以 chat profile 选链, got %+v", rec.lastO)
 	}
 }
 
-type errorLight struct {
-	rewritten string
-}
-
-func (e *errorLight) Complete(_ context.Context, system, user string) (string, error) {
-	if strings.Contains(user, "历史：") {
-		return "", errors.New("llm down")
+// TestAgentRewriteHelperSemantics 校验改写辅助的回退语义与旧 rewriteWithHistory 一致。
+func TestAgentRewriteHelperSemantics(t *testing.T) {
+	ag := NewWithLeaves(nil, nil, nil, nil, nil, 3, 3, nil)
+	if got := ag.rewrite(context.Background(), []string{"h"}, "它怎么处理"); got != "它怎么处理" {
+		t.Fatalf("nil light 应直通, got %q", got)
 	}
-	return e.rewritten, nil
+	light := &chatRewriteLight{rewrite: "改写后"}
+	ag2 := NewWithLeaves(nil, nil, light, nil, nil, 3, 3, nil)
+	if got := ag2.rewrite(context.Background(), nil, "它怎么处理"); got != "它怎么处理" {
+		t.Fatalf("无历史应直通, got %q", got)
+	}
+	if got := ag2.rewrite(context.Background(), []string{"h"}, "它怎么处理"); got != "改写后" {
+		t.Fatalf("有历史应改写, got %q", got)
+	}
 }
