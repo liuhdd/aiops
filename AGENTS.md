@@ -11,8 +11,9 @@ Backend (`backend/`, Go module `aiops`):
 - Test: `go test ./...`；单包 `go test ./internal/pipeline/`；单个用例 `go test ./internal/pipeline/ -run TestEngineBacktracksOnGaps -v`
 - 静态检查：只有 `go vet ./...`（仓库未配 golangci-lint，不要假设存在 `make lint`）
 - 端到端：`internal/e2e/e2e_test.go` 无 build tag，随 `go test ./...` 一起跑
-- 评测：`make eval`（= `go run ./cmd/eval run --trials 3 --configs rule,llm-single,llm-react --report eval-report.json`）；CI 门禁 `make eval-ci`（阈值 0.9）
-- 检索质量评测：`go run ./cmd/rageval -golden testdata/golden_set.jsonl -generate -enhance`（`-generate` 出题、`-enhance` 富化）
+- 评测：`make eval`（= `go run ./cmd/eval run --trials 3 --configs rule,llm-single,llm-react --report eval-report.json`，跑全部任务）；CI 门禁 `make eval-ci`（阈值 0.9，默认跳过 `Extended` 任务，`ci --all` 强制全量）
+- 检索质量评测：`go run ./cmd/rageval -golden testdata/golden_set.jsonl [-generate] [-enhance] [-o rageval-report.json]`（`-generate` 出题、`-enhance` 富化、`-o` 出结构化报告）
+- Phoenix 评测数据集：`go run ./cmd/datasetctl push|list|experiment ...`（需 `PHOENIX_BASE_URL`；详见 README「Phoenix 评测数据集」）
 
 Frontend (`frontend/`, React 18 + Vite + TS):
 - Dev: `npm run dev`（Vite 代理 `/api`、`/ws` 到 `:8080`）
@@ -46,8 +47,8 @@ Root: `cp .env.example .env` (set `LLM_API_KEY`), then `docker compose up -d --b
 - 知识库 `internal/kb`：文档/切片/向量入库（`kb_documents`/`kb_chunks`/`kb_embeddings`）与富化（summary / questions / CDTA 相似度合并，阈值 `KB_CDTA_THRESHOLD`）；检索质量评测走 `cmd/rageval`。
 - 意图 `internal/intent`：意图树 CRUD、软删除 + 启停、`intent_audit` 审计与回滚，经 `internal/api` 暴露给前端「意图管理」页。
 - 推送 `internal/hub`：`GET /ws`，`Hub.Publish(type, data)` 广播 `alert`/`stage`/`run`/`message`，前端 `api/ws.ts` 订阅后局部刷新。
-- 评测 `internal/eval` + `cmd/eval`：12 个声明式任务（pipeline/chat/context）× 3 配置 × pass@k，三层评分器；`ci` 子命令做门禁。
-- Phoenix 评测：`internal/phoenix`（datasets/experiments 轻量 REST 客户端）、`internal/goldenset`（RAG 标注集解析/报告/Phoenix 映射）、`cmd/datasetctl`（push/list/experiment）；`cmd/rageval -o` 出结构化报告。
+- 评测 `internal/eval` + `cmd/eval`：44 个声明式任务（pipeline/chat/context，其中 25 条 `Extended` 仅 `eval run`/Phoenix 数据集包含）× 3 配置 × pass@k，三层评分器；`ci` 子命令做门禁（默认跳过 `Extended`，`--all` 全量）。
+- Phoenix 评测：`internal/phoenix`（datasets/experiments 轻量 REST 客户端，零 `internal` 依赖）、`internal/goldenset`（RAG 标注集解析/报告/Phoenix 映射）、`cmd/datasetctl`（push/list/experiment，回写实验并汇总 ID/失败数，需 `PHOENIX_BASE_URL`）；数据集 `aiops-agents-eval`（44 条）/ `aiops-rag-golden`（57 条），未配置时运行时零外呼。
 - 其余：`internal/simulator`（按 `SIM_INTERVAL_SECONDS` 造告警）、`internal/llm`（OpenAI 兼容封装，key 为空则 client 为 nil）、`internal/mockdata`（全量 mock 监控/日志/CMDB/知识库）。
 
 ### 持久化与接口面
@@ -81,4 +82,4 @@ Root: `cp .env.example .env` (set `LLM_API_KEY`), then `docker compose up -d --b
 
 约定：feature 分支名 `feat/<name>`；commit 中文 + conventional 前缀；`.env` 密钥绝不提交（`.env` 已 gitignore）。
 
-`docs/superpowers/` 下 14 份 spec + 14 份 plan 均按 `YYYY-MM-DD-<topic>-design.md` 命名，动手改流水线、数据模型、意图、知识库、检索前先在该目录按主题检索对应 spec；`.worktrees/`、`.superpowers/`、`ragent/`（无关嵌套仓库）已 gitignore，勿碰 `ragent/`。
+`docs/superpowers/` 下的 spec 与 plan 均按 `YYYY-MM-DD-<topic>-design.md` 命名，动手改流水线、数据模型、意图、知识库、检索前先在该目录按主题检索对应 spec；`.worktrees/`、`.superpowers/`、`ragent/`（无关嵌套仓库）已 gitignore，勿碰 `ragent/`。
