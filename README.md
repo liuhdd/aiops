@@ -35,7 +35,7 @@ Go后端（Eino编排LLM）+ 流水线（接收规范化→过滤分诊→上下
 | PHOENIX_PROMPT_TTL | 否 | 60 |
 | PHOENIX_API_KEY | 否 | 空（非空时带 Bearer 头） |
 
-`RETRIEVE_VARIANT*` 为「环节→实现」覆盖串，格式 `kind=impl` 或 `kind.knob=value`，多项以 `;` 分隔；合法环节为 `fingerprint`/`rewrite`/`recall`/`fuse`/`relevance`/`rerank`/`gate`，未覆盖项继承默认（baseline）。
+`RETRIEVE_VARIANT*` 为「环节→实现」覆盖串，多个覆盖项以 `,` 分隔，格式 `kind=impl`（如 `rerank=none,fuse=weighted`）；合法环节为 `fingerprint`/`rewrite`/`recall`/`fuse`/`relevance`/`rerank`/`gate`，未覆盖项继承默认（baseline）。
 
 ## 测试
 后端：`cd backend && go test ./...`
@@ -60,11 +60,11 @@ go run ./cmd/eval ci --threshold 0.9                                            
 ```bash
 cd backend
 go run ./cmd/rageval                                             # 单变体 baseline
-go run ./cmd/rageval -variants "baseline;rerank=none;fuse=weighted" -o rageval-report.json
+go run ./cmd/rageval -variants "baseline;rerank=none,fuse=weighted" -o rageval-report.json
 go run ./cmd/rageval -variants-file variants.json -o rageval-report.json
 ```
 
-`-variants` 为 `;` 分隔的变体规格串，`-variants-file` 读取 `Variant` 数组 JSON（`name` + `steps`/`params`，未覆盖环节继承 baseline）；矩阵输出的 `ComparisonReport` 含 `meta`/`variants`/`deltas`，可经 `datasetctl experiment` 逐变体回写 Phoenix。
+`-variants` 用 `;` 分隔多个变体、同一变体内用 `,` 分隔覆盖项（如 `baseline;rerank=none,fuse=weighted`）；`-variants-file` 读取 `Variant` 数组 JSON（`name` + `steps`/`params`，未覆盖环节继承 baseline）；矩阵输出的 `ComparisonReport` 含 `meta`/`variants`/`deltas`，可经 `datasetctl experiment` 逐变体回写 Phoenix。
 
 ### Phoenix 评测数据集
 
