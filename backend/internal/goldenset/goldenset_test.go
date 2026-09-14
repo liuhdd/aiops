@@ -42,6 +42,21 @@ func TestLoadNormalizesDefaults(t *testing.T) {
 	}
 }
 
+func TestItemHistoryParsed(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "g.jsonl")
+	if err := os.WriteFile(p, []byte(`{"id":"c1","type":"fact","question":"它怎么办","history":["GPU 掉卡了"],"expect":{"doc_ids":["d1"],"behavior":"hit"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || len(items[0].History) != 1 || items[0].History[0] != "GPU 掉卡了" {
+		t.Fatalf("history=%v", items)
+	}
+}
+
 func TestToPhoenixExamples(t *testing.T) {
 	items := []Item{{ID: "q1", Type: "fact", Question: "Q", TopK: 3, Expect: Expect{DocIDs: []string{"d1"}, Behavior: "hit", DistractorDocIDs: []string{}}}}
 	exs := ToPhoenixExamples(items)
