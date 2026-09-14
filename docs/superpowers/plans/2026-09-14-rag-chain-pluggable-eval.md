@@ -1515,6 +1515,43 @@ func delta(base, v Metrics) Metrics {
 }
 ```
 
+- [ ] **Step 3b: golden `Item` 增加 `History`（Task 5 需要，先于 Phoenix）**
+
+`backend/internal/goldenset/goldenset.go` 的 `Item` 加 `History []string \`json:"history"\``；`normalize` 保持缺省 nil（不改）。测试：
+
+```go
+func TestItemHistoryParsed(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "g.jsonl")
+	if err := os.WriteFile(p, []byte(`{"id":"c1","type":"fact","question":"它怎么办","history":["GPU 掉卡了"],"expect":{"doc_ids":["d1"],"behavior":"hit"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	items, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || len(items[0].History) != 1 || items[0].History[0] != "GPU 掉卡了" {
+		t.Fatalf("history=%v", items)
+	}
+}
+```
+
+（`goldenset_test.go` 若缺 `path/filepath`、`os` import 则补齐。）
+
+- [ ] **Step 3c: rageval 侧 `retrieve.Completer` 适配**
+
+rageval 现有 `llmCompleter` 是 `kb.Completer`（双参）。新增本地适配器（`main.go` 内）：
+
+```go
+type rewriteAdapter struct{ c *llm.Client }
+
+func (r rewriteAdapter) Complete(ctx context.Context, prompt string) (string, error) {
+	return r.c.Complete(ctx, prompt)
+}
+```
+
+在构造 searcher 时传 `rewriteAdapter{c: lc}`（`lc` 为 `llm.NewClient(cfg)` 返回值，可能 nil；nil 时传 `nil`）。注意 `llm.Client.Complete` 签名为 `(ctx, prompt)`（`backend/internal/llm/llm.go:54`）；若签名不同，按实际调整适配器。
+
 - [ ] **Step 4: 改造 `main.go` 为多变体循环**
 
 保留 `resolveGoldenPath` 与缺失 id 校验逻辑，将「单变体逐题」段落替换为：
@@ -1540,8 +1577,12 @@ func delta(base, v Metrics) Metrics {
 	}
 
 	var reports []VariantReport
+	var rewriteC retrieve.Completer
+	if lc != nil {
+		rewriteC = rewriteAdapter{c: lc}
+	}
 	for _, v := range variants {
-		searcher, err := retrieve.NewSearcherVariant(s, embedder, reranker, cfg, llmCompleter, v)
+		searcher, err := retrieve.NewSearcherVariant(s, embedder, reranker, cfg, rewriteC, v)
 		if err != nil { fmt.Fprintf(os.Stderr, "构造变体 %s 失败: %v\n", v.Name, err); os.Exit(1) }
 		var itemResults []goldenset.ItemResult
 		for _, it := range items {
@@ -1628,10 +1669,10 @@ git commit -m "feat: rageval 支持多变体矩阵与对比报告"
 ### Task 6: golden history + 逐变体 Phoenix 回写
 
 **Files:**
-- Modify: `backend/internal/goldenset/goldenset.go`（`Item.History`）
 - Modify: `backend/internal/goldenset/report.go`（`ItemResult.Traces`、`RagMeta.Variant/VariantSpec`、`PushRagExperiment` 命名）
 - Modify: `backend/cmd/rageval/main.go`（逐变体回写 Phoenix；写 `Traces`）
-- Test: `backend/internal/goldenset/goldenset_test.go`、`backend/internal/goldenset/report_test.go`
+- Modify: `backend/internal/retrieve/searcher.go`（TraceSink）
+- Test: `backend/internal/goldenset/report_test.go`
 
 **Interfaces:**
 - Consumes: Task 5 的 `VariantReport`。
@@ -1642,22 +1683,6 @@ git commit -m "feat: rageval 支持多变体矩阵与对比报告"
   - `func PushRagExperiment(w phoenix.Writer, datasetID string, report RagReport, namePrefix string) (phoenix.ExperimentSummary, error)`（实验名改为 `namePrefix`，由调用方拼变体）
 
 - [ ] **Step 1: 写失败测试**
-
-在 `backend/internal/goldenset/goldenset_test.go` 追加：
-
-```go
-func TestItemHistoryParsed(t *testing.T) {
-	items, err := Load(writeTempJSONL(t, `{"id":"c1","type":"fact","question":"它怎么办","history":["GPU 掉卡了"],"expect":{"doc_ids":["d1"],"behavior":"hit"}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 1 || len(items[0].History) != 1 || items[0].History[0] != "GPU 掉卡了" {
-		t.Fatalf("history=%v", items)
-	}
-}
-```
-
-（若 `goldenset_test.go` 无 `writeTempJSONL`，用 `t.TempDir()` + `os.WriteFile` 实现同名辅助。）
 
 在 `backend/internal/goldenset/report_test.go` 追加：
 
@@ -1678,12 +1703,12 @@ func TestPushRagExperimentUsesGivenName(t *testing.T) {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `go test ./internal/goldenset/ -run 'TestItemHistory|TestPushRagExperimentUsesGivenName' -v`
+Run: `go test ./internal/goldenset/ -run 'TestPushRagExperimentUsesGivenName' -v`
 Expected: FAIL。
 
 - [ ] **Step 3: goldenset 字段与命名**
 
-`goldenset.go` 的 `Item` 加 `History []string \`json:"history"\``。
+（`Item.History` 已在 Task 5 Step 3b 加入，此处不动。）
 `report.go`：
 - 加 `type LinkTrace struct { Kind, Impl string; DurationMS int64; Hit bool; Note string }`
 - `ItemResult` 加 `Traces []LinkTrace \`json:"traces,omitempty"\``
