@@ -24,3 +24,21 @@ func TestAggregateAndDelta(t *testing.T) {
 		t.Fatalf("delta=%v", d.MRR)
 	}
 }
+
+func TestBaselineFirstSelectsBaseline(t *testing.T) {
+	reports := []VariantReport{
+		{Name: "fuse=weighted", Overall: Metrics{MRR: 0.9}},
+		{Name: "baseline", Overall: Metrics{MRR: 0.2}},
+		{Name: "rerank=none", Overall: Metrics{MRR: 0.2}},
+	}
+	got := baselineFirst(reports)
+	if got[0].Name != "baseline" {
+		t.Fatalf("first=%s", got[0].Name)
+	}
+	if got[1].Name != "fuse=weighted" || got[2].Name != "rerank=none" {
+		t.Fatalf("order changed: %v", []string{got[0].Name, got[1].Name, got[2].Name})
+	}
+	if d := delta(got[0].Overall, got[1].Overall); d.MRR < 0.699 || d.MRR > 0.701 {
+		t.Fatalf("delta vs baseline=%v", d.MRR)
+	}
+}

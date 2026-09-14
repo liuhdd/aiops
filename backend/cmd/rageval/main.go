@@ -202,10 +202,13 @@ func main() {
 		reports = append(reports, VariantReport{Name: v.Name, Spec: v.Steps, Overall: overall, ByType: byType, Items: itemResults})
 	}
 
-	base := reports[0].Overall
+	// 以 Name=="baseline" 定位基准并置于首位，避免依赖输入顺序
+	reports = baselineFirst(reports)
+	baseReport := reports[0]
+	base := baseReport.Overall
 	cmp := ComparisonReport{
 		Meta: CompareMeta{
-			Timestamp: time.Now().Format(time.RFC3339), Golden: goldenPath, Enhance: *enhance, Baseline: reports[0].Name,
+			Timestamp: time.Now().Format(time.RFC3339), Golden: goldenPath, Enhance: *enhance, Baseline: baseReport.Name,
 		},
 		Variants: reports,
 		Deltas:   map[string]Metrics{},

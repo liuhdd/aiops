@@ -87,6 +87,25 @@ func aggregate(items []goldenset.ItemResult) (Metrics, map[string]Metrics) {
 	return toMetrics(total), byType
 }
 
+// baselineFirst 将 reports 中 Name=="baseline" 的项移到首位（保留其余相对顺序），
+// 供基准选取与稳定输出；无 baseline 时原样返回。返回新切片，不修改入参顺序。
+func baselineFirst(reports []VariantReport) []VariantReport {
+	for i, r := range reports {
+		if r.Name != "baseline" {
+			continue
+		}
+		if i == 0 {
+			return reports
+		}
+		out := make([]VariantReport, 0, len(reports))
+		out = append(out, reports[i])
+		out = append(out, reports[:i]...)
+		out = append(out, reports[i+1:]...)
+		return out
+	}
+	return reports
+}
+
 func delta(base, v Metrics) Metrics {
 	return Metrics{
 		MRR: v.MRR - base.MRR, NDCG: v.NDCG - base.NDCG, Recall: v.Recall - base.Recall,
