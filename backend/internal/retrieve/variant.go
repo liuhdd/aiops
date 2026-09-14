@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"aiops/internal/config"
@@ -26,6 +27,38 @@ func canonicalKind(k string) bool {
 		}
 	}
 	return false
+}
+
+// variantParams 变体 Params 构造时解析后的强类型表示；Phase 1 仅 gate.floor。
+// 指针字段为 nil 表示未覆盖，沿用 config 缺省。
+type variantParams struct {
+	GateFloor *float64
+}
+
+// parseVariantParams 校验并解析变体 Params：未知环节/参数或非法取值一律报错（fail-fast）。
+func parseVariantParams(v Variant) (variantParams, error) {
+	var out variantParams
+	for kind, knobs := range v.Params {
+		if !canonicalKind(kind) {
+			return out, fmt.Errorf("变体 %q 参数引用未知环节 %q", v.Name, kind)
+		}
+		for knob, raw := range knobs {
+			switch {
+			case kind == "gate" && knob == "floor":
+				f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+				if err != nil {
+					return out, fmt.Errorf("变体 %q 参数 %s.%s 非法浮点值 %q", v.Name, kind, knob, raw)
+				}
+				if !(f > 0 && f <= 1) {
+					return out, fmt.Errorf("变体 %q 参数 %s.%s 超出范围 (0,1]：%v", v.Name, kind, knob, f)
+				}
+				out.GateFloor = &f
+			default:
+				return out, fmt.Errorf("变体 %q 不支持参数 %s.%s", v.Name, kind, knob)
+			}
+		}
+	}
+	return out, nil
 }
 
 // BaselineVariant 返回与重构前行为一致的默认变体。

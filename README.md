@@ -64,7 +64,7 @@ go run ./cmd/rageval -variants "baseline;rerank=none,fuse=weighted" -o rageval-r
 go run ./cmd/rageval -variants-file variants.json -o rageval-report.json
 ```
 
-`-variants` 用 `;` 分隔多个变体、同一变体内用 `,` 分隔覆盖项（如 `baseline;rerank=none,fuse=weighted`）；`-variants-file` 读取 `Variant` 数组 JSON（`name` + `steps`/`params`，未覆盖环节继承 baseline）；矩阵输出的 `ComparisonReport` 含 `meta`/`variants`/`deltas`，可经 `datasetctl experiment` 逐变体回写 Phoenix。
+`-variants` 用 `;` 分隔多个变体、同一变体内用 `,` 分隔覆盖项（如 `baseline;rerank=none,fuse=weighted`）；`-variants-file` 读取 `Variant` 数组 JSON（`name` + `steps`/`params`，未覆盖环节继承 baseline），**只传 `-variants-file`（不带 `-variants`）时会直接运行文件内全部变体 + baseline 基准**；`-variants` 可引用文件中的具名变体。Phase 1 支持的变体参数为 `params.gate.floor`（浮点，`0 < floor <= 1`，覆盖 `RERANK_FLOOR`），未知环节/参数或非法取值会在启动时报错（fail-fast）。矩阵输出的 `ComparisonReport` 含 `meta`/`variants`/`deltas`，可经 `datasetctl experiment` 逐变体回写 Phoenix。
 
 ### Phoenix 评测数据集
 

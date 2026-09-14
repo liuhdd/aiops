@@ -6,6 +6,8 @@ import "fmt"
 type Deps struct {
 	Env       *searchEnv
 	Completer Completer
+	// GateFloor 变体参数解析后的 gate 精排分下限覆盖；nil 用 Env.cfg.RerankFloor。
+	GateFloor *float64
 }
 
 // LinkFactory 按名构造 Link。
@@ -35,5 +37,5 @@ func init() {
 	RegisterLink("relevance", "default", func(Deps) Link { return &relevanceLink{} })
 	RegisterLink("rerank", "openai", func(d Deps) Link { return &rerankLink{env: d.Env, impl: "openai"} })
 	RegisterLink("rerank", "none", func(d Deps) Link { return &rerankLink{env: d.Env, impl: "none"} })
-	RegisterLink("gate", "floor", func(d Deps) Link { return &gateLink{env: d.Env, impl: "floor"} })
+	RegisterLink("gate", "floor", func(d Deps) Link { return &gateLink{env: d.Env, impl: "floor", floor: d.GateFloor} })
 }

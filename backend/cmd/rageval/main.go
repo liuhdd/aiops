@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,31 +156,23 @@ func main() {
 	}
 
 	// 变体解析：-variants-file 提供具名变体，-variants 为 ";" 分隔的规格串
-	named := map[string]retrieve.Variant{}
+	var fileVariants []retrieve.Variant
 	if *variantsFile != "" {
 		data, err := os.ReadFile(*variantsFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "读变体文件失败: %v\n", err)
 			os.Exit(1)
 		}
-		vs, err := retrieve.ParseVariantsJSON(data)
+		fileVariants, err = retrieve.ParseVariantsJSON(data)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "解析变体文件失败: %v\n", err)
 			os.Exit(1)
 		}
-		for _, v := range vs {
-			named[v.Name] = v
-		}
 	}
-	variants, err := retrieve.ParseVariants(*variantsFlag, named)
+	variants, err := selectVariants(*variantsFlag, fileVariants)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "解析变体失败: %v\n", err)
 		os.Exit(1)
-	}
-	// baseline 始终作为对比基准被评估
-	if !hasVariant(variants, "baseline") {
-		b, _ := retrieve.ParseVariantPatch("baseline", "", retrieve.BaselineVariant())
-		variants = append([]retrieve.Variant{b}, variants...)
 	}
 
 	var reranker retrieve.Reranker
@@ -217,7 +210,7 @@ func main() {
 	for _, r := range reports[1:] {
 		cmp.Deltas[r.Name] = delta(base, r.Overall)
 	}
-	printComparison(cmp)
+	printComparison(os.Stdout, cmp)
 	if *out != "" {
 		b, _ := json.MarshalIndent(cmp, "", "  ")
 		if err := os.WriteFile(*out, b, 0o644); err != nil {
@@ -312,17 +305,50 @@ func hasVariant(vs []retrieve.Variant, name string) bool {
 	return false
 }
 
-func printComparison(c ComparisonReport) {
-	fmt.Printf("rageval: %s baseline=%s\n", c.Meta.Golden, c.Meta.Baseline)
-	fmt.Printf("%-24s %6s %8s %8s %10s %8s\n", "variant", "MRR", "NDCG", "Recall", "Precision", "Reject")
+// selectVariants 解析变体选择：-variants 非空时按规格解析（可引用文件具名变体）；
+// 仅给 -variants-file 时直接使用文件内全部变体；两者皆空时默认 baseline。
+// baseline 始终作为对比基准前插（未显式列出时）。
+func selectVariants(spec string, fileVariants []retrieve.Variant) ([]retrieve.Variant, error) {
+	named := make(map[string]retrieve.Variant, len(fileVariants))
+	for _, v := range fileVariants {
+		named[v.Name] = v
+	}
+	var out []retrieve.Variant
+	if strings.TrimSpace(spec) == "" && len(fileVariants) > 0 {
+		out = append(out, fileVariants...)
+	} else {
+		vs, err := retrieve.ParseVariants(spec, named)
+		if err != nil {
+			return nil, err
+		}
+		out = vs
+	}
+	if !hasVariant(out, "baseline") {
+		b, _ := retrieve.ParseVariantPatch("baseline", "", retrieve.BaselineVariant())
+		out = append([]retrieve.Variant{b}, out...)
+	}
+	return out, nil
+}
+
+func printComparison(w io.Writer, c ComparisonReport) {
+	fmt.Fprintf(w, "rageval: %s baseline=%s\n", c.Meta.Golden, c.Meta.Baseline)
+	fmt.Fprintf(w, "%-24s %6s %8s %8s %10s %8s\n", "variant", "MRR", "NDCG", "Recall", "Precision", "Reject")
 	for _, v := range c.Variants {
 		m := v.Overall
-		fmt.Printf("%-24s %6.3f %8.3f %8.3f %10.3f %8.3f\n", v.Name, m.MRR, m.NDCG, m.Recall, m.Precision, m.RejectRate)
+		fmt.Fprintf(w, "%-24s %6.3f %8.3f %8.3f %10.3f %8.3f\n", v.Name, m.MRR, m.NDCG, m.Recall, m.Precision, m.RejectRate)
 	}
 	if len(c.Deltas) > 0 {
-		fmt.Printf("-- delta vs %s --\n", c.Meta.Baseline)
-		for name, d := range c.Deltas {
-			fmt.Printf("%-24s ΔMRR %+.3f ΔNDCG %+.3f ΔRecall %+.3f ΔPrec %+.3f ΔReject %+.3f\n", name, d.MRR, d.NDCG, d.Recall, d.Precision, d.RejectRate)
+		fmt.Fprintf(w, "-- delta vs %s --\n", c.Meta.Baseline)
+		// 按 variants 顺序输出（跳过基线），保证可复现，不依赖 map 遍历顺序。
+		for _, v := range c.Variants {
+			if v.Name == c.Meta.Baseline {
+				continue
+			}
+			d, ok := c.Deltas[v.Name]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(w, "%-24s ΔMRR %+.3f ΔNDCG %+.3f ΔRecall %+.3f ΔPrec %+.3f ΔReject %+.3f\n", v.Name, d.MRR, d.NDCG, d.Recall, d.Precision, d.RejectRate)
 		}
 	}
 }

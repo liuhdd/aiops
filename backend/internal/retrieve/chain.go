@@ -49,6 +49,17 @@ func BuildChain(v Variant, deps Deps) (*Chain, error) {
 	for k, impl := range v.Steps {
 		steps[k] = impl
 	}
+	// Params 构造时解析为强类型并对未知环节/参数 fail-fast；参数所属环节须在链中启用。
+	params, err := parseVariantParams(v)
+	if err != nil {
+		return nil, err
+	}
+	for k := range v.Params {
+		if impl := steps[k]; impl == "none" || impl == "off" {
+			return nil, fmt.Errorf("变体 %q 为已禁用环节 %q 指定了参数", v.Name, k)
+		}
+	}
+	deps.GateFloor = params.GateFloor
 	var links []chainLink
 	for _, kind := range CanonicalKinds {
 		impl := steps[kind]
