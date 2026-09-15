@@ -419,6 +419,7 @@ func (s *Service) embedTexts(ctx context.Context, texts []string) [][]float64 {
 	}
 	vecs, err := s.embed.Embed(ctx, trunc)
 	if err != nil {
+		log.Printf("kb: embedding 失败（%d 条）: %v", len(texts), err)
 		return nil
 	}
 	return vecs

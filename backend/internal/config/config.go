@@ -19,7 +19,10 @@ type Config struct {
 	LLMLightBaseURL         string  // LLM_LIGHT_BASE_URL，轻量意图模型 BaseURL，默认同 LLM_BASE_URL
 	LLMLightModel           string  // LLM_LIGHT_MODEL，轻量意图模型，默认同 LLM_MODEL
 	LLMEmbedBaseURL         string  // LLM_EMBED_BASE_URL，embedding 接口 BaseURL，默认同 LLM_BASE_URL
+	LLMEmbedAPIKey          string  // LLM_EMBED_API_KEY，embedding 接口 API Key，默认同 LLM_API_KEY
 	LLMEmbedModel           string  // LLM_EMBED_MODEL，embedding 模型，默认 text-embedding-3-small
+	LLMEmbedBatch           int     // LLM_EMBED_BATCH，单次 embedding 请求最大条数，默认 10
+	LLMEmbedRetry           int     // LLM_EMBED_RETRY，embedding 请求失败（429/5xx/网络）重试次数，默认 5
 	MaxSplit                int     // INTENT_MAX_SPLIT，单条输入多意图拆分上限，默认 3
 	RetrieveFingerprint     bool    // RETRIEVE_FINGERPRINT，默认 true
 	RetrieveRRF             bool    // RETRIEVE_RRF，默认 true
@@ -107,9 +110,25 @@ func LoadFromEnv(lookup func(string) string) Config {
 	if embedBase == "" {
 		embedBase = base
 	}
+	embedAPIKey := lookup("LLM_EMBED_API_KEY")
+	if embedAPIKey == "" {
+		embedAPIKey = lookup("LLM_API_KEY")
+	}
 	embedModel := lookup("LLM_EMBED_MODEL")
 	if embedModel == "" {
 		embedModel = "text-embedding-3-small"
+	}
+	embedBatch := 10
+	if v := lookup("LLM_EMBED_BATCH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			embedBatch = n
+		}
+	}
+	embedRetry := 5
+	if v := lookup("LLM_EMBED_RETRY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			embedRetry = n
+		}
 	}
 	retrieveFingerprint := true
 	if v := lookup("RETRIEVE_FINGERPRINT"); v == "0" || v == "false" {
@@ -201,7 +220,10 @@ func LoadFromEnv(lookup func(string) string) Config {
 		LLMLightBaseURL:         lightBase,
 		LLMLightModel:           lightModel,
 		LLMEmbedBaseURL:         embedBase,
+		LLMEmbedAPIKey:          embedAPIKey,
 		LLMEmbedModel:           embedModel,
+		LLMEmbedBatch:           embedBatch,
+		LLMEmbedRetry:           embedRetry,
 		MaxSplit:                maxSplit,
 		RetrieveFingerprint:     retrieveFingerprint,
 		RetrieveRRF:             retrieveRRF,

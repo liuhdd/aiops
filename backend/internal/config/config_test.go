@@ -129,6 +129,72 @@ func TestLoadFromEnvEmbedOverride(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvEmbedAPIKey(t *testing.T) {
+	env := map[string]string{"LLM_API_KEY": "main-key"}
+	cfg := LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.LLMEmbedAPIKey != "main-key" {
+		t.Fatalf("LLMEmbedAPIKey = %q, want 回退 LLM_API_KEY", cfg.LLMEmbedAPIKey)
+	}
+	env["LLM_EMBED_API_KEY"] = "embed-key"
+	cfg = LoadFromEnv(func(k string) string { return env[k] })
+	if cfg.LLMEmbedAPIKey != "embed-key" {
+		t.Fatalf("LLMEmbedAPIKey = %q, want override", cfg.LLMEmbedAPIKey)
+	}
+	if cfg.LLMAPIKey != "main-key" {
+		t.Fatalf("LLMAPIKey 不应被覆盖: %q", cfg.LLMAPIKey)
+	}
+}
+
+func TestLoadFromEnvEmbedBatch(t *testing.T) {
+	cfg := LoadFromEnv(func(string) string { return "" })
+	if cfg.LLMEmbedBatch != 10 {
+		t.Fatalf("LLMEmbedBatch = %d, want 10", cfg.LLMEmbedBatch)
+	}
+	cfg = LoadFromEnv(func(k string) string {
+		if k == "LLM_EMBED_BATCH" {
+			return "32"
+		}
+		return ""
+	})
+	if cfg.LLMEmbedBatch != 32 {
+		t.Fatalf("LLMEmbedBatch = %d, want 32", cfg.LLMEmbedBatch)
+	}
+	cfg = LoadFromEnv(func(k string) string {
+		if k == "LLM_EMBED_BATCH" {
+			return "0"
+		}
+		return ""
+	})
+	if cfg.LLMEmbedBatch != 10 {
+		t.Fatalf("非法批量应回退默认: %d", cfg.LLMEmbedBatch)
+	}
+}
+
+func TestLoadFromEnvEmbedRetry(t *testing.T) {
+	cfg := LoadFromEnv(func(string) string { return "" })
+	if cfg.LLMEmbedRetry != 5 {
+		t.Fatalf("LLMEmbedRetry = %d, want 5", cfg.LLMEmbedRetry)
+	}
+	cfg = LoadFromEnv(func(k string) string {
+		if k == "LLM_EMBED_RETRY" {
+			return "2"
+		}
+		return ""
+	})
+	if cfg.LLMEmbedRetry != 2 {
+		t.Fatalf("LLMEmbedRetry = %d, want 2", cfg.LLMEmbedRetry)
+	}
+	cfg = LoadFromEnv(func(k string) string {
+		if k == "LLM_EMBED_RETRY" {
+			return "-1"
+		}
+		return ""
+	})
+	if cfg.LLMEmbedRetry != 5 {
+		t.Fatalf("非法重试次数应回退默认: %d", cfg.LLMEmbedRetry)
+	}
+}
+
 func TestConfigRetrieveFlags(t *testing.T) {
 	cfg := LoadFromEnv(func(k string) string {
 		m := map[string]string{"RETRIEVE_FINGERPRINT": "0", "RETRIEVE_RRF": "0", "RERANK_BASE_URL": "https://r.example", "RERANK_API_KEY": "k", "RERANK_MODEL": "m", "RERANK_FLOOR": "0.35"}

@@ -20,6 +20,11 @@ Go后端（Eino编排LLM）+ 流水线（接收规范化→过滤分诊→上下
 | LLM_API_KEY | 是 | - |
 | LLM_BASE_URL | 否 | https://api.deepseek.com/v1 |
 | LLM_MODEL | 否 | deepseek-chat |
+| LLM_EMBED_BASE_URL | 否 | 空（默认同 `LLM_BASE_URL`） |
+| LLM_EMBED_API_KEY | 否 | 空（默认同 `LLM_API_KEY`） |
+| LLM_EMBED_MODEL | 否 | text-embedding-3-small |
+| LLM_EMBED_BATCH | 否 | 10（单次 embedding 请求最大条数） |
+| LLM_EMBED_RETRY | 否 | 5（429/5xx/网络错误重试次数，指数退避） |
 | DB_PATH | 否 | aiops.db |
 | PORT | 否 | :8080 |
 | RETRIEVE_REWRITE | 否 | passthrough |
