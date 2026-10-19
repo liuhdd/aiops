@@ -9,13 +9,13 @@ func TestIntentMetricsFull(t *testing.T) {
 		{ID: "c3", Object: ObjectChat, Expected: Expected{Intents: []string{"ListAlerts", "AskRootCause"}}},
 		{ID: "p1", Object: ObjectPipeline, Expected: Expected{Intent: "Unknown"}}, // 非 chat，应忽略
 	}
-	configs := []Config{{Name: "rule"}}
+	configs := []Config{{Name: "candidate-a"}}
 	scored := map[string][]ScoredTrial{
-		"c1|rule": {{TrialResult: &TrialResult{Intents: []string{"AskRootCause"}}}},
-		"c2|rule": {{TrialResult: &TrialResult{Intents: []string{"Unknown"}}}},
-		"c3|rule": {{TrialResult: &TrialResult{Intents: []string{"ListAlerts", "AskRootCause"}}}},
+		"c1|candidate-a": {{TrialResult: &TrialResult{Intents: []string{"AskRootCause"}}}},
+		"c2|candidate-a": {{TrialResult: &TrialResult{Intents: []string{"Unknown"}}}},
+		"c3|candidate-a": {{TrialResult: &TrialResult{Intents: []string{"ListAlerts", "AskRootCause"}}}},
 	}
-	st := intentMetrics(tasks, configs, scored)["rule"]
+	st := intentMetrics(tasks, configs, scored)["candidate-a"]
 	// total=3, correct=3 → accuracy=1.0；judgedDisputed=1(c2)，shouldDisputed=1(c2)，tp=1
 	if st.Accuracy != 1.0 || st.Precision != 1.0 || st.Recall != 1.0 {
 		t.Fatalf("intentMetrics = %+v, want 全 1.0", st)
@@ -28,12 +28,12 @@ func TestIntentMetricsMisclassify(t *testing.T) {
 		{ID: "c1", Object: ObjectChat, Expected: Expected{Intent: "AskRootCause"}},
 		{ID: "c2", Object: ObjectChat, Expected: Expected{Intent: "Unknown"}},
 	}
-	configs := []Config{{Name: "rule"}}
+	configs := []Config{{Name: "candidate-a"}}
 	scored := map[string][]ScoredTrial{
-		"c1|rule": {{TrialResult: &TrialResult{Intents: []string{"AskRootCause"}}}},
-		"c2|rule": {{TrialResult: &TrialResult{Intents: []string{"ListAlerts"}}}},
+		"c1|candidate-a": {{TrialResult: &TrialResult{Intents: []string{"AskRootCause"}}}},
+		"c2|candidate-a": {{TrialResult: &TrialResult{Intents: []string{"ListAlerts"}}}},
 	}
-	st := intentMetrics(tasks, configs, scored)["rule"]
+	st := intentMetrics(tasks, configs, scored)["candidate-a"]
 	if st.Accuracy != 0.5 {
 		t.Fatalf("accuracy = %v, want 0.5", st.Accuracy)
 	}
@@ -44,17 +44,17 @@ func TestIntentMetricsMisclassify(t *testing.T) {
 
 func TestIntentMetricsZeroDenom(t *testing.T) {
 	tasks := []Task{{ID: "c1", Object: ObjectChat, Expected: Expected{Intent: "AskRootCause"}}}
-	configs := []Config{{Name: "rule"}}
+	configs := []Config{{Name: "candidate-a"}}
 	// 无任何 trial → total=0，全部 0
-	st := intentMetrics(tasks, configs, map[string][]ScoredTrial{})["rule"]
+	st := intentMetrics(tasks, configs, map[string][]ScoredTrial{})["candidate-a"]
 	if st.Accuracy != 0 || st.Precision != 0 || st.Recall != 0 {
 		t.Fatalf("无 trial 应全 0: %+v", st)
 	}
 	// 有 trial 但无 shouldDisputed → recall 分母 0，记 0
 	scored := map[string][]ScoredTrial{
-		"c1|rule": {{TrialResult: &TrialResult{Intents: []string{"AskRootCause"}}}},
+		"c1|candidate-a": {{TrialResult: &TrialResult{Intents: []string{"AskRootCause"}}}},
 	}
-	st2 := intentMetrics(tasks, configs, scored)["rule"]
+	st2 := intentMetrics(tasks, configs, scored)["candidate-a"]
 	if st2.Accuracy != 1.0 || st2.Recall != 0 {
 		t.Fatalf("无争议任务 recall 应为 0: %+v", st2)
 	}

@@ -14,11 +14,7 @@ const (
 )
 
 // 配置名
-const (
-	ConfigRule      = "rule"
-	ConfigLLMSingle = "llm-single"
-	ConfigLLMReact  = "llm-react"
-)
+const ConfigLLMReact = "llm-react"
 
 // Task 一份评测"考题"：明确输入 + 无歧义 ground-truth
 type Task struct {
@@ -54,7 +50,8 @@ func mkAlert(device, metric, severity, message string) model.Alert {
 	}
 }
 
-// DefaultTasks 内置任务集（基于 mockdata 已知异常，ground-truth 对齐 scenario()/日志模板/ruleRCA/runbooks）
+// DefaultTasks 内置任务集，ground-truth 对齐 mockdata 场景、日志与 runbook。
+// DefaultTasks returns evaluation tasks grounded in mock scenarios, logs, and runbooks.
 func DefaultTasks() []Task {
 	tasks := []Task{
 		// ---- L1 流水线主任务（5 个已知异常场景） ----
@@ -103,7 +100,7 @@ func DefaultTasks() []Task {
 				NoGaps:    true, Runbook: "net_in",
 			},
 		},
-		// ---- L2 边界任务（LLM 超越规则） ----
+		// ---- L2 温度根因推理任务 / Temperature root-cause reasoning ----
 		{
 			ID: "gpu-temp-compute-02", Object: ObjectPipeline,
 			Alert: mkAlert("compute-02", "gpu_temp", "critical", "GPU温度过高告警"),
@@ -208,13 +205,13 @@ func DefaultTasks() []Task {
 			ID: "chat-multi-recommend", Object: ObjectChat,
 			ChatInput: "alarm-1 什么原因？alarm-2 怎么处理？",
 			Expected:  Expected{Intents: []string{"AskRootCause", "AskRecommendation"}},
-			Configs:   []string{ConfigLLMSingle, ConfigLLMReact},
+			Configs:   []string{ConfigLLMReact},
 		},
 		{
 			ID: "chat-multi", Object: ObjectChat,
 			ChatInput: "有哪些告警？alarm-1 什么原因？",
 			Expected:  Expected{Intents: []string{"ListAlerts", "AskRootCause"}},
-			Configs:   []string{ConfigLLMSingle, ConfigLLMReact},
+			Configs:   []string{ConfigLLMReact},
 		},
 		// ---- chat 单意图（规则可命中） ----
 		{ID: "chat-root-cause-cpu", Object: ObjectChat, ChatInput: "compute-01 的 CPU 为什么这么高？",
@@ -249,19 +246,20 @@ func DefaultTasks() []Task {
 		// ---- chat 多意图（仅 LLM 配置） ----
 		{ID: "chat-multi-rootcause-recommend", Object: ObjectChat, ChatInput: "db-01 磁盘为什么满？该怎么处理？",
 			Expected: Expected{Intents: []string{"AskRootCause", "AskRecommendation"}},
-			Configs:  []string{ConfigLLMSingle, ConfigLLMReact}, Extended: true},
+			Configs:  []string{ConfigLLMReact}, Extended: true},
 		{ID: "chat-multi-list-status", Object: ObjectChat, ChatInput: "有哪些告警？排查进度如何？",
 			Expected: Expected{Intents: []string{"ListAlerts", "AskStatus"}},
-			Configs:  []string{ConfigLLMSingle, ConfigLLMReact}, Extended: true},
+			Configs:  []string{ConfigLLMReact}, Extended: true},
 		{ID: "chat-multi-three", Object: ObjectChat, ChatInput: "compute-02 GPU 掉卡是什么原因？怎么处理？现在进度如何？",
 			Expected: Expected{Intents: []string{"AskRootCause", "AskRecommendation", "AskStatus"}},
-			Configs:  []string{ConfigLLMSingle, ConfigLLMReact}, Extended: true},
-		// ---- L4 Context/ReAct 任务（仅 llm-react 配置生效） ----
+			Configs:  []string{ConfigLLMReact}, Extended: true},
+		// ---- L4 Context/ReAct 工具调用任务 / ReAct tool-use tasks ----
 		{
 			ID: "react-gpu-evidence", Object: ObjectContext,
 			Alert: mkAlert("compute-02", "gpu_util", "critical", "GPU掉卡，利用率归零"),
 			// write_scratchpad 仅 ReAct 循环调用（基础 evidence 阶段只发 query_metric/search_logs 事件），
-			// 用于判别 ReAct 是否真正运行，避免 rule/llm-single 也拿到满分。
+			// 用于判别 ReAct 是否真正调用工具。
+			// Require a tool-authored scratchpad entry to verify ReAct execution.
 			Expected: Expected{
 				ToolUse: []string{"write_scratchpad"},
 			},

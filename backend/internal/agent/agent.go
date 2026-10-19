@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -188,10 +190,9 @@ func (a *Agent) answerSingle(ctx context.Context, conversationID string, userTex
 			return fmt.Sprintf("未找到告警 %s。", alertID)
 		}
 		if a.eng != nil {
-			if _, runErr := a.store.GetRun("run-" + alertID); runErr != nil {
-				_ = a.eng.Run(ctx, alert, nil)
+			if err := a.ensureInvestigation(ctx, alert); err != nil {
+				return fmt.Sprintf("告警 %s 排查失败：%v", alertID, err)
 			}
-			time.Sleep(50 * time.Millisecond)
 		}
 		if !ctxpkg.IsNilCompleter(a.llm) {
 			return a.answerWithLLM(ctx, conversationID, alertID, intent, userText)
@@ -233,10 +234,9 @@ func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub 
 			return fmt.Sprintf("未找到告警 %s。", alertID), "no_alert"
 		}
 		if a.eng != nil {
-			if _, runErr := a.store.GetRun("run-" + alertID); runErr != nil {
-				_ = a.eng.Run(ctx, alert, nil)
+			if err := a.ensureInvestigation(ctx, alert); err != nil {
+				return fmt.Sprintf("告警 %s 排查失败：%v", alertID, err), "failed"
 			}
-			time.Sleep(50 * time.Millisecond)
 		}
 		if !ctxpkg.IsNilCompleter(a.llm) {
 			return a.answerWithLLM(ctx, conversationID, alertID, intent, sub), "success"
@@ -251,6 +251,29 @@ func (a *Agent) answerOneStatus(ctx context.Context, conversationID string, sub 
 		}
 		return a.placeholderReply(intent), statusFor(intent)
 	}
+}
+
+// ensureInvestigation 执行排查并传播已记录的失败。 / Run an investigation and surface persisted failures.
+func (a *Agent) ensureInvestigation(ctx context.Context, alert model.Alert) error {
+	runID := "run-" + alert.ID
+	run, err := a.store.GetRun(runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a.eng.Run(ctx, alert, nil)
+	}
+	if err != nil {
+		return fmt.Errorf("read investigation %q: %w", runID, err)
+	}
+	if run.Status == model.StatusFailed {
+		stage, ok, err := a.store.GetLatestStage(runID, "rca")
+		if err != nil {
+			return fmt.Errorf("read failed RCA for run %q: %w", runID, err)
+		}
+		if ok && stage.Error != "" {
+			return fmt.Errorf("RCA failed for run %q: %s", runID, stage.Error)
+		}
+		return fmt.Errorf("investigation %q failed; inspect its pipeline timeline", runID)
+	}
+	return nil
 }
 
 // statusFor 意图对应的子问题状态行。

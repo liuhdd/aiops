@@ -3,16 +3,11 @@
 // 本包禁止 import 任何 aiops/internal/* 包，供 agent/context/pipeline/retrieve/eval/kb 单向引用。
 package prompt
 
-import "fmt"
-
 // ChatAnswerSystem answerWithLLM 系统提示（Phoenix name: chat-answer-system）。
 func ChatAnswerSystem() string { return Render("chat-answer-system", nil) }
 
 // KnowledgeIntro 组装结果 system 提示：知识使用规则（Phoenix name: knowledge-intro）。
 func KnowledgeIntro() string { return Render("knowledge-intro", nil) }
-
-// RCASystem rca 非 ReAct 分支系统提示（Phoenix name: rca-system）。
-func RCASystem() string { return Render("rca-system", nil) }
 
 // RecommendSystem 处置建议系统提示（Phoenix name: recommend-system）。
 func RecommendSystem() string { return Render("recommend-system", nil) }
@@ -41,15 +36,6 @@ func IntentClassifySystem(candidates string) string {
 
 // RCAReactSystem RCA ReAct 分支系统提示（Phoenix name: rca-react-system）。
 func RCAReactSystem() string { return Render("rca-react-system", nil) }
-
-// RCAGapHint RCA 回溯轮次提示（Phoenix name: rca-gap-hint）。
-// iteration==0 是「请给结论」语义分支，文案保留在 Go 侧，不上 Phoenix（spec §4）。
-func RCAGapHint(iteration int) string {
-	if iteration == 0 {
-		return "请基于当前证据给出根因结论。"
-	}
-	return Render("rca-gap-hint", map[string]string{"iteration": fmt.Sprint(iteration)})
-}
 
 // EvalJudgeSystem 评测 LLM 评委系统提示（Phoenix name: eval-judge-system）。
 func EvalJudgeSystem() string { return Render("eval-judge-system", nil) }

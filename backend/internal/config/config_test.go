@@ -39,20 +39,14 @@ func TestLoadFromEnvSimInterval(t *testing.T) {
 
 func TestLoadFromEnvContextDefaults(t *testing.T) {
 	cfg := LoadFromEnv(func(string) string { return "" })
-	if !cfg.React {
-		t.Fatalf("React default should be true")
-	}
 	if cfg.TopK != 3 {
 		t.Fatalf("TopK = %d, want 3", cfg.TopK)
 	}
 }
 
 func TestLoadFromEnvContextOverride(t *testing.T) {
-	env := map[string]string{"CONTEXT_REACT": "false", "CONTEXT_TOP_K": "5"}
+	env := map[string]string{"CONTEXT_TOP_K": "5"}
 	cfg := LoadFromEnv(func(k string) string { return env[k] })
-	if cfg.React {
-		t.Fatalf("React = true, want false")
-	}
 	if cfg.TopK != 5 {
 		t.Fatalf("TopK = %d, want 5", cfg.TopK)
 	}

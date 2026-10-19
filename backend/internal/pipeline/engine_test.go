@@ -10,6 +10,7 @@ import (
 
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
+	"aiops/internal/llm"
 	"aiops/internal/model"
 	"aiops/internal/scope"
 	"aiops/internal/store"
@@ -43,6 +44,37 @@ func TestEngineRunsStagesInOrder(t *testing.T) {
 	run, _ := s.GetRun("run-" + alert.ID)
 	if run.Status != model.StatusCompleted {
 		t.Fatalf("run status = %s", run.Status)
+	}
+}
+
+func TestEngineStopsWhenRCAHasNoModel(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	cs := ctxpkg.NewStore(s)
+	e := NewEngine(s, []Stage{NewRCAStage(nil), NewRecommendStage(nil)})
+	e.ctxStore = cs
+	e.tools = ctxpkg.NewRegistry()
+	alert := model.Alert{ID: "alarm-no-model", Device: "db-01", Metric: "disk_usage"}
+	if err := e.Run(context.Background(), alert, nil); !errors.Is(err, llm.ErrNoAPIKey) {
+		t.Fatalf("Run error = %v, want ErrNoAPIKey", err)
+	}
+	run, err := s.GetRun("run-" + alert.ID)
+	if err != nil || run.Status != model.StatusFailed {
+		t.Fatalf("run = %+v, error = %v", run, err)
+	}
+	rca, ok, err := s.GetLatestStage(run.ID, "rca")
+	if err != nil || !ok || rca.Status != model.StageFailed || rca.Output != "" {
+		t.Fatalf("RCA stage = %+v, exists = %v, error = %v", rca, ok, err)
+	}
+	if _, ok, err := s.GetLatestStage(run.ID, "recommend"); err != nil || ok {
+		t.Fatalf("recommend exists = %v, error = %v", ok, err)
+	}
+	memories, err := cs.ListLongTermMemory(alert.Device, alert.Metric)
+	if err != nil || len(memories) != 0 {
+		t.Fatalf("memories = %+v, error = %v", memories, err)
 	}
 }
 
@@ -246,7 +278,13 @@ func TestEngineInjectsContextAndWritesNotes(t *testing.T) {
 	for _, tt := range ctxpkg.DefaultTools() {
 		reg.Register(tt)
 	}
-	e := BuildWithContext(s, nil, coordinator.New(), cs, reg, false, 3)
+	e := NewEngine(s, []Stage{fakeStage{id: "rca", name: "根因分析", run: func(st *State) error {
+		st.RCA = &model.RCA{RootCause: "磁盘空间不足"}
+		return nil
+	}}})
+	e.ctxStore = cs
+	e.tools = reg
+	e.topK = 3
 	alert := model.Alert{ID: "alarm-ctx", Device: "db-01", Metric: "disk_usage",
 		Severity: "critical", FiredAt: time.Now(), CreatedAt: time.Now()}
 	if err := e.Run(context.Background(), alert, nil); err != nil {

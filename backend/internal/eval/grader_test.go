@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"aiops/internal/mockdata"
 	"aiops/internal/model"
 )
 
@@ -23,7 +22,7 @@ func (c *ctxCaptureCompleter) Complete(ctx context.Context, _, _ string) (string
 func TestGradeJudgeReceivesDeadline(t *testing.T) {
 	task := Task{ID: "disk-full-db-01", Object: ObjectPipeline,
 		Expected: Expected{RootCause: []string{"磁盘空间不足"}}}
-	cfg := Config{Name: ConfigLLMSingle}
+	cfg := Config{Name: ConfigLLMReact}
 	res := &TrialResult{Outcome: RunOutcome{
 		RCA:      model.RCA{RootCause: "磁盘空间不足"},
 		Evidence: model.Evidence{Metrics: []model.MetricPoint{{Value: 95}}},
@@ -40,16 +39,13 @@ func TestGradeJudgeReceivesDeadline(t *testing.T) {
 	}
 }
 
-func TestGradePipelineRuleDiskFull(t *testing.T) {
-	mockdata.GenerateAll(42)
+func TestGradePipelineDiskFull(t *testing.T) {
 	task, _ := TaskByID("disk-full-db-01")
-	cfg := Config{Name: ConfigRule}
-	res, err := RunTask(context.Background(), task, cfg, nil, 1)
-	if err != nil {
-		t.Fatalf("RunTask: %v", err)
-	}
+	cfg := Config{Name: ConfigLLMReact}
+	res := &TrialResult{RunStatus: model.StatusCompleted, Outcome: RunOutcome{
+		RCA: model.RCA{RootCause: "磁盘空间不足"},
+	}}
 	scores := Grade(context.Background(), task, cfg, res, nil)
-	// rule 路径确定性：RootCauseMatch 应通过
 	found := map[string]GraderResult{}
 	for _, s := range scores {
 		found[s.Name] = s
@@ -63,13 +59,9 @@ func TestGradePipelineRuleDiskFull(t *testing.T) {
 }
 
 func TestGradeChatIntent(t *testing.T) {
-	mockdata.GenerateAll(42)
 	task, _ := TaskByID("chat-list-alerts")
-	cfg := Config{Name: ConfigRule}
-	res, err := RunTask(context.Background(), task, cfg, nil, 1)
-	if err != nil {
-		t.Fatalf("RunTask: %v", err)
-	}
+	cfg := Config{Name: ConfigLLMReact}
+	res := &TrialResult{Intents: []string{"ListAlerts"}}
 	scores := Grade(context.Background(), task, cfg, res, nil)
 	found := map[string]GraderResult{}
 	for _, s := range scores {
@@ -170,7 +162,7 @@ func TestRecommendMatch(t *testing.T) {
 func TestEdgeRootCause(t *testing.T) {
 	task := Task{ID: "gpu-temp-compute-02", Object: ObjectPipeline,
 		Expected: Expected{RootCause: []string{"温度过高", "散热", "过温"}}}
-	// 规则路径"未知根因" => Pass=false, Score=0.1
+	// 未识别根因时不通过。/ An unidentified root cause fails.
 	res := &TrialResult{Outcome: RunOutcome{RCA: model.RCA{RootCause: "未知根因，需人工介入"}}}
 	g := edgeRootCause(task, res)
 	if g.Pass || g.Score != 0.1 {

@@ -19,8 +19,8 @@ func TestEngineScratchpadAndLongTerm(t *testing.T) {
 	for _, tt := range DefaultTools() {
 		reg.Register(tt)
 	}
-	e := NewEngine(cs, reg, "run-1", "db-01", "disk_usage", true, 3)
-	if !e.ReactEnabled() || e.RunID() != "run-1" {
+	e := NewEngine(cs, reg, "run-1", "db-01", "disk_usage", 3)
+	if e.RunID() != "run-1" {
 		t.Fatalf("engine = %+v", e)
 	}
 	if err := e.AddScratchpad("rca", "假设: 磁盘满", "write_scratchpad"); err != nil {
@@ -47,7 +47,7 @@ func TestEngineRunReactEndToEnd(t *testing.T) {
 	for _, tt := range DefaultTools() {
 		reg.Register(tt)
 	}
-	e := NewEngine(cs, reg, "run-1", "db-01", "disk_usage", true, 3)
+	e := NewEngine(cs, reg, "run-1", "db-01", "disk_usage", 3)
 	sc := &scriptedCompleter{steps: []string{
 		`{"thought":"查日志","tool_call":{"name":"search_logs","args":{"device":"db-01","keywords":["no space"],"window_minutes":120}}}`,
 		`{"thought":"结论","final_answer":{"root_cause":"磁盘空间不足","evidence_chain":["ext4"],"confidence":0.8,"gaps":[]}}`,

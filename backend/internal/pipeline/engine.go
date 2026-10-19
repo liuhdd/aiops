@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -28,14 +29,6 @@ type State struct {
 	Store          *store.ScopedStore
 	DeviceContext  *model.DeviceContext
 	Ctx            *ctxpkg.Engine
-	Degraded       bool
-}
-
-func (st *State) EvidenceGaps() []string {
-	if st.Evidence == nil {
-		return nil
-	}
-	return st.Evidence.Gaps
 }
 
 type Stage interface {
@@ -51,7 +44,6 @@ type Engine struct {
 	coord    *coordinator.Coordinator
 	ctxStore *ctxpkg.Store
 	tools    *ctxpkg.Registry
-	react    bool
 	topK     int
 	searcher retrieve.Searcher
 }
@@ -112,7 +104,7 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 		Store:     store.NewScoped(e.store, taskScope),
 	}
 	if e.ctxStore != nil {
-		st.Ctx = ctxpkg.NewEngine(e.ctxStore, e.tools, run.ID, alert.Device, alert.Metric, e.react, e.topK)
+		st.Ctx = ctxpkg.NewEngine(e.ctxStore, e.tools, run.ID, alert.Device, alert.Metric, e.topK)
 		if e.searcher != nil {
 			st.Ctx.SetSearcher(e.searcher)
 		}
@@ -174,16 +166,23 @@ func (e *Engine) Run(ctx context.Context, alert model.Alert, input map[string]st
 			if e.Publish != nil {
 				e.Publish("stage", res)
 			}
-			if st.Degraded {
-				degraded = true
+			if stageErr != nil && stage.StageID() == "rca" {
+				run.Status = model.StatusFailed
+				if err := st.Store.UpdateRunStatus(run.ID, run.Status); err != nil {
+					return fmt.Errorf("persist failed RCA run %q: %w (RCA error: %v)", run.ID, err, stageErr)
+				}
+				if e.Publish != nil {
+					e.Publish("run", run)
+				}
+				return fmt.Errorf("RCA failed for alert %q: %w", alert.ID, stageErr)
 			}
 			// 分诊阶段 decide skip
 			if stage.StageID() == "triage" && st.Triage != nil && !st.Triage.Proceed {
 				skipRest = true
 				break
 			}
-			// 回溯判定：rca 有 gaps 且还有迭代额度（已降级则不再回溯）
-			if stage.StageID() == "rca" && st.RCA != nil && len(st.RCA.Gaps) > 0 && !st.Degraded && iteration < run.MaxIteration {
+			// RCA 有 gaps 且还有额度时回溯。 / Backtrack when RCA reports gaps and budget remains.
+			if stage.StageID() == "rca" && st.RCA != nil && len(st.RCA.Gaps) > 0 && iteration < run.MaxIteration {
 				backtrack = true
 				break
 			}

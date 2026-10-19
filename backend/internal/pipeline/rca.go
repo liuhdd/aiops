@@ -22,14 +22,14 @@ func (RCAStage) StageID() string { return "rca" }
 func (RCAStage) Name() string    { return "根因分析" }
 
 func (s *RCAStage) Run(ctx context.Context, st *State) error {
+	st.RCA = nil
 	if ctxpkg.IsNilCompleter(s.llm) {
-		st.RCA = ruleRCA(st)
-		return nil
+		return fmt.Errorf("RCA 缺少 LLM，告警=%s 设备=%s 指标=%s: %w", st.Alert.ID, st.Alert.Device, st.Alert.Metric, llm.ErrNoAPIKey)
 	}
-	if st.Ctx != nil && st.Ctx.ReactEnabled() {
-		return s.react(ctx, st)
+	if st.Ctx == nil {
+		return fmt.Errorf("RCA 缺少上下文引擎，告警=%s 设备=%s 指标=%s", st.Alert.ID, st.Alert.Device, st.Alert.Metric)
 	}
-	return s.singleCall(ctx, st)
+	return s.react(ctx, st)
 }
 
 func (s *RCAStage) react(ctx context.Context, st *State) error {
@@ -40,97 +40,34 @@ func (s *RCAStage) react(ctx context.Context, st *State) error {
 	}
 	as, err := st.Ctx.Assemble(q, true)
 	if err != nil {
-		st.RCA = ruleRCA(st)
-		return nil
+		return fmt.Errorf("RCA 上下文组装失败，告警=%s: %w", st.Alert.ID, err)
 	}
 	system := prompt.RCAReactSystem()
 	res, err := st.Ctx.RunReact(ctx, s.llm, system, q, as.User)
 	if err != nil {
-		st.RCA = ruleRCA(st)
-		return nil
+		return fmt.Errorf("RCA ReAct 执行失败，告警=%s: %w", st.Alert.ID, err)
 	}
-	if res.Final == nil {
-		st.RCA = ruleRCA(st)
-		st.RCA.Gaps = append(st.RCA.Gaps, "ReAct达到最大步数，已使用规则兜底")
-		st.Degraded = true
-		return nil
+	if len(res.Final) == 0 {
+		return fmt.Errorf("RCA ReAct 达到最大步数仍未返回 final_answer，告警=%s", st.Alert.ID)
 	}
-	var rc model.RCA
+	var rc struct {
+		RootCause     *string   `json:"root_cause"`
+		EvidenceChain *[]string `json:"evidence_chain"`
+		Confidence    *float64  `json:"confidence"`
+		Gaps          *[]string `json:"gaps"`
+	}
 	if err := json.Unmarshal(res.Final, &rc); err != nil {
-		st.RCA = ruleRCA(st)
-		return nil
+		return fmt.Errorf("RCA final_answer 解析失败，告警=%s 响应=%s: %w", st.Alert.ID, res.Final, err)
 	}
-	st.RCA = &rc
+	if rc.RootCause == nil || rc.EvidenceChain == nil || rc.Confidence == nil || rc.Gaps == nil {
+		return fmt.Errorf("RCA final_answer 必须包含 root_cause、evidence_chain、confidence、gaps，告警=%s 响应=%s", st.Alert.ID, res.Final)
+	}
+	if strings.TrimSpace(*rc.RootCause) == "" || *rc.Confidence < 0 || *rc.Confidence > 1 {
+		return fmt.Errorf("RCA final_answer 的 root_cause 必须非空且 confidence 必须在 0 到 1 之间，告警=%s 响应=%s", st.Alert.ID, res.Final)
+	}
+	st.RCA = &model.RCA{
+		RootCause: *rc.RootCause, EvidenceChain: *rc.EvidenceChain,
+		Confidence: *rc.Confidence, Gaps: *rc.Gaps,
+	}
 	return nil
-}
-
-func (s *RCAStage) singleCall(ctx context.Context, st *State) error {
-	system := prompt.RCASystem()
-	user := ""
-	if st.Ctx != nil {
-		if as, err := st.Ctx.Assemble(ctxpkg.Query{
-			Device: st.Alert.Device, Metric: st.Alert.Metric, Severity: st.Alert.Severity,
-			Stage: "rca", RunID: st.Run.ID, Keywords: []string{st.Alert.Message},
-			Intents: []string{"AskRootCause"}}, false); err == nil {
-			user = as.User + "\n"
-		}
-	}
-	user += fmt.Sprintf("设备:%s 指标:%s\n证据:%s\n%s",
-		st.Alert.Device, st.Alert.Metric,
-		model.MustJSON(st.Evidence),
-		prompt.RCAGapHint(st.Iteration))
-	raw, err := s.llm.Complete(ctx, system, user)
-	if err != nil {
-		st.RCA = ruleRCA(st)
-		st.RCA.Gaps = append(st.RCA.Gaps, "LLM调用失败，已使用规则兜底")
-		return nil
-	}
-	rc, err := ParseRCAJSON(raw)
-	if err != nil {
-		st.RCA = ruleRCA(st)
-		return nil
-	}
-	st.RCA = rc
-	return nil
-}
-
-func ruleRCA(st *State) *model.RCA {
-	metricRoots := map[string]string{
-		"cpu_usage":  "CPU热点进程导致负载饱和",
-		"disk_usage": "磁盘空间不足",
-		"gpu_util":   "GPU掉卡或驱动异常",
-		"mem_usage":  "内存泄漏或OOM杀进程",
-		"net_in":     "网络链路中断",
-	}
-	root := metricRoots[st.Alert.Metric]
-	if root == "" {
-		root = "未知根因，需人工介入"
-	}
-	chain := []string{fmt.Sprintf("%s(%s) 指标异常", st.Alert.Device, st.Alert.Metric)}
-	if st.Evidence != nil {
-		for _, l := range st.Evidence.Logs {
-			chain = append(chain, "日志: "+strings.TrimSpace(l.Content))
-			if len(chain) >= 3 {
-				break
-			}
-		}
-		if len(st.Evidence.Metrics) > 0 {
-			last := st.Evidence.Metrics[len(st.Evidence.Metrics)-1]
-			chain = append(chain, fmt.Sprintf("指标末值: %.1f", last.Value))
-		}
-	}
-	return &model.RCA{
-		RootCause:     root,
-		EvidenceChain: chain,
-		Confidence:    0.7,
-		Gaps:          st.EvidenceGaps(),
-	}
-}
-
-func ParseRCAJSON(raw string) (*model.RCA, error) {
-	var rc model.RCA
-	if err := llm.ParseJSON(raw, &rc); err != nil {
-		return nil, err
-	}
-	return &rc, nil
 }

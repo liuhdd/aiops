@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -10,6 +9,7 @@ import (
 
 	ctxpkg "aiops/internal/context"
 	"aiops/internal/coordinator"
+	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/pipeline"
@@ -17,71 +17,52 @@ import (
 	"aiops/internal/store"
 )
 
-func TestEndToEndDiskUsage(t *testing.T) {
+func TestEndToEndMissingLLMFailsRCAAndPreservesIsolation(t *testing.T) {
 	mockdata.GenerateAll(1)
-	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
+	s, err := store.New(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
 	defer s.Close()
-	eng := pipeline.Build(s, nil, coordinator.New())
-	now := time.Now()
-	alert := model.Alert{ID: "alarm-e2e", Device: "db-01", Metric: "disk_usage",
-		Severity: "critical", Message: "磁盘使用率超过95%", FiredAt: now, CreatedAt: now}
-	if err := eng.Run(context.Background(), alert, nil); err != nil {
-		t.Fatalf("Run: %v", err)
+	cs := ctxpkg.NewStore(s)
+	reg := ctxpkg.NewRegistry()
+	for _, tool := range ctxpkg.DefaultTools() {
+		reg.Register(tool)
 	}
-	run, err := s.GetRun("run-" + alert.ID)
-	if err != nil || run.Status != model.StatusCompleted {
-		t.Fatalf("run = %+v err=%v", run, err)
-	}
-	stages, _ := s.ListStages(run.ID)
-	have := map[string]bool{}
-	for _, st := range stages {
-		have[st.StageID] = true
-		if st.Status == model.StageFailed {
-			t.Fatalf("stage %s failed: %s", st.StageID, st.Error)
-		}
-	}
-	for _, id := range []string{"normalize", "triage", "context", "evidence", "rca", "recommend"} {
-		if !have[id] {
-			t.Fatalf("missing stage %s", id)
-		}
-	}
-	rca, ok, _ := s.GetLatestStage(run.ID, "rca")
-	if !ok || rca.Output == "" {
-		t.Fatalf("rca missing")
-	}
-	var rc model.RCA
-	if err := json.Unmarshal([]byte(rca.Output), &rc); err != nil || rc.RootCause == "" {
-		t.Fatalf("rca output = %s err=%v", rca.Output, err)
-	}
-}
-
-func TestEndToEndIsolationWritesDeviceContext(t *testing.T) {
-	mockdata.GenerateAll(2)
-	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
-	defer s.Close()
-	eng := pipeline.Build(s, nil, coordinator.New())
+	eng := pipeline.Build(s, nil, coordinator.New(), cs, reg, 3)
 	now := time.Now()
 	alert := model.Alert{ID: "alarm-iso", Device: "compute-01", Metric: "cpu_usage",
 		Severity: "warning", Message: "CPU高", FiredAt: now, CreatedAt: now}
-	if err := eng.Run(context.Background(), alert, nil); err != nil {
-		t.Fatalf("Run: %v", err)
+	if err := eng.Run(context.Background(), alert, nil); !errors.Is(err, llm.ErrNoAPIKey) {
+		t.Fatalf("Run: %v, want ErrNoAPIKey", err)
 	}
-	run, _ := s.GetRun("run-" + alert.ID)
-	if run.Status != model.StatusCompleted {
-		t.Fatalf("run status = %q", run.Status)
+	run, err := s.GetRun("run-" + alert.ID)
+	if err != nil || run.Status != model.StatusFailed {
+		t.Fatalf("run = %+v err=%v", run, err)
 	}
-	stages, _ := s.ListStages(run.ID)
-	have := map[string]bool{}
-	for _, st := range stages {
-		have[st.StageID] = true
-		if st.Status == model.StageFailed {
-			t.Fatalf("stage %s failed: %s", st.StageID, st.Error)
+	stages, err := s.ListStages(run.ID)
+	if err != nil {
+		t.Fatalf("ListStages: %v", err)
+	}
+	wantStages := []string{"normalize", "triage", "context", "evidence", "rca"}
+	if len(stages) != len(wantStages) {
+		t.Fatalf("stages = %+v, want completed pre-RCA stages followed by failed RCA only", stages)
+	}
+	for i, stage := range stages {
+		if stage.StageID != wantStages[i] {
+			t.Fatalf("stage %d = %q, want %q", i, stage.StageID, wantStages[i])
+		}
+		if stage.StageID == "rca" {
+			if stage.Status != model.StageFailed || stage.Output != "" || stage.Error == "" {
+				t.Fatalf("failed RCA = %+v, want error without output", stage)
+			}
+		} else if stage.Status != model.StageCompleted {
+			t.Fatalf("pre-RCA stage = %+v, want completed", stage)
 		}
 	}
-	for _, id := range []string{"normalize", "triage", "context", "evidence", "rca", "recommend"} {
-		if !have[id] {
-			t.Fatalf("missing stage %s", id)
-		}
+	ltm, err := cs.ListLongTermMemory(alert.Device, alert.Metric)
+	if err != nil || len(ltm) != 0 {
+		t.Fatalf("long term memory = %+v err=%v, want no memory for failed RCA", ltm, err)
 	}
 	dc, err := s.GetDeviceContext("compute-01")
 	if err != nil {
@@ -91,38 +72,12 @@ func TestEndToEndIsolationWritesDeviceContext(t *testing.T) {
 		t.Fatalf("device context = %+v", dc)
 	}
 
-	// 越权：任务作用域写其它 run 的 stage 应被拒
+	// 拒绝任务作用域写入其他 run。Reject writes to another run from a task scope.
 	sc := scope.Task("run-other", "compute-01")
 	ss := store.NewScoped(s, sc)
 	err = ss.SaveStage(model.StageResult{ID: "st-bad", RunID: "run-x", StageID: "rca",
 		StageName: "x", Status: model.StageCompleted, StartedAt: now, EndedAt: now})
 	if !errors.Is(err, scope.ErrScopeDenied) {
 		t.Fatalf("cross-run write err = %v, want ErrScopeDenied", err)
-	}
-}
-
-func TestEndToEndContextWritesLongTermMemory(t *testing.T) {
-	mockdata.GenerateAll(3)
-	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
-	defer s.Close()
-	cs := ctxpkg.NewStore(s)
-	reg := ctxpkg.NewRegistry()
-	for _, tt := range ctxpkg.DefaultTools() {
-		reg.Register(tt)
-	}
-	// react=false，无 LLM → 规则兜底，仍应沉淀长期记忆
-	eng := pipeline.BuildWithContext(s, nil, coordinator.New(), cs, reg, false, 3)
-	now := time.Now()
-	alert := model.Alert{ID: "alarm-ctx", Device: "web-01", Metric: "mem_usage",
-		Severity: "warning", Message: "内存高", FiredAt: now, CreatedAt: now}
-	if err := eng.Run(context.Background(), alert, nil); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	ltm, err := cs.ListLongTermMemory("web-01", "mem_usage")
-	if err != nil || len(ltm) == 0 {
-		t.Fatalf("long term memory = %+v err=%v", ltm, err)
-	}
-	if ltm[0].RunID != "run-"+alert.ID {
-		t.Fatalf("run id = %q", ltm[0].RunID)
 	}
 }

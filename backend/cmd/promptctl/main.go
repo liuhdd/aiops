@@ -1,5 +1,6 @@
 // promptctl 本地默认提示词与 Phoenix Prompt Hub 的灌库/核对工具。
-// 用法：promptctl push  把 14 条默认模板灌到 Phoenix（已存在的 name 新建版本）
+// 用法：promptctl push 把 12 条默认模板灌到 Phoenix（已存在的 name 新建版本）。
+// Usage: promptctl push uploads 12 default templates to Phoenix, creating versions for existing names.
 //
 //	promptctl list  列出远端 prompt 核对灌库结果
 package main

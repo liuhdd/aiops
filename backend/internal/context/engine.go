@@ -19,20 +19,18 @@ type Engine struct {
 	runID  string
 	device string
 	metric string
-	react  bool
 	topK   int
 }
 
-func NewEngine(cs *Store, reg *Registry, runID, device, metric string, react bool, topK int) *Engine {
+func NewEngine(cs *Store, reg *Registry, runID, device, metric string, topK int) *Engine {
 	sc := scope.Task(runID, device)
 	return &Engine{
 		cs: cs, scoped: NewScoped(cs, sc), reg: reg, sel: Selector{},
-		asm: NewAssembler(cs, topK), runID: runID, device: device, metric: metric, react: react, topK: topK,
+		asm: NewAssembler(cs, topK), runID: runID, device: device, metric: metric, topK: topK,
 	}
 }
 
-func (e *Engine) RunID() string      { return e.runID }
-func (e *Engine) ReactEnabled() bool { return e.react }
+func (e *Engine) RunID() string { return e.runID }
 
 // SetSearcher 注入混合检索器（供组装器知识源使用）。
 func (e *Engine) SetSearcher(s retrieve.Searcher) {

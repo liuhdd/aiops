@@ -9,7 +9,9 @@ import (
 	"time"
 
 	ctxpkg "aiops/internal/context"
+	"aiops/internal/llm"
 	"aiops/internal/model"
+	"aiops/internal/pipeline"
 	"aiops/internal/retrieve"
 	"aiops/internal/store"
 )
@@ -69,6 +71,29 @@ func TestAgentInspectAlertTriggersRun(t *testing.T) {
 	msgs, _ := s.ListMessages("")
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+}
+
+func TestAgentReportsRCAFailure(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now()
+	alert := model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage", FiredAt: now, CreatedAt: now}
+	if err := s.SaveAlert(alert); err != nil {
+		t.Fatal(err)
+	}
+	eng := pipeline.NewEngine(s, []pipeline.Stage{pipeline.NewRCAStage(nil), pipeline.NewRecommendStage(nil)})
+	ag := New(s, nil, eng)
+	reply := ag.answerSingle(context.Background(), "", "alarm-1什么原因")
+	if !strings.Contains(reply, "排查失败") || !strings.Contains(reply, llm.ErrNoAPIKey.Error()) {
+		t.Fatalf("single reply = %q, want RCA failure", reply)
+	}
+	reply, status := ag.answerOneStatus(context.Background(), "", "alarm-1什么原因")
+	if status != "failed" || !strings.Contains(reply, llm.ErrNoAPIKey.Error()) {
+		t.Fatalf("existing failed run reply = %q, status = %q", reply, status)
 	}
 }
 

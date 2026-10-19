@@ -47,31 +47,24 @@ func usage() {
 func parseFlags(args []string) (*flag.FlagSet, *int, *string, *string) {
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
 	trials := fs.Int("trials", 3, "每任务每配置试验次数")
-	configs := fs.String("configs", "rule,llm-single,llm-react", "逗号分隔配置")
+	configs := fs.String("configs", eval.ConfigLLMReact, "逗号分隔配置（仅 llm-react）")
 	report := fs.String("report", "", "JSON 报告输出路径")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 	return fs, trials, configs, report
 }
 
 func cmdRun(args []string) {
 	_, trials, configs, report := parseFlags(args)
+	configsList, err := parseConfigs(*configs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	cfg := config.Load()
 	lc := mustClient(cfg)
 	mockdata.GenerateAll(42)
-
-	names := strings.Split(*configs, ",")
-	var configsList []eval.Config
-	for _, n := range names {
-		for _, c := range eval.EvalConfigs {
-			if c.Name == n {
-				configsList = append(configsList, c)
-			}
-		}
-	}
-	if len(configsList) == 0 {
-		fmt.Fprintln(os.Stderr, "无有效配置")
-		os.Exit(2)
-	}
 
 	scored := map[string][]eval.ScoredTrial{}
 	tasks := eval.DefaultTasks()
@@ -80,14 +73,7 @@ func cmdRun(args []string) {
 			if len(t.Configs) > 0 && !containsStr(t.Configs, c.Name) {
 				continue
 			}
-			if c.LLM && isNilClient(lc) {
-				fmt.Fprintf(os.Stderr, "[skip] %s 无 LLM_API_KEY，跳过配置 %s\n", t.ID, c.Name)
-				continue
-			}
 			n := *trials
-			if c.Name == "rule" {
-				n = 1 // 规则路径确定性
-			}
 			key := t.ID + "|" + c.Name
 			for trial := 1; trial <= n; trial++ {
 				// 每次 trial 独立超时：同一 ctx 覆盖整次 trial（流水线运行 + LLM 评委），
@@ -137,30 +123,22 @@ func cmdCI(args []string) {
 	fs := flag.NewFlagSet("ci", flag.ContinueOnError)
 	threshold := fs.Float64("threshold", 0.9, "pass@k 最低阈值")
 	all := fs.Bool("all", false, "包含 Extended 任务（默认跳过）")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
 	cfg := config.Load()
 	lc := mustClient(cfg)
 	mockdata.GenerateAll(42)
 	tasks := selectCITasks(*all)
 
-	var configsList = []eval.Config{{Name: "rule"}}
-	if !isNilClient(lc) {
-		configsList = append(configsList, eval.EvalConfigs[1:]...)
-	}
+	configsList := eval.EvalConfigs
 	scored := map[string][]eval.ScoredTrial{}
 	for _, t := range tasks {
 		for _, c := range configsList {
 			if len(t.Configs) > 0 && !containsStr(t.Configs, c.Name) {
 				continue
 			}
-			if c.LLM && isNilClient(lc) {
-				continue
-			}
-			n := 1
-			if c.Name != "rule" {
-				n = 3
-			}
-			for trial := 1; trial <= n; trial++ {
+			for trial := 1; trial <= 3; trial++ {
 				// 每次 trial 独立超时：同一 ctx 覆盖整次 trial（流水线运行 + LLM 评委），
 				// 避免挂起的评委 LLM 无限阻塞评测。评分完成后才 cancel。
 				trialCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -302,14 +280,30 @@ func cmdCalibrate(args []string) {
 func mustClient(cfg config.Config) *llm.Client {
 	lc, err := llm.NewClient(cfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "llm unavailable (rule fallback): %v\n", err)
-		return nil
+		fmt.Fprintf(os.Stderr, "初始化评测模型失败: %v\n", err)
+		os.Exit(1)
 	}
 	return lc
 }
 
-func isNilClient(lc *llm.Client) bool {
-	return lc == nil
+// parseConfigs 拒绝不存在的执行配置，避免静默忽略已删除的模式。
+// parseConfigs rejects unsupported configurations instead of silently dropping them.
+func parseConfigs(raw string) ([]eval.Config, error) {
+	var configs []eval.Config
+	for _, name := range strings.Split(raw, ",") {
+		found := false
+		for _, cfg := range eval.EvalConfigs {
+			if cfg.Name == name {
+				configs = append(configs, cfg)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("不支持的评测配置 %q，可用配置: %s", name, eval.ConfigLLMReact)
+		}
+	}
+	return configs, nil
 }
 
 func containsStr(ss []string, s string) bool {

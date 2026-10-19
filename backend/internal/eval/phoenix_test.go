@@ -59,7 +59,7 @@ func TestAgentDatasetExampleShapes(t *testing.T) {
 
 func TestTrialResultSerializesTimestamps(t *testing.T) {
 	start := time.Date(2026, 9, 10, 1, 2, 3, 0, time.UTC)
-	tr := TrialResult{Trial: 1, Config: "rule", StartedAt: start, EndedAt: start.Add(time.Second)}
+	tr := TrialResult{Trial: 1, Config: "candidate-a", StartedAt: start, EndedAt: start.Add(time.Second)}
 	b, err := json.Marshal(tr)
 	if err != nil {
 		t.Fatal(err)
@@ -98,10 +98,10 @@ func (f *fakeWriter) LogEvaluation(e phoenix.EvaluationRequest) (string, error) 
 
 func TestPushAgentExperimentFullMapping(t *testing.T) {
 	rep := Report{
-		Meta: Meta{Configs: []string{"rule"}, LLMEnabled: false},
+		Meta: Meta{Configs: []string{"candidate-a"}, LLMEnabled: false},
 		Tasks: []TaskReport{
 			{ID: "t1", Configs: map[string]ConfigStats{
-				"rule": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "rule", Trial: 1, RunStatus: "completed", Outcome: RunOutcome{RCA: model.RCA{RootCause: "x"}}},
+				"candidate-a": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "candidate-a", Trial: 1, RunStatus: "completed", Outcome: RunOutcome{RCA: model.RCA{RootCause: "x"}}},
 					Scores: []GraderResult{
 						{Name: "RootCauseMatch", Pass: true, Score: 1, Weight: 0.3, Detail: "ok"},
 						{Name: "JudgeAccuracy", NA: true},
@@ -117,13 +117,13 @@ func TestPushAgentExperimentFullMapping(t *testing.T) {
 	if len(sums) != 1 {
 		t.Fatalf("summaries = %+v", sums)
 	}
-	if sums[0].Name != "aiops-agents-eval/rule" || sums[0].ID != "E-aiops-agents-eval/rule" {
+	if sums[0].Name != "aiops-agents-eval/candidate-a" || sums[0].ID != "E-aiops-agents-eval/candidate-a" {
 		t.Fatalf("summary name/id = %+v", sums[0])
 	}
 	if sums[0].RunsWritten != 1 || sums[0].EvalsWritten != 2 || sums[0].Failures != 0 {
 		t.Fatalf("summary counts = %+v", sums[0])
 	}
-	if len(w.experiments) != 1 || w.experiments[0] != "aiops-agents-eval/rule" {
+	if len(w.experiments) != 1 || w.experiments[0] != "aiops-agents-eval/candidate-a" {
 		t.Fatalf("experiments = %v", w.experiments)
 	}
 	if len(w.runs) != 1 || w.runs[0].DatasetExampleID != "EX-t1" || w.runs[0].RepetitionNumber != 1 {
@@ -143,10 +143,10 @@ func TestPushAgentExperimentFullMapping(t *testing.T) {
 
 func TestPushAgentExperimentJudgeUsesLLMKind(t *testing.T) {
 	rep := Report{
-		Meta: Meta{Configs: []string{"llm-single"}},
+		Meta: Meta{Configs: []string{"candidate-b"}},
 		Tasks: []TaskReport{
 			{ID: "t1", Configs: map[string]ConfigStats{
-				"llm-single": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "llm-single", Trial: 1},
+				"candidate-b": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "candidate-b", Trial: 1},
 					Scores: []GraderResult{{Name: "JudgeAccuracy", Pass: true, Score: 0.9, Weight: 0.2}}, Pass: true, Score: 0.9}}},
 			}},
 		},
@@ -162,10 +162,10 @@ func TestPushAgentExperimentJudgeUsesLLMKind(t *testing.T) {
 
 func TestPushAgentExperimentCountsMissingExampleAsFailure(t *testing.T) {
 	rep := Report{
-		Meta: Meta{Configs: []string{"rule"}},
+		Meta: Meta{Configs: []string{"candidate-a"}},
 		Tasks: []TaskReport{
 			{ID: "t-missing", Configs: map[string]ConfigStats{
-				"rule": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "rule", Trial: 1, RunStatus: "completed"}}}},
+				"candidate-a": {Trials: []ScoredTrial{{TrialResult: &TrialResult{Config: "candidate-a", Trial: 1, RunStatus: "completed"}}}},
 			}},
 		},
 	}

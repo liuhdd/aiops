@@ -128,14 +128,13 @@ func recommendMatch(t Task, res *TrialResult) GraderResult {
 		Detail: "runbook=" + res.Outcome.Recommend.RunbookRef, Weight: 0.15}
 }
 
-// edgeRootCause gpu-temp 边界任务：规则路径判"未知根因"记低分，LLM 期望命中温度关键词。
-// 权重 0.2（高于其余三个子 grader 的平均权重）使根因维度对该任务起决定性作用：
-// 规则路径 0.25+0.2+0.15+0.2*0.1=0.564 < 0.6 失败，LLM 命中温度关键词则 >=0.6 通过。
+// edgeRootCause 检查 GPU 温度任务是否明确识别温度或散热原因。
+// edgeRootCause checks whether the GPU task identifies a thermal root cause.
 func edgeRootCause(t Task, res *TrialResult) GraderResult {
 	rc := res.Outcome.RCA.RootCause
 	if strings.Contains(rc, "未知根因") {
 		return GraderResult{Name: "EdgeRootCause", Pass: false, Score: 0.1,
-			Detail: "规则路径未知根因（边界任务允许低分）", Weight: 0.2}
+			Detail: "未识别出根因", Weight: 0.2}
 	}
 	for _, kw := range t.Expected.RootCause {
 		if strings.Contains(rc, kw) {

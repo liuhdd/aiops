@@ -16,8 +16,8 @@ func resetRegistry(t *testing.T) {
 }
 
 func TestAllRegistryComplete(t *testing.T) {
-	if len(All) != 14 {
-		t.Fatalf("注册表应含 14 条, got %d", len(All))
+	if len(All) != 12 {
+		t.Fatalf("注册表应含 12 条, got %d", len(All))
 	}
 	for name, e := range All {
 		if e.Name != name || (e.Role != "system" && e.Role != "user") || e.Default == "" {
@@ -28,8 +28,8 @@ func TestAllRegistryComplete(t *testing.T) {
 
 func TestRenderUsesDefaultWhenNotConfigured(t *testing.T) {
 	resetRegistry(t)
-	got := Render("rca-gap-hint", map[string]string{"iteration": "2"})
-	if got != "这是第2轮补充取证，请重点分析新增证据。" {
+	got := Render("kb-summarize", map[string]string{"content": "运维资料"})
+	if got != "用1-2句中文概括下列运维知识的核心处置/根因，不要扩写：\n运维资料" {
 		t.Fatalf("Render = %q", got)
 	}
 }
@@ -48,7 +48,7 @@ func TestRenderPrefersPhoenix(t *testing.T) {
 	}))
 	defer srv.Close()
 	Configure(NewPhoenixFetcher(srv.URL, "production", ""), time.Minute)
-	got := Render("rca-gap-hint", map[string]string{"x": "变量"})
+	got := Render("kb-summarize", map[string]string{"x": "变量"})
 	if got != "PHOENIX 版 变量" {
 		t.Fatalf("Render = %q", got)
 	}
@@ -61,8 +61,8 @@ func TestRenderFallsBackOnFetchFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 	Configure(NewPhoenixFetcher(srv.URL, "production", ""), time.Minute)
-	got := Render("rca-gap-hint", map[string]string{"iteration": "3"})
-	if got != "这是第3轮补充取证，请重点分析新增证据。" {
+	got := Render("kb-summarize", map[string]string{"content": "运维资料"})
+	if got != "用1-2句中文概括下列运维知识的核心处置/根因，不要扩写：\n运维资料" {
 		t.Fatalf("失败应回退默认模板, got %q", got)
 	}
 }
@@ -79,15 +79,15 @@ func TestRenderStaleThenBackgroundRefresh(t *testing.T) {
 	}))
 	defer srv.Close()
 	Configure(NewPhoenixFetcher(srv.URL, "production", ""), 30*time.Millisecond)
-	if got := Render("rca-gap-hint", nil); got != "V1" {
+	if got := Render("kb-summarize", nil); got != "V1" {
 		t.Fatalf("首次应取 V1, got %q", got)
 	}
 	time.Sleep(80 * time.Millisecond) // TTL 过期
-	if got := Render("rca-gap-hint", nil); got != "V1" {
+	if got := Render("kb-summarize", nil); got != "V1" {
 		t.Fatalf("过期后应先返回旧值 V1, got %q", got)
 	}
 	time.Sleep(80 * time.Millisecond) // 等后台刷新完成
-	if got := Render("rca-gap-hint", nil); got != "V2" {
+	if got := Render("kb-summarize", nil); got != "V2" {
 		t.Fatalf("后台刷新后应为 V2, got %q", got)
 	}
 }
@@ -104,7 +104,7 @@ func TestRenderSingleflightWithinTTL(t *testing.T) {
 	// 顺序调用：证 TTL 缓存。
 	Configure(f, time.Minute)
 	for i := 0; i < 10; i++ {
-		if got := Render("rca-gap-hint", nil); got != "V" {
+		if got := Render("kb-summarize", nil); got != "V" {
 			t.Fatalf("got %q", got)
 		}
 	}
@@ -113,7 +113,7 @@ func TestRenderSingleflightWithinTTL(t *testing.T) {
 	var g errgroup.Group
 	for i := 0; i < 10; i++ {
 		g.Go(func() error {
-			if got := Render("rca-gap-hint", nil); got != "V" {
+			if got := Render("kb-summarize", nil); got != "V" {
 				return fmt.Errorf("Render = %q", got)
 			}
 			return nil

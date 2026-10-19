@@ -16,19 +16,16 @@ import (
 	"aiops/internal/store"
 )
 
-// Config 一种评测配置（配置对比矩阵）
+// Config 一种评测配置（报告支持配置对比）。
+// Config describes an evaluation configuration for report comparisons.
 type Config struct {
-	Name  string // "rule" | "llm-single" | "llm-react"
-	LLM   bool   // 是否注入 llm.Client
-	React bool
-	TopK  int
+	Name string
+	TopK int
 }
 
 // EvalConfigs 全部评测配置
 var EvalConfigs = []Config{
-	{Name: ConfigRule, LLM: false, React: false, TopK: 0},
-	{Name: ConfigLLMSingle, LLM: true, React: false, TopK: 3},
-	{Name: ConfigLLMReact, LLM: true, React: true, TopK: 3},
+	{Name: ConfigLLMReact, TopK: 3},
 }
 
 // RunOutcome 单次运行的结果（Outcome = 环境真实变化）
@@ -58,9 +55,13 @@ type TrialResult struct {
 	Outcome   RunOutcome
 }
 
-// RunTask 对单个任务跑一次 trial。lc 为 nil 时使用规则路径（LLM=false 配置强制 nil）。
+// RunTask 对单个任务跑一次 LLM ReAct trial，缺少模型时显式失败。
+// RunTask executes one LLM ReAct trial and rejects a missing model.
 // 超时由调用方负责：调用方创建带超时的 ctx 并同时传给 RunTask 与 Grade（覆盖流水线 + LLM 评委）。
 func RunTask(ctx context.Context, t Task, cfg Config, lc *llm.Client, trial int) (*TrialResult, error) {
+	if lc == nil {
+		return nil, fmt.Errorf("评测任务 %q 需要 LLM client: %w", t.ID, llm.ErrNoAPIKey)
+	}
 	dir, err := os.MkdirTemp("", "eval-")
 	if err != nil {
 		return nil, fmt.Errorf("MkdirTemp: %w", err)
@@ -72,16 +73,12 @@ func RunTask(ctx context.Context, t Task, cfg Config, lc *llm.Client, trial int)
 	}
 	defer st.Close()
 
-	var cl *llm.Client
-	if cfg.LLM && !isNilClient(lc) {
-		cl = lc
-	}
 	cs := ctxpkg.NewStore(st)
 	reg := ctxpkg.NewRegistry()
 	for _, tl := range ctxpkg.DefaultTools() {
 		reg.Register(tl)
 	}
-	eng := pipeline.BuildWithContext(st, cl, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
+	eng := pipeline.Build(st, lc, coordinator.New(), cs, reg, cfg.TopK)
 
 	res := &TrialResult{Trial: trial, Config: cfg.Name}
 
@@ -135,13 +132,9 @@ func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task,
 		res.ErrMsg = err.Error()
 		return res, err
 	}
-	var ag *agent.Agent
-	if cfg.LLM && !isNilClient(lc) {
-		// 对齐生产：注入主 client（eval 中复用为轻模型），Handle 走多意图路径
-		ag = agent.NewWithLight(st, lc, lc, eng, cs, cfg.TopK, 3)
-	} else {
-		ag = agent.New(st, nil, eng)
-	}
+	// 对齐生产：注入主 client（eval 中复用为轻模型），Handle 走多意图路径。
+	// Reuse the main client as the light model for production multi-intent handling.
+	ag := agent.NewWithLight(st, lc, lc, eng, cs, cfg.TopK, 3)
 	msg, err := ag.Handle(ctx, "", t.ChatInput)
 	if err != nil {
 		res.RunStatus = "chat-failed"
@@ -150,11 +143,7 @@ func runChat(ctx context.Context, st *store.Store, eng *pipeline.Engine, t Task,
 	}
 	res.Reply = msg.Content
 	res.RunStatus = "chat"
-	var light ctxpkg.Completer
-	if cfg.LLM && !isNilClient(lc) {
-		light = lc
-	}
-	res.Intents = intentNames(agent.ParseIntentSet(ctx, nil, t.ChatInput, light, 3))
+	res.Intents = intentNames(agent.ParseIntentSet(ctx, nil, t.ChatInput, lc, 3))
 	if len(res.Intents) > 0 {
 		res.Intent = res.Intents[0]
 	}
@@ -218,8 +207,4 @@ func ensureAlertForChat(st *store.Store, t Task) (model.Alert, error) {
 		return alert, err
 	}
 	return alert, nil
-}
-
-func isNilClient(lc *llm.Client) bool {
-	return lc == nil
 }

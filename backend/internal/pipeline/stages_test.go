@@ -2,12 +2,14 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	ctxpkg "aiops/internal/context"
+	"aiops/internal/llm"
 	"aiops/internal/mockdata"
 	"aiops/internal/model"
 	"aiops/internal/scope"
@@ -99,15 +101,55 @@ func TestEvidenceStageCollects(t *testing.T) {
 	}
 }
 
-func TestRuleRCAReturnsRootCause(t *testing.T) {
-	st := &State{Alert: model.Alert{ID: "a1", Device: "db-01", Metric: "disk_usage"}}
-	st.Evidence = &model.Evidence{Logs: []model.LogEntry{{Content: "no space left"}}}
-	rc := ruleRCA(st)
-	if rc.RootCause == "" || rc.Confidence <= 0 {
-		t.Fatalf("ruleRCA = %+v", rc)
+func TestRCARequiresLLM(t *testing.T) {
+	st := &State{
+		Alert: model.Alert{ID: "a1", Device: "db-01", Metric: "disk_usage"},
+		RCA:   &model.RCA{RootCause: "旧结论"},
 	}
-	if len(rc.EvidenceChain) == 0 {
-		t.Fatalf("evidence chain empty")
+	err := NewRCAStage(nil).Run(context.Background(), st)
+	if !errors.Is(err, llm.ErrNoAPIKey) {
+		t.Fatalf("Run error = %v, want ErrNoAPIKey", err)
+	}
+	if st.RCA != nil {
+		t.Fatalf("failed RCA retained a conclusion: %+v", st.RCA)
+	}
+}
+
+func TestRCARequiresContext(t *testing.T) {
+	st := &State{
+		Alert: model.Alert{ID: "a1", Device: "db-01", Metric: "disk_usage"},
+		RCA:   &model.RCA{RootCause: "旧结论"},
+	}
+	err := NewRCAStage(&fakeCompleter{raw: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`}).Run(context.Background(), st)
+	if err == nil || !strings.Contains(err.Error(), "上下文") {
+		t.Fatalf("Run error = %v, want missing context", err)
+	}
+	if st.RCA != nil {
+		t.Fatalf("failed RCA retained a conclusion: %+v", st.RCA)
+	}
+}
+
+func TestRCAFailsWhenContextUnavailable(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	cs := ctxpkg.NewStore(s)
+	if err := s.Close(); err != nil {
+		t.Fatalf("store.Close: %v", err)
+	}
+	st := &State{
+		Run:   model.PipelineRun{ID: "run-rca"},
+		Alert: model.Alert{ID: "alarm-rca", Device: "db-01", Metric: "disk_usage"},
+		RCA:   &model.RCA{RootCause: "旧结论"},
+		Ctx:   ctxpkg.NewEngine(cs, ctxpkg.NewRegistry(), "run-rca", "db-01", "disk_usage", 3),
+	}
+	err = NewRCAStage(&fakeCompleter{}).Run(context.Background(), st)
+	if err == nil || !strings.Contains(err.Error(), "上下文组装失败") {
+		t.Fatalf("Run error = %v, want context assembly failure", err)
+	}
+	if st.RCA != nil {
+		t.Fatalf("failed RCA retained a conclusion: %+v", st.RCA)
 	}
 }
 
@@ -126,12 +168,13 @@ func TestRecommendStageRunbook(t *testing.T) {
 }
 
 func TestRCAParsesJSON(t *testing.T) {
-	rc, err := ParseRCAJSON(`{"root_cause":"OOM","evidence_chain":["e1"],"confidence":0.8,"gaps":[]}`)
-	if err != nil {
-		t.Fatalf("ParseRCAJSON: %v", err)
+	st := newRCAState(t)
+	fake := &fakeCompleter{raw: `{"final_answer":{"root_cause":"OOM","evidence_chain":["e1"],"confidence":0.8,"gaps":[]}}`}
+	if err := NewRCAStage(fake).Run(context.Background(), st); err != nil {
+		t.Fatalf("Run: %v", err)
 	}
-	if rc.RootCause != "OOM" || rc.Confidence != 0.8 {
-		t.Fatalf("parsed = %+v", rc)
+	if st.RCA == nil || st.RCA.RootCause != "OOM" || st.RCA.Confidence != 0.8 || len(st.RCA.EvidenceChain) != 1 || st.RCA.EvidenceChain[0] != "e1" || len(st.RCA.Gaps) != 0 {
+		t.Fatalf("RCA = %+v", st.RCA)
 	}
 }
 
@@ -183,7 +226,7 @@ func TestEvidenceRecordsToolEvents(t *testing.T) {
 		Alert: model.Alert{ID: "alarm-1", Device: "db-01", Metric: "disk_usage", FiredAt: time.Now().Add(-time.Hour)},
 	}
 	st.SuggestLogs = []string{"no space"}
-	st.Ctx = ctxpkg.NewEngine(cs, nil, "run-1", "db-01", "disk_usage", false, 3)
+	st.Ctx = ctxpkg.NewEngine(cs, nil, "run-1", "db-01", "disk_usage", 3)
 	if err := (EvidenceStage{}).Run(context.Background(), st); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -238,34 +281,45 @@ func TestRecommendInjectsAssembledContext(t *testing.T) {
 	}
 }
 
-func TestRCAReactFallsBackOnError(t *testing.T) {
+func newRCAState(t *testing.T) *State {
+	t.Helper()
 	mockdata.GenerateAll(42)
-	s, _ := store.New(filepath.Join(t.TempDir(), "t.db"))
-	defer s.Close()
+	s, err := store.New(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("store.Close: %v", err)
+		}
+	})
 	cs := ctxpkg.NewStore(s)
 	reg := ctxpkg.NewRegistry()
 	for _, tt := range ctxpkg.DefaultTools() {
 		reg.Register(tt)
 	}
-	// 假模型永远只回 tool_call，无 final_answer → ReAct 到 max_steps 后落规则兜底并标记降级
+	return &State{
+		Run:   model.PipelineRun{ID: "run-rca", AlertID: "alarm-rca"},
+		Alert: model.Alert{ID: "alarm-rca", Device: "db-01", Metric: "disk_usage", Severity: "critical"},
+		RCA:   &model.RCA{RootCause: "旧结论"},
+		Ctx:   ctxpkg.NewEngine(cs, reg, "run-rca", "db-01", "disk_usage", 3),
+	}
+}
+
+func TestRCAReactFailsWhenStepsExhausted(t *testing.T) {
+	st := newRCAState(t)
+	// 模型持续调用工具而不给结论，耗尽步数后必须失败。 / Tool-only turns must fail when the step limit is reached.
 	fake := &fakeCompleter{raw: `{"thought":"调工具","tool_call":{"name":"search_runbook","args":{"metric":"disk_usage"}}}`}
-	e := NewEngine(s, []Stage{NewRCAStage(fake)})
-	e.ctxStore = cs
-	e.tools = reg
-	e.react = true
-	e.topK = 3
-	alert := model.Alert{ID: "alarm-rca", Device: "db-01", Metric: "disk_usage",
-		Severity: "critical", FiredAt: time.Now(), CreatedAt: time.Now()}
-	if err := e.Run(context.Background(), alert, nil); err != nil {
-		t.Fatalf("Run: %v", err)
+	err := NewRCAStage(fake).Run(context.Background(), st)
+	if err == nil || !strings.Contains(err.Error(), "最大步数") {
+		t.Fatalf("Run error = %v, want exhausted steps", err)
 	}
-	run, _ := s.GetRun("run-" + alert.ID)
-	if run.Status != model.StatusDegraded {
-		t.Fatalf("status = %q, want degraded (ReAct max-steps rule fallback)", run.Status)
+	if st.RCA != nil {
+		t.Fatalf("failed RCA retained a conclusion: %+v", st.RCA)
 	}
-	evs, _ := cs.ListToolEvents("run-" + alert.ID)
-	if len(evs) != 5 { // max_steps 轮工具调用
-		t.Fatalf("tool events = %d, want 5", len(evs))
+	evs, err := st.Ctx.ListToolEvents()
+	if err != nil || len(evs) != 5 {
+		t.Fatalf("tool events = %d, error = %v, want 5", len(evs), err)
 	}
 }
 
@@ -279,19 +333,37 @@ func (f *sysCapturingLLM) Complete(_ context.Context, system, _ string) (string,
 	return f.raw, nil
 }
 
-func TestRCASingleCallSystemHasGapRule(t *testing.T) {
-	fake := &sysCapturingLLM{raw: `{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":0.8,"gaps":[]}`}
-	st := &State{Alert: model.Alert{ID: "a1", Device: "db-01", Metric: "disk_usage"}}
-	if err := (NewRCAStage(fake)).Run(context.Background(), st); err != nil {
-		t.Fatalf("Run: %v", err)
+func TestRCAReactPropagatesFailures(t *testing.T) {
+	modelErr := errors.New("model request failed")
+	cases := []struct {
+		name string
+		raw  string
+		err  error
+	}{
+		{name: "model", err: modelErr},
+		{name: "step JSON", raw: `not-json`},
+		{name: "missing step action", raw: `{}`},
+		{name: "tool", raw: `{"tool_call":{"name":"unknown_tool","args":{}}}`},
+		{name: "final JSON", raw: `{"final_answer":[]}`},
+		{name: "null final", raw: `{"final_answer":null}`},
+		{name: "missing final fields", raw: `{"final_answer":{"root_cause":"磁盘空间不足"}}`},
+		{name: "empty root cause", raw: `{"final_answer":{"root_cause":" ","evidence_chain":[],"confidence":0.8,"gaps":[]}}`},
+		{name: "invalid confidence", raw: `{"final_answer":{"root_cause":"磁盘空间不足","evidence_chain":["e"],"confidence":1.2,"gaps":[]}}`},
 	}
-	for _, kw := range []string{"gaps", "禁止编造 evidence_chain", "只输出JSON", "算力中心硬件运维专家"} {
-		if !strings.Contains(fake.system, kw) {
-			t.Fatalf("system 应含 %q, got %q", kw, fake.system)
-		}
-	}
-	if st.RCA == nil || st.RCA.RootCause != "磁盘空间不足" {
-		t.Fatalf("RCA = %+v", st.RCA)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newRCAState(t)
+			err := NewRCAStage(&fakeCompleter{raw: tc.raw, err: tc.err}).Run(context.Background(), st)
+			if err == nil {
+				t.Fatal("Run succeeded for an invalid ReAct result")
+			}
+			if tc.err != nil && !errors.Is(err, tc.err) {
+				t.Fatalf("Run error = %v, want %v", err, tc.err)
+			}
+			if st.RCA != nil {
+				t.Fatalf("failed RCA retained a conclusion: %+v", st.RCA)
+			}
+		})
 	}
 }
 

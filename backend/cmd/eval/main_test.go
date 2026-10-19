@@ -11,34 +11,30 @@ import (
 	"aiops/internal/eval"
 )
 
-// 用 go run 编译运行 CLI（集成冒烟测试）
-func TestCLIRunProducesReport(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "report.json")
-	cmd := exec.Command("go", "run", ".", "run",
-		"--trials", "1", "--configs", "rule", "--report", out)
-	cmd.Env = append(os.Environ(), "LLM_API_KEY=") // 强制无 LLM
-	b, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("go run 失败: %v\n%s", err, b)
-	}
-	if _, err := os.Stat(out); err != nil {
-		t.Fatalf("报告未生成: %v\n%s", err, b)
-	}
-	if !fileContains(out, `"pass_at_k"`) {
-		t.Fatalf("报告缺 pass_at_k 字段\n%s", readFile(out))
+// CLI 必须拒绝缺模型执行。/ The CLI rejects execution without a model.
+func TestCLIRequiresLLM(t *testing.T) {
+	for _, subcommand := range []string{"run", "ci"} {
+		t.Run(subcommand, func(t *testing.T) {
+			cmd := exec.Command("go", "run", ".", subcommand)
+			cmd.Env = append(os.Environ(), "LLM_API_KEY=")
+			b, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(b), "初始化评测模型失败") || !strings.Contains(string(b), "LLM_API_KEY") {
+				t.Fatalf("缺模型应非零退出并说明配置：err=%v\n%s", err, b)
+			}
+		})
 	}
 }
 
-func TestCLICIExitCode(t *testing.T) {
-	// 阈值 1.5 不可能达到 => 必然退出码 1（确定性断言）
-	cmd := exec.Command("go", "run", ".", "ci", "--threshold", "1.5")
-	cmd.Env = append(os.Environ(), "LLM_API_KEY=")
-	err := cmd.Run()
-	if err == nil {
-		t.Fatal("ci 应以非零退出")
-	}
-	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() != 1 {
-		t.Fatalf("exit code = %d, want 1", ee.ExitCode())
+func TestCLIRejectsUnsupportedConfigs(t *testing.T) {
+	for _, name := range []string{"rule", "llm-single", "unknown", "llm-react,rule", "llm-react,unknown"} {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command("go", "run", ".", "run", "--configs", name)
+			cmd.Env = append(os.Environ(), "LLM_API_KEY=")
+			b, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(b), "不支持的评测配置") {
+				t.Fatalf("应明确拒绝配置 %q：err=%v\n%s", name, err, b)
+			}
+		})
 	}
 }
 
@@ -48,11 +44,16 @@ func TestCLIExportCalibrate(t *testing.T) {
 	samples := filepath.Join(dir, "samples.json")
 	calib := filepath.Join(dir, "calib.json")
 
-	runCmd := exec.Command("go", "run", ".", "run",
-		"--trials", "1", "--configs", "rule", "--report", report)
-	runCmd.Env = append(os.Environ(), "LLM_API_KEY=")
-	if b, err := runCmd.CombinedOutput(); err != nil {
-		t.Fatalf("run 失败: %v\n%s", err, b)
+	rep := eval.BuildReport([]eval.Task{{ID: "sample-task", Object: eval.ObjectPipeline}},
+		[]eval.Config{{Name: "candidate-a"}}, map[string][]eval.ScoredTrial{
+			"sample-task|candidate-a": {{TrialResult: &eval.TrialResult{Trial: 1, Config: "candidate-a"}, Pass: true, Score: 1}},
+		})
+	b, err := rep.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(report, b, 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	expCmd := exec.Command("go", "run", ".", "export-samples",

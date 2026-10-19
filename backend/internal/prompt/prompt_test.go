@@ -30,14 +30,6 @@ func TestKnowledgeIntroContainsUsageRules(t *testing.T) {
 	}
 }
 
-func TestRCASystemContainsGapRule(t *testing.T) {
-	for _, kw := range []string{"gaps", "禁止编造 evidence_chain", "只输出JSON", "算力中心硬件运维专家"} {
-		if !strings.Contains(RCASystem(), kw) {
-			t.Fatalf("RCASystem 应含 %q: %s", kw, RCASystem())
-		}
-	}
-}
-
 func TestRecommendSystemContainsRunbookRule(t *testing.T) {
 	for _, kw := range []string{"无预案参考", "runbook_ref", "只输出JSON"} {
 		if !strings.Contains(RecommendSystem(), kw) {
@@ -54,8 +46,8 @@ func TestAccessorsUseRegistry(t *testing.T) {
 	if KnowledgeIntro() != All["knowledge-intro"].Default {
 		t.Fatal("KnowledgeIntro 未走注册表默认模板")
 	}
-	if RCASystem() != All["rca-system"].Default {
-		t.Fatal("RCASystem 未走注册表默认模板")
+	if RCAReactSystem() != All["rca-react-system"].Default {
+		t.Fatal("RCAReactSystem 未走注册表默认模板")
 	}
 	if RecommendSystem() != All["recommend-system"].Default {
 		t.Fatal("RecommendSystem 未走注册表默认模板")
@@ -69,16 +61,6 @@ func TestIntentClassifySystemRendersCandidates(t *testing.T) {
 		if !strings.Contains(got, kw) {
 			t.Fatalf("IntentClassifySystem 应含 %q: %s", kw, got)
 		}
-	}
-}
-
-func TestRCAGapHintBranches(t *testing.T) {
-	resetRegistry(t)
-	if got := RCAGapHint(0); got != "请基于当前证据给出根因结论。" {
-		t.Fatalf("iteration=0 应走 Go 侧文案, got %q", got)
-	}
-	if got := RCAGapHint(2); got != "这是第2轮补充取证，请重点分析新增证据。" {
-		t.Fatalf("iteration=2 应走模板, got %q", got)
 	}
 }
 

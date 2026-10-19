@@ -11,14 +11,14 @@ import (
 
 func TestFetchByTagSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/prompts/rca-system/tags/production" {
+		if r.URL.Path != "/v1/prompts/rca-react-system/tags/production" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		_, _ = io.WriteString(w, `{"data":{"id":"v1","template":{"messages":[{"role":"SYSTEM","content":"你是算力中心硬件运维专家"}]}}}`)
 	}))
 	defer srv.Close()
 	f := NewPhoenixFetcher(srv.URL, "production", "")
-	got, ok := f.Fetch("rca-system")
+	got, ok := f.Fetch("rca-react-system")
 	if !ok || got != "你是算力中心硬件运维专家" {
 		t.Fatalf("Fetch = (%q, %v), 期望第一条消息 content", got, ok)
 	}
@@ -91,11 +91,11 @@ func TestPushCreatesPromptWithTemplate(t *testing.T) {
 	}))
 	defer srv.Close()
 	f := NewPhoenixFetcher(srv.URL, "production", "")
-	if err := f.Push("rca-system", "system", "你好 {{x}}", "deepseek-chat"); err != nil {
+	if err := f.Push("rca-react-system", "system", "你好 {{x}}", "deepseek-chat"); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
 	prm, ok := body["prompt"].(map[string]any)
-	if !ok || prm["name"] != "rca-system" {
+	if !ok || prm["name"] != "rca-react-system" {
 		t.Fatalf("prompt = %v", body["prompt"])
 	}
 	ver, ok := body["version"].(map[string]any)
@@ -139,7 +139,7 @@ func TestPushFailsWhenTaggingFails(t *testing.T) {
 
 func TestListReturnsSummaries(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"data":[{"name":"rca-system","id":"p-1"},{"name":"kb-summarize","id":"p-2"}]}`)
+		_, _ = io.WriteString(w, `{"data":[{"name":"rca-react-system","id":"p-1"},{"name":"kb-summarize","id":"p-2"}]}`)
 	}))
 	defer srv.Close()
 	f := NewPhoenixFetcher(srv.URL, "production", "")

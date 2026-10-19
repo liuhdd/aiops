@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -43,7 +44,7 @@ func main() {
 
 	lc, err := llm.NewClient(cfg)
 	if err != nil {
-		log.Printf("llm unavailable (will use rule fallback): %v", err)
+		slog.Warn("LLM 客户端不可用，RCA 无法执行", "error", err)
 	}
 
 	light, err := llm.NewLightClient(cfg)
@@ -85,7 +86,7 @@ func main() {
 		log.Fatalf("searcher: %v", err)
 	}
 
-	eng := pipeline.BuildWithContext(st, lc, coordinator.New(), cs, reg, cfg.React, cfg.TopK)
+	eng := pipeline.Build(st, lc, coordinator.New(), cs, reg, cfg.TopK)
 	eng.Publish = h.Publish
 	eng.SetSearcher(searcher)
 	reg.Register(ctxpkg.NewSearchCaseTool(searcher))
@@ -119,7 +120,9 @@ func main() {
 	sim := simulator.New(st, func(a model.Alert) {
 		h.Publish("alert", a)
 		go func() {
-			_ = eng.Run(context.Background(), a, nil)
+			if err := eng.Run(context.Background(), a, nil); err != nil {
+				slog.Error("模拟告警流水线执行失败", "alert_id", a.ID, "device", a.Device, "metric", a.Metric, "error", err)
+			}
 		}()
 	})
 	sim.Start(context.Background(), cfg.SimInterval)

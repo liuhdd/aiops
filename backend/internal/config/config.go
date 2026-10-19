@@ -14,7 +14,6 @@ type Config struct {
 	DBPath                  string
 	SimInterval             time.Duration
 	Port                    string
-	React                   bool    // CONTEXT_REACT，ReAct 循环开关，默认 true
 	TopK                    int     // CONTEXT_TOP_K，每源上下文条数，默认 3
 	LLMLightBaseURL         string  // LLM_LIGHT_BASE_URL，轻量意图模型 BaseURL，默认同 LLM_BASE_URL
 	LLMLightModel           string  // LLM_LIGHT_MODEL，轻量意图模型，默认同 LLM_MODEL
@@ -81,10 +80,6 @@ func LoadFromEnv(lookup func(string) string) Config {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			interval = n
 		}
-	}
-	react := true
-	if v := lookup("CONTEXT_REACT"); v == "0" || v == "false" {
-		react = false
 	}
 	topK := 3
 	if v := lookup("CONTEXT_TOP_K"); v != "" {
@@ -215,7 +210,6 @@ func LoadFromEnv(lookup func(string) string) Config {
 		DBPath:                  db,
 		SimInterval:             time.Duration(interval) * time.Second,
 		Port:                    port,
-		React:                   react,
 		TopK:                    topK,
 		LLMLightBaseURL:         lightBase,
 		LLMLightModel:           lightModel,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -95,7 +96,9 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go func() {
-		_ = s.eng.Run(context.Background(), al, nil)
+		if err := s.eng.Run(context.Background(), al, nil); err != nil {
+			slog.Error("手工告警检查流水线执行失败", "alert_id", al.ID, "device", al.Device, "error", err)
+		}
 	}()
 	writeJSON(w, http.StatusOK, map[string]string{"status": "started", "alert_id": id})
 }

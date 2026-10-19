@@ -8,7 +8,7 @@ import (
 
 func TestExportSamples(t *testing.T) {
 	tr1 := &TrialResult{
-		Trial: 1, Config: "rule", RunStatus: model.StatusCompleted,
+		Trial: 1, Config: "candidate-a", RunStatus: model.StatusCompleted,
 		Outcome: RunOutcome{
 			RCA:      model.RCA{RootCause: "磁盘空间不足"},
 			Evidence: model.Evidence{Gaps: []string{}},
@@ -25,7 +25,7 @@ func TestExportSamples(t *testing.T) {
 			{Name: "JudgeGroundedness", Pass: true, Score: 0.8, Weight: 0.2},
 		},
 	}
-	tr2 := &TrialResult{Trial: 2, Config: "rule", RunStatus: model.StatusCompleted}
+	tr2 := &TrialResult{Trial: 2, Config: "candidate-a", RunStatus: model.StatusCompleted}
 	scored2 := ScoredTrial{TrialResult: tr2, Scores: []GraderResult{
 		{Name: "RootCauseMatch", Pass: true, Score: 1, Weight: 0.3}, // 非 LLM 评委，不导出
 		{Name: "JudgeAccuracy", NA: true, Weight: 0.2},              // NA 评委，不导出
@@ -33,7 +33,7 @@ func TestExportSamples(t *testing.T) {
 
 	rep := Report{Tasks: []TaskReport{{
 		ID: "disk-full-db-01", Object: ObjectPipeline,
-		Configs: map[string]ConfigStats{"rule": {Trials: []ScoredTrial{scored1, scored2}}},
+		Configs: map[string]ConfigStats{"candidate-a": {Trials: []ScoredTrial{scored1, scored2}}},
 	}}}
 
 	// 不设上限：两条样本
@@ -41,7 +41,7 @@ func TestExportSamples(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("ExportSamples len = %d, want 2", len(got))
 	}
-	if got[0].TaskID != "disk-full-db-01" || got[0].Config != "rule" || got[0].Trial != 1 {
+	if got[0].TaskID != "disk-full-db-01" || got[0].Config != "candidate-a" || got[0].Trial != 1 {
 		t.Fatalf("sample[0] 元数据不对: %+v", got[0])
 	}
 	if got[0].HumanVerd != "" {

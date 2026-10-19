@@ -6,7 +6,7 @@
 Go后端（Eino编排LLM）+ 流水线（接收规范化→过滤分诊→上下文收集→证据收集→根因分析→建议，证据不足时最多回溯2轮）+ 全栈mock数据（监控/日志/CMDB/知识库）+ React前端（告警列表/排查时间线/聊天）+ SQLite持久化。
 
 ## 本地开发
-后端：`cd backend && go run ./cmd/server`（需要环境变量 `LLM_API_KEY`，缺失时自动用规则兜底）
+后端：`cd backend && go run ./cmd/server`（RCA 需要 `LLM_API_KEY`，始终通过 LLM + ReAct 排查；缺失时服务可启动，但 RCA 明确失败）
 前端：`cd frontend && npm install && npm run dev`（已配置 `/api`、`/ws` 代理到8080）
 
 ## Docker一键启动
@@ -48,16 +48,17 @@ Go后端（Eino编排LLM）+ 流水线（接收规范化→过滤分诊→上下
 
 ## 评测（Agent Eval）
 
-离线基准评测体系，12 个声明式任务（pipeline/chat/context）+ 3 种配置对比 + 三层评分器 + pass@k 统计。
+基准评测包含 44 个声明式任务（pipeline/chat/context），统一使用 `llm-react` 配置，提供三层评分器和 pass@k 统计。
 
 ```bash
 cd backend
-go run ./cmd/eval run --trials 3 --configs rule,llm-single,llm-react --report eval-report.json  # 完整评测
-go run ./cmd/eval ci --threshold 0.9                                                        # CI 门禁
+go run ./cmd/eval run --trials 3 --configs llm-react --report eval-report.json  # 完整评测
+go run ./cmd/eval ci --threshold 0.9                                         # CI 门禁
 ```
 
 - 任务集基于 mockdata 已知异常，ground-truth 对齐 scenario()/日志模板。
-- 无 `LLM_API_KEY` 时自动跳过 LLM 类配置，仍可跑 rule 路径。
+- 评测必须配置 `LLM_API_KEY`；缺失或初始化失败时直接报错。
+- RCA 的模型调用、工具循环或结果解析失败时，流水线标记为失败，停止生成建议和长期记忆。
 - 完整设计见 `docs/superpowers/specs/2026-08-12-agent-evaluation-design.md`。
 
 ### 检索质量评测（rageval）

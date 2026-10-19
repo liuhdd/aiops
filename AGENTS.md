@@ -11,7 +11,7 @@ Backend (`backend/`, Go module `aiops`):
 - Test: `go test ./...`；单包 `go test ./internal/pipeline/`；单个用例 `go test ./internal/pipeline/ -run TestEngineBacktracksOnGaps -v`
 - 静态检查：只有 `go vet ./...`（仓库未配 golangci-lint，不要假设存在 `make lint`）
 - 端到端：`internal/e2e/e2e_test.go` 无 build tag，随 `go test ./...` 一起跑
-- 评测：`make eval`（= `go run ./cmd/eval run --trials 3 --configs rule,llm-single,llm-react --report eval-report.json`，跑全部任务）；CI 门禁 `make eval-ci`（阈值 0.9，默认跳过 `Extended` 任务，`ci --all` 强制全量）
+- 评测：`make eval`（= `go run ./cmd/eval run --trials 3 --configs llm-react --report eval-report.json`，跑全部任务，需 `LLM_API_KEY`）；CI 门禁 `make eval-ci`（阈值 0.9，默认跳过 `Extended` 任务，`ci --all` 强制全量）
 - 检索质量评测：`go run ./cmd/rageval -golden testdata/golden_set.jsonl [-generate] [-enhance] [-o rageval-report.json] [-variants "..."] [-variants-file f.json]`（`-generate` 出题、`-enhance` 富化、`-o` 出结构化报告、`-variants`/`-variants-file` 多变体矩阵对比并产出 `ComparisonReport`）
 - Phoenix 评测数据集：`go run ./cmd/datasetctl push|list|experiment ...`（需 `PHOENIX_BASE_URL`；详见 README「Phoenix 评测数据集」）
 
@@ -28,18 +28,19 @@ Root: `cp .env.example .env` (set `LLM_API_KEY`), then `docker compose up -d --b
 唯一权威来源是 `backend/internal/config/config.go`（`LoadFromEnv`）；新增变量必须同时更新 README 的环境变量表格。
 
 - 布尔开关统一用 `0` / `false` 关闭，默认全部开启。
-- `LLM_API_KEY` 为空时 LLM client 为 `nil`，LLM 阶段自动走规则兜底，服务照常启动；测试传 `pipeline.Build(s, nil, ...)`。
-- 分组：LLM（`LLM_*`）、轻量意图模型（`LLM_LIGHT_*`）、Embedding（`LLM_EMBED_*`）、上下文（`CONTEXT_REACT` / `CONTEXT_TOP_K`）、检索（`RETRIEVE_FINGERPRINT` / `RETRIEVE_RRF` / `RETRIEVE_REWRITE` / `RETRIEVE_RECALL` / `RETRIEVE_GATE` / `RETRIEVE_VARIANT*` / `RERANK_*`）、知识库富化（`KB_ENHANCE*` / `KB_CDTA_THRESHOLD`）、运行（`DB_PATH` / `PORT` / `SIM_INTERVAL_SECONDS` / `INTENT_MAX_SPLIT`，默认 `aiops.db`、`:8080`、20s、3）。
+- `LLM_API_KEY` 为空时服务仍可启动，但 RCA 返回 `llm.ErrNoAPIKey` 并将 run 标记为 `failed`；聊天意图识别与建议模块保留各自规则逻辑。流水线统一通过 `pipeline.Build(s, lc, coord, cs, reg, topK)` 构造，显式传入上下文依赖。
+- 分组：LLM（`LLM_*`）、轻量意图模型（`LLM_LIGHT_*`）、Embedding（`LLM_EMBED_*`）、上下文（`CONTEXT_TOP_K`）、检索（`RETRIEVE_FINGERPRINT` / `RETRIEVE_RRF` / `RETRIEVE_REWRITE` / `RETRIEVE_RECALL` / `RETRIEVE_GATE` / `RETRIEVE_VARIANT*` / `RERANK_*`）、知识库富化（`KB_ENHANCE*` / `KB_CDTA_THRESHOLD`）、运行（`DB_PATH` / `PORT` / `SIM_INTERVAL_SECONDS` / `INTENT_MAX_SPLIT`，默认 `aiops.db`、`:8080`、20s、3）。
 
 ## Architecture notes
 
 - Pipeline: `backend/internal/pipeline/build.go` — 6 stages in order: normalize → triage → context → evidence → rca → recommend. Backtracking: if `rca` reports `Gaps` and `iteration < MaxIteration` (2), evidence/rca/recommend re-run. `engine.go` locates `evidenceIndex` and skips earlier stages on re-runs — keep stage order and this index logic in sync when adding stages.
+- RCA 始终使用 LLM + ReAct（每轮最多 5 步，连续 2 次工具错误后失败）。缺模型、上下文组装失败、模型/工具循环失败、步数耗尽或结果无效均显式失败，停止建议和长期记忆写入。
 - Each stage persists a `StageResult` (JSON output via `model.MustJSON`); the frontend renders these as a timeline. `triage` dedup: same device+metric with an existing completed run marks the run `skipped`.
 - Data isolation: `internal/scope` defines global ⊃ device ⊃ task levels, write-isolation + read-upward. Pipeline stages must read/write via `st.Store` (a `*store.ScopedStore` bound to the task scope), never the raw `*store.Store`. A task-scope write to another run returns `scope.ErrScopeDenied`. Device-scoped shared state lives in the `device_context` table.
 - Concurrency: `internal/coordinator` enforces a per-device serial lock. `engine.Run` holds it for the whole run (30s timeout); on timeout the run is marked `degraded`. The chat agent, simulator, and API use the raw store (global scope).
 - Chat agent (`internal/agent`): LLM multi-intent recognition (rewrite+split via light model, rule-first + light-LLM fallback per sub-question, aggregated reply with per-sub status); mentioning an alert ID triggers the pipeline on demand.
-- Context engineering: `internal/context` 包实现 Scratchpad/记忆/工具(ReAct)/知识(RAG)，每次调 LLM 前经 Selector+Assembler 挑选相关上下文；`CONTEXT_REACT`(默认1) 控制 ReAct。
-- Prompt 注册中心：`internal/prompt`（Phoenix 提示词注册中心：14 条注册表 + 运行时按 name+tag 拉取 + 默认模板兜底 + `cmd/promptctl` 灌库）。
+- Context engineering: `internal/context` 包实现 Scratchpad/记忆/工具(ReAct)/知识(RAG)，每次调 LLM 前经 Selector+Assembler 挑选相关上下文。
+- Prompt 注册中心：`internal/prompt`（Phoenix 提示词注册中心：12 条注册表 + 运行时按 name+tag 拉取 + 默认模板兜底 + `cmd/promptctl` 灌库）。
 
 ### 其余核心模块
 
@@ -47,7 +48,7 @@ Root: `cp .env.example .env` (set `LLM_API_KEY`), then `docker compose up -d --b
 - 知识库 `internal/kb`：文档/切片/向量入库（`kb_documents`/`kb_chunks`/`kb_embeddings`）与富化（summary / questions / CDTA 相似度合并，阈值 `KB_CDTA_THRESHOLD`）；检索质量评测走 `cmd/rageval`。
 - 意图 `internal/intent`：意图树 CRUD、软删除 + 启停、`intent_audit` 审计与回滚，经 `internal/api` 暴露给前端「意图管理」页。
 - 推送 `internal/hub`：`GET /ws`，`Hub.Publish(type, data)` 广播 `alert`/`stage`/`run`/`message`，前端 `api/ws.ts` 订阅后局部刷新。
-- 评测 `internal/eval` + `cmd/eval`：44 个声明式任务（pipeline/chat/context，其中 25 条 `Extended` 仅 `eval run`/Phoenix 数据集包含）× 3 配置 × pass@k，三层评分器；`ci` 子命令做门禁（默认跳过 `Extended`，`--all` 全量）。
+- 评测 `internal/eval` + `cmd/eval`：44 个声明式任务（pipeline/chat/context，其中 25 条 `Extended` 仅 `eval run`/Phoenix 数据集包含），统一使用 `llm-react` + pass@k，三层评分器；`ci` 子命令做门禁（默认跳过 `Extended`，`--all` 全量），执行评测需有效 LLM client。
 - Phoenix 评测：`internal/phoenix`（datasets/experiments 轻量 REST 客户端，零 `internal` 依赖）、`internal/goldenset`（RAG 标注集解析/报告/Phoenix 映射）、`cmd/datasetctl`（push/list/experiment，回写实验并汇总 ID/失败数，需 `PHOENIX_BASE_URL`）；数据集 `aiops-agents-eval`（44 条）/ `aiops-rag-golden`（57 条），未配置时运行时零外呼。
 - 其余：`internal/simulator`（按 `SIM_INTERVAL_SECONDS` 造告警）、`internal/llm`（OpenAI 兼容封装，key 为空则 client 为 nil）、`internal/mockdata`（全量 mock 监控/日志/CMDB/知识库）。
 
